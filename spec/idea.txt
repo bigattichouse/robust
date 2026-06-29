@@ -1,0 +1,22 @@
+Using out taguchi tool as a template, build a bigger project that includes morris, sobol and taguchi as a series of individual tools. so we get a taguchi/ morris/ and sobol/ to help design our robust experiments for Sensitivity Analysis:
+
+tool called 'robust' as a goal... be ideal as one tool, but could also just corrdinate three or more tools in unix style.
+
+very common workflow is:
+
+Morris screening
+eliminate 70–90% of variables.
+Sobol analysis
+run on the handful that remain.
+Optimization (Taguchi, Bayesian optimization, evolutionary algorithms, etc.)
+find the best settings.
+
+So they are less competitors than stages of maturity.
+
+Taguchi asks, "How do I make this work?"
+
+Morris asks, "What matters?"
+
+Sobol asks, "How much does each thing matter, including the hidden interactions?"
+
+Once you see them that way, the three methods fit together into a fairly coherent toolkit rather than three unrelated statistical techniques.

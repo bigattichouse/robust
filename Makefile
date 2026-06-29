@@ -1,177 +1,119 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -Werror -std=c99 -pedantic -O2 -g -fPIC
+# Robust toolkit — top-level build.
+# Builds the shared common/ core (libdoe) and the tool binaries that exist so
+# far. Tools are added per the DESIGN.md roadmap (M2: morris, M3: sobol).
+
+CC      = gcc
+CFLAGS  = -Wall -Wextra -Werror -std=c99 -pedantic -O2 -g -fPIC
 LDFLAGS = -lm
 
-SRC_DIR = src
-LIB_DIR = $(SRC_DIR)/lib
-CLI_DIR = $(SRC_DIR)/cli
-TEST_DIR = tests
-BUILD_DIR = build
-INCLUDE_DIR = include
+BUILD       = build
+BIN         = $(BUILD)/bin
+COMMON_DIR  = common
+COMMON_INC  = -I$(COMMON_DIR)/include
+COMMON_SRC  = $(wildcard $(COMMON_DIR)/src/*.c)
+COMMON_OBJ  = $(COMMON_SRC:$(COMMON_DIR)/src/%.c=$(BUILD)/common/%.o)
+COMMON_LIB  = $(BUILD)/libdoe.a
 
-# Library sources (core logic)
-LIB_SOURCES = $(wildcard $(LIB_DIR)/*.c)
-LIB_OBJECTS = $(LIB_SOURCES:$(LIB_DIR)/%.c=$(BUILD_DIR)/lib/%.o)
+# morris tool
+MORRIS_INC      = -Imorris/include
+MORRIS_LIB_SRC  = $(wildcard morris/src/lib/*.c)
+MORRIS_LIB_OBJ  = $(MORRIS_LIB_SRC:morris/src/lib/%.c=$(BUILD)/morris/lib/%.o)
+MORRIS_CLI_SRC  = $(wildcard morris/src/cli/*.c)
+MORRIS_CLI_OBJ  = $(MORRIS_CLI_SRC:morris/src/cli/%.c=$(BUILD)/morris/cli/%.o)
+MORRIS_BIN      = $(BIN)/morris
+MORRIS_TEST_SRC = $(wildcard morris/tests/*.c)
+MORRIS_TEST_BIN = $(BUILD)/test_morris
 
-# CLI sources (main + CLI-specific)
-CLI_SOURCES = $(wildcard $(CLI_DIR)/*.c)
-CLI_OBJECTS = $(CLI_SOURCES:$(CLI_DIR)/%.c=$(BUILD_DIR)/cli/%.o)
+# sobol tool
+SOBOL_INC       = -Isobol/include
+SOBOL_LIB_SRC   = $(wildcard sobol/src/lib/*.c)
+SOBOL_LIB_OBJ   = $(SOBOL_LIB_SRC:sobol/src/lib/%.c=$(BUILD)/sobol/lib/%.o)
+SOBOL_CLI_SRC   = $(wildcard sobol/src/cli/*.c)
+SOBOL_CLI_OBJ   = $(SOBOL_CLI_SRC:sobol/src/cli/%.c=$(BUILD)/sobol/cli/%.o)
+SOBOL_BIN       = $(BIN)/sobol
+SOBOL_TEST_SRC  = $(wildcard sobol/tests/*.c)
+SOBOL_TEST_BIN  = $(BUILD)/test_sobol
 
-# Test sources (excluding integration test which has its own main)
-TEST_SOURCES = $(filter-out $(TEST_DIR)/test_integration.c,$(wildcard $(TEST_DIR)/*.c))
-TEST_OBJECTS = $(TEST_SOURCES:$(TEST_DIR)/%.c=$(BUILD_DIR)/test/%.o)
+# core test suite
+CORE_TEST_SRC = $(wildcard $(COMMON_DIR)/tests/*.c)
+CORE_TEST_BIN = $(BUILD)/test_doe
 
-# Integration test (standalone with its own main)
-INTEGRATION_TEST_SRC = $(TEST_DIR)/test_integration.c
-INTEGRATION_TEST_OBJ = $(BUILD_DIR)/test/test_integration.o
-INTEGRATION_TEST_TARGET = $(BUILD_DIR)/test/integration_test
+.PHONY: all common morris sobol taguchi tools test test-taguchi test-all clean
 
-# Targets (platform-specific defaults set below)
-TEST_TARGET = $(BUILD_DIR)/test/test_runner
+all: common morris sobol taguchi
 
-# Platform-specific library extension
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)
-    SHARED_LIB_BASE = libtaguchi.dylib
-    SHARED_FLAGS = -dynamiclib -install_name @rpath/$(SHARED_LIB_BASE)
-else ifeq ($(OS),Windows_NT)
-    SHARED_LIB_BASE = taguchi.dll
-    SHARED_FLAGS = -shared
-else
-    SHARED_LIB_BASE = libtaguchi.so
-    SHARED_FLAGS = -shared -Wl,-soname,$(SHARED_LIB_BASE)
-endif
-SHARED_LIB ?= $(BUILD_DIR)/$(SHARED_LIB_BASE)
-STATIC_LIB ?= $(BUILD_DIR)/libtaguchi.a
-CLI_TARGET ?= $(BUILD_DIR)/taguchi
+# ---- common core --------------------------------------------------------
+common: $(COMMON_LIB)
 
-.PHONY: all lib cli test test-python test-all check install install-cli reinstall uninstall clean
+$(COMMON_LIB): $(COMMON_OBJ)
+	ar rcs $@ $^
 
-all: lib cli
+$(BUILD)/common/%.o: $(COMMON_DIR)/src/%.c | $(BUILD)/common
+	$(CC) $(CFLAGS) $(COMMON_INC) -c $< -o $@
 
-# Build shared library
-lib: $(SHARED_LIB) $(STATIC_LIB)
+# ---- morris -------------------------------------------------------------
+morris: $(MORRIS_BIN)
 
-$(SHARED_LIB): $(LIB_OBJECTS)
-	$(CC) $(SHARED_FLAGS) $(LIB_OBJECTS) -o $@ $(LDFLAGS)
+$(MORRIS_BIN): $(MORRIS_CLI_OBJ) $(MORRIS_LIB_OBJ) $(COMMON_OBJ) | $(BIN)
+	$(CC) $^ -o $@ $(LDFLAGS)
 
-$(STATIC_LIB): $(LIB_OBJECTS)
-	ar rcs $@ $(LIB_OBJECTS)
+$(BUILD)/morris/lib/%.o: morris/src/lib/%.c | $(BUILD)/morris/lib
+	$(CC) $(CFLAGS) $(COMMON_INC) $(MORRIS_INC) -c $< -o $@
 
-$(BUILD_DIR)/lib/%.o: $(LIB_DIR)/%.c | $(BUILD_DIR)/lib
-	$(CC) $(CFLAGS) -I. -I$(INCLUDE_DIR) -c $< -o $@
+$(BUILD)/morris/cli/%.o: morris/src/cli/%.c | $(BUILD)/morris/cli
+	$(CC) $(CFLAGS) $(COMMON_INC) $(MORRIS_INC) -c $< -o $@
 
-# Build CLI (statically linked — no runtime dependency on libtaguchi.so)
-cli: $(CLI_TARGET)
+# ---- sobol --------------------------------------------------------------
+sobol: $(SOBOL_BIN)
 
-$(CLI_TARGET): $(CLI_OBJECTS) $(STATIC_LIB)
-	$(CC) $(CLI_OBJECTS) $(STATIC_LIB) -o $@ $(LDFLAGS)
+$(SOBOL_BIN): $(SOBOL_CLI_OBJ) $(SOBOL_LIB_OBJ) $(COMMON_OBJ) | $(BIN)
+	$(CC) $^ -o $@ $(LDFLAGS)
 
-$(BUILD_DIR)/cli/%.o: $(CLI_DIR)/%.c | $(BUILD_DIR)/cli
-	$(CC) $(CFLAGS) -I. -I$(INCLUDE_DIR) -I$(LIB_DIR) -c $< -o $@
+$(BUILD)/sobol/lib/%.o: sobol/src/lib/%.c | $(BUILD)/sobol/lib
+	$(CC) $(CFLAGS) $(COMMON_INC) $(SOBOL_INC) -c $< -o $@
 
-# Build tests
-# The unit test runner links lib objects directly (no shared lib needed).
-# The integration test uses the shared lib, so it still needs LD_LIBRARY_PATH.
-test: $(TEST_TARGET) $(INTEGRATION_TEST_TARGET) $(CLI_TARGET)
-	./$(TEST_TARGET)
-	@echo "Running integration test..."
-	LD_LIBRARY_PATH=$(BUILD_DIR) ./$(INTEGRATION_TEST_TARGET)
-	@echo "Running CSV multi-column metric tests..."
-	@bash $(TEST_DIR)/test_csv_multicolumn.sh
+$(BUILD)/sobol/cli/%.o: sobol/src/cli/%.c | $(BUILD)/sobol/cli
+	$(CC) $(CFLAGS) $(COMMON_INC) $(SOBOL_INC) -c $< -o $@
+
+# ---- taguchi (vendored peer tool, builds with its own Makefile) ---------
+taguchi:
+	$(MAKE) -C taguchi
+
+# ---- tests --------------------------------------------------------------
+test: $(CORE_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN)
+	./$(CORE_TEST_BIN)
+	./$(MORRIS_TEST_BIN)
+	./$(SOBOL_TEST_BIN)
 	@if command -v valgrind >/dev/null 2>&1; then \
 		echo "Running valgrind..."; \
-		valgrind --leak-check=full --error-exitcode=1 ./$(TEST_TARGET); \
+		valgrind --leak-check=full --error-exitcode=1 ./$(CORE_TEST_BIN)   >/dev/null 2>&1 && echo "  test_doe: clean"; \
+		valgrind --leak-check=full --error-exitcode=1 ./$(MORRIS_TEST_BIN) >/dev/null 2>&1 && echo "  test_morris: clean"; \
+		valgrind --leak-check=full --error-exitcode=1 ./$(SOBOL_TEST_BIN)  >/dev/null 2>&1 && echo "  test_sobol: clean"; \
 	else \
-		echo "Warning: valgrind not found, skipping memory check."; \
+		echo "valgrind not found, skipping memory check."; \
 	fi
 
-$(TEST_TARGET): $(TEST_OBJECTS) $(LIB_OBJECTS)
-	$(CC) $(TEST_OBJECTS) $(LIB_OBJECTS) -o $@ $(LDFLAGS)
+$(CORE_TEST_BIN): $(CORE_TEST_SRC) $(COMMON_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) $(COMMON_INC) -I$(COMMON_DIR)/tests $(CORE_TEST_SRC) $(COMMON_OBJ) -o $@ $(LDFLAGS)
 
-$(INTEGRATION_TEST_TARGET): $(INTEGRATION_TEST_OBJ) $(LIB_OBJECTS)
-	$(CC) $(INTEGRATION_TEST_OBJ) $(LIB_OBJECTS) -o $@ $(LDFLAGS)
+$(MORRIS_TEST_BIN): $(MORRIS_TEST_SRC) $(MORRIS_LIB_OBJ) $(COMMON_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) $(COMMON_INC) $(MORRIS_INC) -I$(COMMON_DIR)/tests $(MORRIS_TEST_SRC) $(MORRIS_LIB_OBJ) $(COMMON_OBJ) -o $@ $(LDFLAGS)
 
-$(BUILD_DIR)/test/%.o: $(TEST_DIR)/%.c | $(BUILD_DIR)/test
-	$(CC) $(CFLAGS) -I. -I$(INCLUDE_DIR) -c $< -o $@
+$(SOBOL_TEST_BIN): $(SOBOL_TEST_SRC) $(SOBOL_LIB_OBJ) $(COMMON_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) $(COMMON_INC) $(SOBOL_INC) -I$(COMMON_DIR)/tests $(SOBOL_TEST_SRC) $(SOBOL_LIB_OBJ) $(COMMON_OBJ) -o $@ $(LDFLAGS)
 
-# Static analysis
-check: test
-	@echo "Running static analysis..."
-	cppcheck --enable=all --suppress=missingIncludeSystem $(LIB_DIR) $(CLI_DIR)
+# ---- aggregate targets --------------------------------------------------
+tools:
+	@echo "Built: morris, sobol, taguchi. Pending: robust, ofat, grid, report (see DESIGN.md)."
 
-# Create build directories
-$(BUILD_DIR)/lib $(BUILD_DIR)/cli $(BUILD_DIR)/test:
+test-taguchi:
+	$(MAKE) -C taguchi test
+
+test-all: test test-taguchi
+
+# ---- housekeeping -------------------------------------------------------
+$(BUILD) $(BIN) $(BUILD)/common $(BUILD)/morris/lib $(BUILD)/morris/cli $(BUILD)/sobol/lib $(BUILD)/sobol/cli:
 	mkdir -p $@
 
-# Installation
-PREFIX ?= /usr/local
-LIBDIR = $(PREFIX)/lib
-INCDIR = $(PREFIX)/include
-BINDIR = $(PREFIX)/bin
-
-# install-cli: install only the static binary — no library dependency required.
-#   Use this when you just want the 'taguchi' command-line tool.
-install-cli: cli
-	install -d $(BINDIR)
-	install -m 755 $(CLI_TARGET) $(BINDIR)/
-
-# install: full installation — static binary + shared lib + static lib + header.
-#   Use this when building language bindings (Python, Node) that link against
-#   libtaguchi at runtime.
-install: lib cli
-	install -d $(LIBDIR) $(INCDIR) $(BINDIR)
-	install -m 755 $(SHARED_LIB) $(LIBDIR)/$(SHARED_LIB_BASE)
-	install -m 644 $(STATIC_LIB) $(LIBDIR)/
-	install -m 644 $(INCLUDE_DIR)/taguchi.h $(INCDIR)/
-	install -m 755 $(CLI_TARGET) $(BINDIR)/
-	@if command -v ldconfig >/dev/null 2>&1; then ldconfig; fi
-
-# Reinstall (uninstall then install)
-reinstall: uninstall install
-
-# Uninstall
-uninstall:
-	rm -f $(LIBDIR)/$(SHARED_LIB_BASE)
-	rm -f $(LIBDIR)/libtaguchi.a
-	rm -f $(INCDIR)/taguchi.h
-	rm -f $(BINDIR)/taguchi
-
-# Clean
 clean:
-	rm -rf $(BUILD_DIR)
-
-# Python bindings
-.PHONY: python-install python-test test-python test-all
-python-install: lib
-	cd bindings/python && python3 setup.py install --user
-
-python-test: python-install
-	cd bindings/python && python3 test_taguchi.py
-
-# Run the pytest-based Python test suite (requires: pip install pytest in bindings/python/.venv)
-test-python: lib cli
-	@if [ -f bindings/python/.venv/bin/pytest ]; then \
-		cd bindings/python && .venv/bin/pytest tests/ -v; \
-	elif command -v pytest >/dev/null 2>&1; then \
-		cd bindings/python && pytest tests/ -v; \
-	else \
-		echo "No pytest found. Run: cd bindings/python && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'"; \
-		exit 1; \
-	fi
-
-# Run both C and Python test suites
-test-all: test test-python
-
-# Node bindings
-.PHONY: node-install node-test
-node-install: lib
-	cd bindings/node && npm install
-
-node-test: node-install
-	cd bindings/node && npm test
-
-# Documentation
-.PHONY: docs
-docs:
-	doxygen Doxyfile
+	rm -rf $(BUILD)

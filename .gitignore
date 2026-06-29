@@ -1,57 +1,14 @@
-# Build directories
-/build/
-
-# Compiled libraries
-*.so
-*.a
-libtaguchi.so
-libtaguchi.a
-
-# Object files
-*.o
-
 # Build artifacts
 build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
 
-# Binaries — ignore the CLI binary anywhere outside build/
-taguchi
-!bindings/python/taguchi/
-
-# Test files
-test_runner
-test_integration
-test_script.sh
-test_*.tgu
-
-# Debug and temporary files
-debug_*
-verify_*
-math_l27*
-final_l27*
-
-# IDE and editor files
+# Editor / OS
 *.swp
-*~
-.vscode/
-.idea/
-
-# OS generated files
 .DS_Store
-Thumbs.db
 
-# Log and backup files
-*.log
-*~
-#*
-# But allow bindings
-!bindings/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.venv/
-venv/
-*.egg-info/
-dist/
-.eggs/
+# Claude Code local settings
+.claude/settings.local.json
