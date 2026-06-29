@@ -1,9 +1,9 @@
-# Robust — a Design-of-Experiments / Sensitivity-Analysis toolkit
+# Robust
 
-A set of small, composable C binaries for the full sensitivity-analysis funnel —
-**screen → attribute → optimize** — built on the same library-first, Unix-philosophy
-template as [`taguchi`](https://github.com/bigattichouse/taguchi), which now lives here
-as a peer tool in `taguchi/`.
+A small, fast, POSIX-compliant suite of command-line tools for designing and
+analyzing robust experiments — **Morris** screening, **Sobol** variance
+attribution, and **Taguchi** optimization — built in C with a shared-library
+core for easy language bindings.
 
 ```
 many factors ──► MORRIS ──► survivors ──► SOBOL ──► key factors ──► TAGUCHI / grids
@@ -14,7 +14,8 @@ many factors ──► MORRIS ──► survivors ──► SOBOL ──► key 
 
 These are **stages of maturity, not competitors**: Morris and Sobol run on a cheap
 deterministic simulator to find what matters; Taguchi runs on the bench to optimize it.
-`robust` orchestrates the funnel.
+`robust` orchestrates the funnel. Every tool is a small POSIX binary over a shared
+`libdoe` core; [`taguchi`](taguchi/) — the original tool this grew from — lives here as a peer.
 
 ## The binaries
 
