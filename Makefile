@@ -1,6 +1,6 @@
 # Robust toolkit — top-level build.
-# Builds the shared common/ core (libdoe) and the tool binaries that exist so
-# far. Tools are added per the DESIGN.md roadmap (M2: morris, M3: sobol).
+# Builds the shared common/ core (libdoe) and the tool binaries. Tools land per
+# the DESIGN.md roadmap (M2: morris, M3: sobol, M4: robust orchestrator).
 
 CC      = gcc
 CFLAGS  = -Wall -Wextra -Werror -std=c99 -pedantic -O2 -g -fPIC
@@ -34,13 +34,24 @@ SOBOL_BIN       = $(BIN)/sobol
 SOBOL_TEST_SRC  = $(wildcard sobol/tests/*.c)
 SOBOL_TEST_BIN  = $(BUILD)/test_sobol
 
+# robust orchestrator (links the morris + sobol libs to drive the funnel in-process)
+ROBUST_INC      = -Irobust/include $(MORRIS_INC) $(SOBOL_INC)
+ROBUST_LIB_SRC  = $(wildcard robust/src/lib/*.c)
+ROBUST_LIB_OBJ  = $(ROBUST_LIB_SRC:robust/src/lib/%.c=$(BUILD)/robust/lib/%.o)
+ROBUST_CLI_SRC  = $(wildcard robust/src/cli/*.c)
+ROBUST_CLI_OBJ  = $(ROBUST_CLI_SRC:robust/src/cli/%.c=$(BUILD)/robust/cli/%.o)
+ROBUST_BIN      = $(BIN)/robust
+ROBUST_TEST_SRC = $(wildcard robust/tests/*.c)
+ROBUST_TEST_BIN = $(BUILD)/test_robust
+ROBUST_DEPS     = $(ROBUST_LIB_OBJ) $(MORRIS_LIB_OBJ) $(SOBOL_LIB_OBJ) $(COMMON_OBJ)
+
 # core test suite
 CORE_TEST_SRC = $(wildcard $(COMMON_DIR)/tests/*.c)
 CORE_TEST_BIN = $(BUILD)/test_doe
 
-.PHONY: all common morris sobol taguchi tools test test-taguchi test-all clean
+.PHONY: all common morris sobol robust taguchi tools test test-taguchi test-all clean
 
-all: common morris sobol taguchi
+all: common morris sobol robust taguchi
 
 # ---- common core --------------------------------------------------------
 common: $(COMMON_LIB)
@@ -75,20 +86,34 @@ $(BUILD)/sobol/lib/%.o: sobol/src/lib/%.c | $(BUILD)/sobol/lib
 $(BUILD)/sobol/cli/%.o: sobol/src/cli/%.c | $(BUILD)/sobol/cli
 	$(CC) $(CFLAGS) $(COMMON_INC) $(SOBOL_INC) -c $< -o $@
 
+# ---- robust orchestrator ------------------------------------------------
+robust: $(ROBUST_BIN)
+
+$(ROBUST_BIN): $(ROBUST_CLI_OBJ) $(ROBUST_DEPS) | $(BIN)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+$(BUILD)/robust/lib/%.o: robust/src/lib/%.c | $(BUILD)/robust/lib
+	$(CC) $(CFLAGS) $(COMMON_INC) $(ROBUST_INC) -c $< -o $@
+
+$(BUILD)/robust/cli/%.o: robust/src/cli/%.c | $(BUILD)/robust/cli
+	$(CC) $(CFLAGS) $(COMMON_INC) $(ROBUST_INC) -c $< -o $@
+
 # ---- taguchi (vendored peer tool, builds with its own Makefile) ---------
 taguchi:
 	$(MAKE) -C taguchi
 
 # ---- tests --------------------------------------------------------------
-test: $(CORE_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN)
+test: $(CORE_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) $(ROBUST_TEST_BIN)
 	./$(CORE_TEST_BIN)
 	./$(MORRIS_TEST_BIN)
 	./$(SOBOL_TEST_BIN)
+	./$(ROBUST_TEST_BIN)
 	@if command -v valgrind >/dev/null 2>&1; then \
 		echo "Running valgrind..."; \
 		valgrind --leak-check=full --error-exitcode=1 ./$(CORE_TEST_BIN)   >/dev/null 2>&1 && echo "  test_doe: clean"; \
 		valgrind --leak-check=full --error-exitcode=1 ./$(MORRIS_TEST_BIN) >/dev/null 2>&1 && echo "  test_morris: clean"; \
 		valgrind --leak-check=full --error-exitcode=1 ./$(SOBOL_TEST_BIN)  >/dev/null 2>&1 && echo "  test_sobol: clean"; \
+		valgrind --leak-check=full --error-exitcode=1 ./$(ROBUST_TEST_BIN) >/dev/null 2>&1 && echo "  test_robust: clean"; \
 	else \
 		echo "valgrind not found, skipping memory check."; \
 	fi
@@ -102,9 +127,12 @@ $(MORRIS_TEST_BIN): $(MORRIS_TEST_SRC) $(MORRIS_LIB_OBJ) $(COMMON_OBJ) | $(BUILD
 $(SOBOL_TEST_BIN): $(SOBOL_TEST_SRC) $(SOBOL_LIB_OBJ) $(COMMON_OBJ) | $(BUILD)
 	$(CC) $(CFLAGS) $(COMMON_INC) $(SOBOL_INC) -I$(COMMON_DIR)/tests $(SOBOL_TEST_SRC) $(SOBOL_LIB_OBJ) $(COMMON_OBJ) -o $@ $(LDFLAGS)
 
+$(ROBUST_TEST_BIN): $(ROBUST_TEST_SRC) $(ROBUST_DEPS) | $(BUILD)
+	$(CC) $(CFLAGS) $(COMMON_INC) $(ROBUST_INC) -I$(COMMON_DIR)/tests $(ROBUST_TEST_SRC) $(ROBUST_DEPS) -o $@ $(LDFLAGS)
+
 # ---- aggregate targets --------------------------------------------------
 tools:
-	@echo "Built: morris, sobol, taguchi. Pending: robust, ofat, grid, report (see DESIGN.md)."
+	@echo "Built: morris, sobol, robust, taguchi. Pending: ofat, grid, report (see DESIGN.md)."
 
 test-taguchi:
 	$(MAKE) -C taguchi test
@@ -112,7 +140,7 @@ test-taguchi:
 test-all: test test-taguchi
 
 # ---- housekeeping -------------------------------------------------------
-$(BUILD) $(BIN) $(BUILD)/common $(BUILD)/morris/lib $(BUILD)/morris/cli $(BUILD)/sobol/lib $(BUILD)/sobol/cli:
+$(BUILD) $(BIN) $(BUILD)/common $(BUILD)/morris/lib $(BUILD)/morris/cli $(BUILD)/sobol/lib $(BUILD)/sobol/cli $(BUILD)/robust/lib $(BUILD)/robust/cli:
 	mkdir -p $@
 
 clean:

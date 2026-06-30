@@ -119,6 +119,12 @@ typedef const char *(*doe_value_fn)(void *ctx, size_t row, size_t col);
 int doe_run(const doe_space_t *space, const char *prefix, const char *script,
             size_t rows, doe_value_fn get_value, void *ctx, char *err);
 
+/* Like doe_run, but capture each child's stdout and parse it as a double into
+ * responses[row] (the script prints one number). Used by the orchestrator. */
+int doe_run_capture(const doe_space_t *space, const char *prefix, const char *script,
+                    size_t rows, doe_value_fn get_value, void *ctx,
+                    double *responses, char *err);
+
 /* ============================================================================
  * Results CSV — provisional signature, implemented at M2.
  * ============================================================================ */

@@ -188,9 +188,14 @@ produces a combined report. The "stages of maturity" made executable.
 | `robust report <morris.json> <sobol.json> [taguchi.csv]` | Unified HTML/SVG dashboard. |
 | `robust to-tgu <file.space>` | Emit taguchi `.tgu` for the survivors. |
 
-Drop thresholds (e.g., μ* below the bottom cluster; `S_Tᵢ < ε`) are flags with
-documented defaults. `robust` shells out to `morris`/`sobol`/`taguchi` (Unix
-style) — easy to inspect and to swap a stage.
+**Implemented (M4):** `robust funnel` and `robust screen`, with `--keep-fraction`
+and `--html`/`--json`/`--tgu` outputs. The keep rule drops factors with
+μ* < `keep_fraction`·max(μ*) (default 0.1), always retaining the top factor.
+Rather than shell out to the `morris`/`sobol` *binaries*, `robust` **links their
+libraries** and drives the funnel in-process (`morris_design_build`/`_analyze`,
+`sobol_*`) — no PATH dependency, and the orchestration is unit-testable end to
+end against in-process evaluators. It shells out only to the user's model script,
+via `doe_run_capture` (the script prints one number to stdout).
 
 ---
 
@@ -273,8 +278,8 @@ independent, and any design can be regenerated from the `.space` file alone.
 
 ## 11. Roadmap
 
-**Status: M0–M3 complete** — common core + `morris` + `sobol`, all suites green
-under `-Werror` and valgrind.
+**Status: M0–M4 complete** — common core + `morris` + `sobol` + the `robust`
+funnel orchestrator, all suites green under `-Werror` and valgrind.
 
 | Milestone | Deliverable | |
 |---|---|---|
@@ -282,13 +287,13 @@ under `-Werror` and valgrind.
 | **M1** | `common` core: prng, space parser+scaling, runner, csv, json, stats — unit + determinism tests. | ✓ |
 | **M2** | `morris` (sample/generate/run/analyze); validated on linear + interaction functions. | ✓ |
 | **M3** | `sobol` Saltelli + Sᵢ/S_Tᵢ with bootstrap CIs; validated against Ishigami. | ✓ |
-| **M4** | `robust funnel` (Morris→Sobol) + `viz` module + unified `report`. | |
+| **M4** | `robust funnel`/`screen` (Morris→Sobol, in-process) + self-contained HTML/JSON report + `.tgu` hand-off; orchestrated-process tests. | ✓ |
 | **M5** | Sobol low-discrepancy sequence (Joe-Kuo); optional second-order indices. | |
 | **M6** | `ofat` + `grid` + confirmation checker. | |
-| **MI** | **Taguchi integration** — local fold-in done; GitHub rename pending (§12). | ◑ |
+| **MI** | **Taguchi integration** — folded in + GitHub repo renamed to robust (§12). | ✓ |
 | **M7** | Python (ctypes) bindings mirroring taguchi; CI running `make test`. | |
 
-## 12. Taguchi integration (folded in 2026-06-29; rename pending)
+## 12. Taguchi integration (done 2026-06-29)
 
 `robust` will absorb `taguchi` into one repo so users get every tool from a
 single clone. taguchi has ~7 stars, so migration cost is low.
@@ -309,7 +314,7 @@ history preserved); the umbrella root now holds `common/ morris/ sobol/ robust/
 tools/`. taguchi keeps its own `Makefile`/bindings; the top-level `Makefile`
 builds the new tools and delegates `make -C taguchi`.
 
-**Remaining (owner action):** rename the GitHub repo `taguchi → robust` and
-`git push`. Local `main` is in sync with `origin` (0 ahead / 0 behind), so the
-push fast-forwards.
+**Done.** The GitHub repo was renamed **taguchi → robust** (stars + redirects
+intact) and the consolidation is pushed — live at `github.com/bigattichouse/robust`
+(`origin` = `git@github.com:bigattichouse/robust.git`).
 ```
