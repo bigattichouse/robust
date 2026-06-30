@@ -174,11 +174,38 @@ static int test_report_outputs(void) {
     return 1;
 }
 
+/* H2 — an adversarial factor name must be HTML-escaped in the report, not
+ * rendered as a live tag. */
+static int test_report_escapes_hostile_name(void) {
+    morris_effect_t eff;
+    memset(&eff, 0, sizeof eff);
+    strcpy(eff.name, "<script>x");
+    eff.mu_star = 1.0;
+    int keep = 1;
+
+    robust_result_t r;
+    memset(&r, 0, sizeof r);
+    r.k = 1; r.effects = &eff; r.keep = &keep; r.n_survivors = 1; r.keep_fraction = 0.1;
+
+    const char *html = "build/robust_xss_test.html";
+    char err[DOE_ERR_SIZE];
+    CHECK(robust_write_html(&r, html, err) == 0);
+    char *h = slurp(html);
+    CHECK(h != NULL);
+    CHECK(strstr(h, "&lt;script&gt;x") != NULL);   /* escaped */
+    CHECK(strstr(h, "<script>x") == NULL);          /* raw tag absent */
+    free(h);
+    remove(html);
+    /* eff/keep are stack-allocated — do not robust_result_free */
+    return 1;
+}
+
 int main(void) {
     printf("robust funnel tests\n");
     RUN_TEST(test_funnel_screen_and_attribute);
     RUN_TEST(test_funnel_interaction);
     RUN_TEST(test_funnel_determinism);
     RUN_TEST(test_report_outputs);
+    RUN_TEST(test_report_escapes_hostile_name);
     return TEST_SUMMARY();
 }

@@ -66,11 +66,13 @@ int robust_write_html(const robust_result_t *r, const char *path, char *err) {
     for (size_t i = 0; i < r->k; i++) {
         double frac = (maxmu > 0.0) ? r->effects[i].mu_star / maxmu : 0.0;
         int w = (int)(frac * 200.0 + 0.5);
+        char *nm = doe_html_escape(r->effects[i].name);
         fprintf(f, "<tr><td class=\"l\">%s</td><td>%.4g</td><td>%.4g</td>"
                    "<td class=\"l %s\">%s</td>"
                    "<td class=\"l\"><svg width=\"200\" height=\"12\"><rect width=\"%d\" height=\"12\"/></svg></td></tr>\n",
-                r->effects[i].name, r->effects[i].mu_star, r->effects[i].sigma,
+                nm ? nm : "", r->effects[i].mu_star, r->effects[i].sigma,
                 r->keep[i] ? "keep" : "drop", r->keep[i] ? "KEEP" : "drop", w);
+        doe_free(nm);
     }
     fprintf(f, "</table>\n");
 
@@ -79,9 +81,11 @@ int robust_write_html(const robust_result_t *r, const char *path, char *err) {
                "<th>ST</th><th>95%% CI</th><th>interaction</th></tr>\n");
     for (size_t i = 0; i < r->n_indices; i++) {
         const sobol_index_t *x = &r->indices[i];
+        char *nm = doe_html_escape(x->name);
         fprintf(f, "<tr><td class=\"l\">%s</td><td>%.3f</td><td>[%.2f, %.2f]</td>"
                    "<td>%.3f</td><td>[%.2f, %.2f]</td><td>%.3f</td></tr>\n",
-                x->name, x->s1, x->s1_lo, x->s1_hi, x->st, x->st_lo, x->st_hi, x->st - x->s1);
+                nm ? nm : "", x->s1, x->s1_lo, x->s1_hi, x->st, x->st_lo, x->st_hi, x->st - x->s1);
+        doe_free(nm);
     }
     fprintf(f, "</table>\n</body></html>\n");
 

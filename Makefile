@@ -45,9 +45,9 @@ ROBUST_TEST_SRC = $(wildcard robust/tests/*.c)
 ROBUST_TEST_BIN = $(BUILD)/test_robust
 ROBUST_DEPS     = $(ROBUST_LIB_OBJ) $(MORRIS_LIB_OBJ) $(SOBOL_LIB_OBJ) $(COMMON_OBJ)
 
-# core test suite
-CORE_TEST_SRC = $(wildcard $(COMMON_DIR)/tests/*.c)
+# core test suites (one binary per test file — each has its own main())
 CORE_TEST_BIN = $(BUILD)/test_doe
+SEC_TEST_BIN  = $(BUILD)/test_security
 
 .PHONY: all common morris sobol robust taguchi tools test test-taguchi test-all clean
 
@@ -103,14 +103,16 @@ taguchi:
 	$(MAKE) -C taguchi
 
 # ---- tests --------------------------------------------------------------
-test: $(CORE_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) $(ROBUST_TEST_BIN)
+test: $(CORE_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) $(ROBUST_TEST_BIN)
 	./$(CORE_TEST_BIN)
+	./$(SEC_TEST_BIN)
 	./$(MORRIS_TEST_BIN)
 	./$(SOBOL_TEST_BIN)
 	./$(ROBUST_TEST_BIN)
 	@if command -v valgrind >/dev/null 2>&1; then \
 		echo "Running valgrind..."; \
 		valgrind --leak-check=full --error-exitcode=1 ./$(CORE_TEST_BIN)   >/dev/null 2>&1 && echo "  test_doe: clean"; \
+		valgrind --leak-check=full --error-exitcode=1 ./$(SEC_TEST_BIN)    >/dev/null 2>&1 && echo "  test_security: clean"; \
 		valgrind --leak-check=full --error-exitcode=1 ./$(MORRIS_TEST_BIN) >/dev/null 2>&1 && echo "  test_morris: clean"; \
 		valgrind --leak-check=full --error-exitcode=1 ./$(SOBOL_TEST_BIN)  >/dev/null 2>&1 && echo "  test_sobol: clean"; \
 		valgrind --leak-check=full --error-exitcode=1 ./$(ROBUST_TEST_BIN) >/dev/null 2>&1 && echo "  test_robust: clean"; \
@@ -118,8 +120,11 @@ test: $(CORE_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) $(ROBUST_TEST_BIN)
 		echo "valgrind not found, skipping memory check."; \
 	fi
 
-$(CORE_TEST_BIN): $(CORE_TEST_SRC) $(COMMON_OBJ) | $(BUILD)
-	$(CC) $(CFLAGS) $(COMMON_INC) -I$(COMMON_DIR)/tests $(CORE_TEST_SRC) $(COMMON_OBJ) -o $@ $(LDFLAGS)
+$(CORE_TEST_BIN): $(COMMON_DIR)/tests/test_doe.c $(COMMON_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) $(COMMON_INC) -I$(COMMON_DIR)/tests $(COMMON_DIR)/tests/test_doe.c $(COMMON_OBJ) -o $@ $(LDFLAGS)
+
+$(SEC_TEST_BIN): $(COMMON_DIR)/tests/test_security.c $(COMMON_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) $(COMMON_INC) -I$(COMMON_DIR)/tests $(COMMON_DIR)/tests/test_security.c $(COMMON_OBJ) -o $@ $(LDFLAGS)
 
 $(MORRIS_TEST_BIN): $(MORRIS_TEST_SRC) $(MORRIS_LIB_OBJ) $(COMMON_OBJ) | $(BUILD)
 	$(CC) $(CFLAGS) $(COMMON_INC) $(MORRIS_INC) -I$(COMMON_DIR)/tests $(MORRIS_TEST_SRC) $(MORRIS_LIB_OBJ) $(COMMON_OBJ) -o $@ $(LDFLAGS)

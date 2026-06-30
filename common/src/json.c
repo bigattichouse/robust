@@ -35,6 +35,27 @@ char *doe_json_escape(const char *s) {
     return out;
 }
 
+char *doe_html_escape(const char *s) {
+    if (!s) return NULL;
+    size_t len = strlen(s);
+    char *out = malloc(len * 6 + 1);   /* worst case: '"' -> "&quot;" (6 chars) */
+    if (!out) return NULL;
+
+    char *o = out;
+    for (size_t i = 0; i < len; i++) {
+        switch (s[i]) {
+            case '&':  memcpy(o, "&amp;",  5); o += 5; break;
+            case '<':  memcpy(o, "&lt;",   4); o += 4; break;
+            case '>':  memcpy(o, "&gt;",   4); o += 4; break;
+            case '"':  memcpy(o, "&quot;", 6); o += 6; break;
+            case '\'': memcpy(o, "&#39;",  5); o += 5; break;
+            default:   *o++ = s[i];
+        }
+    }
+    *o = '\0';
+    return out;
+}
+
 void doe_free(void *p) {
     free(p);
 }

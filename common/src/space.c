@@ -138,6 +138,10 @@ static int parse_factor(const char *name, char *value, doe_factor_t *f, char *er
 }
 
 int doe_space_parse(const char *content, doe_space_t *space, char *err) {
+    if (!content || !space) {
+        if (err) snprintf(err, DOE_ERR_SIZE, "null input to doe_space_parse");
+        return -1;
+    }
     memset(space, 0, sizeof *space);
     space->trajectories = 10;
     space->grid_levels  = 4;
@@ -212,10 +216,29 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
         snprintf(err, DOE_ERR_SIZE, "no factors defined");
         return -1;
     }
+    if (space->samples > DOE_MAX_SAMPLES) {
+        snprintf(err, DOE_ERR_SIZE, "samples %zu exceeds limit %u",
+                 space->samples, (unsigned)DOE_MAX_SAMPLES);
+        return -1;
+    }
+    if (space->trajectories > DOE_MAX_TRAJECTORIES) {
+        snprintf(err, DOE_ERR_SIZE, "trajectories %zu exceeds limit %u",
+                 space->trajectories, (unsigned)DOE_MAX_TRAJECTORIES);
+        return -1;
+    }
+    if (space->grid_levels > DOE_MAX_GRID_LEVELS) {
+        snprintf(err, DOE_ERR_SIZE, "grid_levels %zu exceeds limit %u",
+                 space->grid_levels, (unsigned)DOE_MAX_GRID_LEVELS);
+        return -1;
+    }
     return 0;
 }
 
 int doe_space_parse_file(const char *path, doe_space_t *space, char *err) {
+    if (!path || !space) {
+        if (err) snprintf(err, DOE_ERR_SIZE, "null input to doe_space_parse_file");
+        return -1;
+    }
     FILE *f = fopen(path, "r");
     if (!f) {
         snprintf(err, DOE_ERR_SIZE, "cannot open '%s'", path);

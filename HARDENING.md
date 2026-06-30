@@ -76,8 +76,11 @@ corruption from absurd-but-parseable parameters.
 
 ## 5. Phases
 
-1. **Memory safety + injection (H1–H4).** Overflow-checked allocations + param caps,
-   HTML escaping, NULL guards, CSV line-truncation detection. Ship `common/tests/test_security.c`.
+1. **Memory safety + injection (H1–H4) — done (2026-06-30).** Param caps +
+   the overflow-checked `doe_size_mul_ok` in `space`/`morris`/`sobol`,
+   `doe_html_escape` wired into `report.c`, NULL guards in the parser and CSV
+   reader, and CSV line-truncation detection. Shipped `common/tests/test_security.c`
+   (7 cases) plus a report-escaping test in `robust` — 25 suite tests pass, valgrind clean.
 2. **Robustness (H5–H7).** Non-finite rejection (responses and bounds), the env-value
    data-not-code contract + control-char rejection, plus the per-tool adversarial tests.
 3. **Assurance (H8–H9 + tooling).** `.tgu` round-trip, doc notes, and a **fuzz target**:

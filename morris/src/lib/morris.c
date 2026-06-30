@@ -39,11 +39,17 @@ int morris_design_build(const doe_space_t *space, morris_design_t *d, char *err)
     const double step  = 1.0 / (double)(p - 1);
     const double Delta = (double)p / (2.0 * (double)(p - 1));
     const size_t nbase = p / 2;                 /* base indices 0 .. nbase-1 */
-    const size_t npoints = r * (k + 1);
+    size_t npoints, ucount, rkcount;
+    if (!doe_size_mul_ok(r, k + 1, &npoints) ||
+        !doe_size_mul_ok(npoints, k, &ucount) ||
+        !doe_size_mul_ok(r, k, &rkcount)) {
+        snprintf(err, DOE_ERR_SIZE, "design too large (size overflow)");
+        return -1;
+    }
 
-    double *u            = malloc(npoints * k * sizeof *u);
-    size_t *moved_factor = malloc(r * k * sizeof *moved_factor);
-    double *moved_delta  = malloc(r * k * sizeof *moved_delta);
+    double *u            = malloc(ucount * sizeof *u);
+    size_t *moved_factor = malloc(rkcount * sizeof *moved_factor);
+    double *moved_delta  = malloc(rkcount * sizeof *moved_delta);
     if (!u || !moved_factor || !moved_delta) {
         free(u); free(moved_factor); free(moved_delta);
         snprintf(err, DOE_ERR_SIZE, "out of memory");

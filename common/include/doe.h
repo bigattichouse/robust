@@ -30,6 +30,20 @@ extern "C" {
 #define DOE_MAX_NAME     64
 #define DOE_MAX_VALUE    64
 
+/* Resource caps — reject absurd .space parameters before they reach an
+ * allocation (hardening: see HARDENING.md H1). */
+#define DOE_MAX_SAMPLES       1048576u   /* Sobol N  (2^20) */
+#define DOE_MAX_TRAJECTORIES    10000u   /* Morris r        */
+#define DOE_MAX_GRID_LEVELS        64u   /* Morris p        */
+
+/* Overflow-checked size_t multiply: returns 1 and sets *out = a*b, or 0 if the
+ * product would overflow. Use before every count-based allocation. */
+static inline int doe_size_mul_ok(size_t a, size_t b, size_t *out) {
+    if (a != 0 && b > ((size_t)-1) / a) return 0;
+    if (out) *out = a * b;
+    return 1;
+}
+
 /* ============================================================================
  * PRNG — xoshiro256** seeded by splitmix64.
  * Deterministic and platform-independent: the same seed yields the same stream
@@ -96,6 +110,8 @@ double doe_std(const double *x, size_t n);
 
 /* Escape a string for embedding in a JSON document. Caller frees (doe_free). */
 char *doe_json_escape(const char *s);
+/* Escape a string for embedding in HTML text. Caller frees (doe_free). */
+char *doe_html_escape(const char *s);
 void  doe_free(void *p);
 
 /* ============================================================================

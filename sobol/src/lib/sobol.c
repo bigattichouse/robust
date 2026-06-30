@@ -29,8 +29,14 @@ int sobol_design_build(const doe_space_t *space, sobol_design_t *d, char *err) {
     if (k == 0) { snprintf(err, DOE_ERR_SIZE, "no factors"); return -1; }
     if (n < 2) { snprintf(err, DOE_ERR_SIZE, "samples must be >= 2 (got %zu)", n); return -1; }
 
-    double *A = malloc(n * k * sizeof *A);
-    double *B = malloc(n * k * sizeof *B);
+    size_t nk, npoints;
+    if (!doe_size_mul_ok(n, k, &nk) || !doe_size_mul_ok(n, k + 2, &npoints)) {
+        snprintf(err, DOE_ERR_SIZE, "design too large (size overflow)");
+        return -1;
+    }
+
+    double *A = malloc(nk * sizeof *A);
+    double *B = malloc(nk * sizeof *B);
     if (!A || !B) {
         free(A); free(B);
         snprintf(err, DOE_ERR_SIZE, "out of memory");
@@ -48,7 +54,7 @@ int sobol_design_build(const doe_space_t *space, sobol_design_t *d, char *err) {
 
     d->k = k;
     d->n = n;
-    d->npoints = n * (k + 2);
+    d->npoints = npoints;
     d->A = A;
     d->B = B;
     return 0;

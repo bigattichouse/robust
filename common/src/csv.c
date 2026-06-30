@@ -38,6 +38,10 @@ static int csv_split(char *line, char **fields, int max) {
 int doe_csv_read_metric(const char *path, const char *metric,
                         double *responses, size_t max_rows,
                         size_t *count_out, char *err) {
+    if (!path || !responses || !count_out) {
+        if (err) snprintf(err, DOE_ERR_SIZE, "null input to doe_csv_read_metric");
+        return -1;
+    }
     FILE *f = fopen(path, "r");
     if (!f) {
         snprintf(err, DOE_ERR_SIZE, "cannot open results '%s'", path);
@@ -54,6 +58,12 @@ int doe_csv_read_metric(const char *path, const char *metric,
     while (fgets(line, sizeof line, f)) {
         line_no++;
         size_t len = strlen(line);
+        if (len == sizeof line - 1 && line[len - 1] != '\n') {
+            snprintf(err, DOE_ERR_SIZE, "line %d exceeds maximum length (%zu)",
+                     line_no, sizeof line - 2);
+            fclose(f);
+            return -1;
+        }
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
             line[--len] = '\0';
         }
