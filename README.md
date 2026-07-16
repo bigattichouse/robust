@@ -36,14 +36,16 @@ CSV/JSON, and stats. See **[DESIGN.md](DESIGN.md)** for the full plan.
 ## Building
 
 ```bash
-make            # build libdoe + morris, sobol, and taguchi
-make test       # run the core + morris + sobol suites (valgrind if present)
+make            # build libdoe + morris, sobol, robust, and taguchi
+make test       # run the core + morris + sobol + robust suites (valgrind if present)
 make test-all   # also run the taguchi suite
 make clean
 ```
 
-`make` builds `libdoe`, the `morris`/`sobol` binaries (into `build/bin/`), and
-`taguchi` (via `make -C taguchi`); further tools land per the DESIGN.md roadmap.
+`make` builds `libdoe` and the `morris`/`sobol`/`robust` binaries into `build/bin/`;
+`taguchi` builds via its own sub-make (`make -C taguchi`) and is then copied into
+`build/bin/` too, so every tool binary lands in the one place. Further tools land
+per the DESIGN.md roadmap.
 
 ## Layout
 
@@ -57,11 +59,13 @@ spec/     design notes               idea, screening-methods, blueprints
 
 ## Status
 
-**`morris` and `sobol` are built and tested** (M0–M3), and **`taguchi` is folded in**
-as a peer tool: the `common/` core (seedable PRNG, `.space` parsing + scaling, fork/env
-runner, results CSV, stats), plus `morris` (μ\*/σ screening) and `sobol` (Saltelli
-Sᵢ/S_Tᵢ with bootstrap CIs). All suites pass under `-Werror` and valgrind. Next: the
-`robust` funnel (M4). See [DESIGN.md](DESIGN.md).
+**`morris`, `sobol`, and the `robust` funnel are built and tested** (M0–M4), and
+**`taguchi` is folded in** as a peer tool: the `common/` core (seedable PRNG, `.space`
+parsing + scaling, fork/env runner, results CSV, stats), `morris` (μ\*/σ screening),
+`sobol` (Saltelli Sᵢ/S_Tᵢ with bootstrap CIs), and `robust` (Morris → Sobol funnel with
+HTML/JSON reports and `.tgu` hand-off). All suites pass under `-Werror` and valgrind,
+with adversarial-input coverage per [HARDENING.md](HARDENING.md) (Phases 1–2 done).
+See [DESIGN.md](DESIGN.md).
 
 ## License
 
