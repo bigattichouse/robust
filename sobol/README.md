@@ -12,4 +12,8 @@ Splits output variance into per-factor shares: **Sᵢ** (first-order) and **S_T�
 Sampler: LHS first, then a Sobol low-discrepancy sequence (Joe-Kuo). Validated
 against the Ishigami function's closed-form indices.
 
+**Responses must be finite.** A run that yields `inf`/`nan` (e.g. a "never
+converges" sentinel) fails analysis with a clean error — variance decomposition
+on infinity is meaningless. Have your model clamp to a large finite penalty.
+
 Status: planned — see [../DESIGN.md](../DESIGN.md) §5 and roadmap **M3 / M5**.

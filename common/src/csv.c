@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 static char *trim(char *s) {
     while (*s == ' ' || *s == '\t') s++;
@@ -136,6 +137,11 @@ int doe_csv_read_metric(const char *path, const char *metric,
         if (*endp != '\0') {
             snprintf(err, DOE_ERR_SIZE, "line %d: invalid value '%s' for metric '%s'",
                      line_no, vs, metric);
+            fclose(f);
+            return -1;
+        }
+        if (!isfinite(v)) {
+            snprintf(err, DOE_ERR_SIZE, "line %d: non-finite value '%s'", line_no, vs);
             fclose(f);
             return -1;
         }

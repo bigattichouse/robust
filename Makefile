@@ -99,8 +99,16 @@ $(BUILD)/robust/cli/%.o: robust/src/cli/%.c | $(BUILD)/robust/cli
 	$(CC) $(CFLAGS) $(COMMON_INC) $(ROBUST_INC) -c $< -o $@
 
 # ---- taguchi (vendored peer tool, builds with its own Makefile) ---------
+# It builds to taguchi/build/taguchi via its own Makefile, so copy it into
+# $(BIN) alongside morris/sobol/robust. Without this, taguchi is the only tool
+# NOT in build/bin/, and downstream consumers that hardcode a path break when the
+# layout moves — which is exactly what happened to the gluesticks experiments
+# after the umbrella restructure.
 taguchi:
 	$(MAKE) -C taguchi
+	@mkdir -p $(BIN)
+	@cp -f taguchi/build/taguchi $(BIN)/taguchi
+	@echo "  taguchi -> $(BIN)/taguchi"
 
 # ---- tests --------------------------------------------------------------
 test: $(CORE_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) $(ROBUST_TEST_BIN)

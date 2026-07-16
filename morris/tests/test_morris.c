@@ -110,10 +110,49 @@ static int test_design_determinism(void) {
     return 1;
 }
 
+/* H1 — design sizing that would overflow size_t is rejected, not wrapped small. */
+static int test_design_build_overflow(void) {
+    doe_space_t sp;
+    memset(&sp, 0, sizeof sp);
+    sp.factor_count = 2;
+    strcpy(sp.factors[0].name, "a"); sp.factors[0].scale = DOE_LINEAR; sp.factors[0].lo = 0; sp.factors[0].hi = 1;
+    strcpy(sp.factors[1].name, "b"); sp.factors[1].scale = DOE_LINEAR; sp.factors[1].lo = 0; sp.factors[1].hi = 1;
+    sp.grid_levels = 4;
+    sp.trajectories = ((size_t)-1) / 2;   /* r*(k+1) overflows */
+
+    morris_design_t d;
+    char err[DOE_ERR_SIZE];
+    CHECK(morris_design_build(&sp, &d, err) != 0);
+    return 1;
+}
+
+/* H5 — a non-finite response is rejected by analyze. */
+static int test_analyze_rejects_nonfinite(void) {
+    const char *s = "factors:\n  x0: 0,1\n  x1: 0,1\nseed: 1\ntrajectories: 5\ngrid_levels: 4\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(s, &sp, err) == 0);
+
+    morris_design_t d;
+    CHECK(morris_design_build(&sp, &d, err) == 0);
+    double *y = malloc(d.npoints * sizeof *y);
+    CHECK(y != NULL);
+    for (size_t i = 0; i < d.npoints; i++) y[i] = 1.0;
+    y[2] = INFINITY;
+
+    morris_effect_t *eff = NULL; size_t n = 0;
+    CHECK(morris_analyze(&sp, y, d.npoints, &eff, &n, err) != 0);
+
+    free(y);
+    morris_design_free(&d);
+    return 1;
+}
+
 int main(void) {
     printf("morris tests\n");
     RUN_TEST(test_linear_ranking);
     RUN_TEST(test_interaction_flag);
     RUN_TEST(test_design_determinism);
+    RUN_TEST(test_design_build_overflow);
+    RUN_TEST(test_analyze_rejects_nonfinite);
     return TEST_SUMMARY();
 }

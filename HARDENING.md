@@ -81,8 +81,22 @@ corruption from absurd-but-parseable parameters.
    `doe_html_escape` wired into `report.c`, NULL guards in the parser and CSV
    reader, and CSV line-truncation detection. Shipped `common/tests/test_security.c`
    (7 cases) plus a report-escaping test in `robust` — 25 suite tests pass, valgrind clean.
-2. **Robustness (H5–H7).** Non-finite rejection (responses and bounds), the env-value
-   data-not-code contract + control-char rejection, plus the per-tool adversarial tests.
+2. **Robustness (H5–H7) — done (2026-07-16).** Non-finite responses rejected in the
+   CSV reader and both analyzers; non-finite `.space` bounds rejected (the `isfinite`
+   guard sits deliberately *before* the `a >= b` check in `parse_factor` — NaN compares
+   false against everything, so ordering alone would let a NaN bound through); control
+   characters rejected in factor names and level values; the data-not-code env contract
+   documented in `runner.c` and the `robust` README. Regression tests:
+   `common/tests/test_security.c` gained `test_space_rejects_ctrl_in_name`,
+   `test_space_rejects_ctrl_in_level`, `test_space_rejects_nonfinite_bounds` (inf **and**
+   NaN, pinned to the "finite" error), `test_csv_rejects_nonfinite_response`
+   (`inf`/`-inf`/`nan`), and the negative control `test_space_allows_utf8` (`has_ctrl`
+   rejects only C0 + DEL — non-ASCII names like `café` must keep parsing). Per-tool
+   tests cover `*_design_build` overflow and `*_analyze` on a non-finite response.
+   Behaviour change documented in the `morris`/`sobol`/`robust` READMEs: a model that
+   returns `inf`/`nan` (e.g. a "never converges" sentinel) now hard-fails analysis —
+   clamp to a large finite penalty instead.
+
 3. **Assurance (H8–H9 + tooling).** `.tgu` round-trip, doc notes, and a **fuzz target**:
    feed random bytes to `doe_space_parse` and `doe_csv_read_metric` under
    ASan/UBSan (`make fuzz`) — cheapest way to find the cases this table missed. Fold a

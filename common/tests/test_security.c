@@ -124,6 +124,77 @@ static int test_parser_boundaries(void) {
     return 1;
 }
 
+/* H6 — control characters in a factor name are rejected at parse time. */
+static int test_space_rejects_ctrl_in_name(void) {
+    doe_space_t sp;
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse("factors:\n  a\tb: 0,1\n", &sp, err) != 0);
+    CHECK(doe_space_parse("factors:\n  a\x01" "b: 0,1\n", &sp, err) != 0);
+    return 1;
+}
+
+/* H6 — control characters in a categorical level value are rejected. */
+static int test_space_rejects_ctrl_in_level(void) {
+    doe_space_t sp;
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse("factors:\n  a: x1, x\t2\n", &sp, err) != 0);
+    CHECK(doe_space_parse("factors:\n  a: x1, x\x1b" "2\n", &sp, err) != 0);
+    return 1;
+}
+
+/* H7 — non-finite bounds are rejected. The NaN case is the subtle one: NaN
+ * compares false against everything, so `a >= b` never fires for it — only the
+ * isfinite guard (deliberately placed *before* the ordering check) catches it.
+ * The strstr pins that it is the finite guard rejecting, not something else. */
+static int test_space_rejects_nonfinite_bounds(void) {
+    doe_space_t sp;
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse("factors:\n  a: 0, inf\n", &sp, err) != 0);
+    CHECK(strstr(err, "finite") != NULL);
+    CHECK(doe_space_parse("factors:\n  a: -inf, 1\n", &sp, err) != 0);
+    CHECK(strstr(err, "finite") != NULL);
+    CHECK(doe_space_parse("factors:\n  a: 0, nan\n", &sp, err) != 0);
+    CHECK(strstr(err, "finite") != NULL);
+    CHECK(doe_space_parse("factors:\n  a: nan, 1\n", &sp, err) != 0);
+    CHECK(strstr(err, "finite") != NULL);
+    return 1;
+}
+
+/* H5 — inf/nan metric values in a results CSV are rejected on read. */
+static int test_csv_rejects_nonfinite_response(void) {
+    const char *bad[] = { "inf", "-inf", "nan" };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        const char *path = "build/test_sec_nonfinite.csv";
+        FILE *f = fopen(path, "w");
+        CHECK(f != NULL);
+        fprintf(f, "1,2.5\n2,%s\n", bad[i]);
+        fclose(f);
+
+        double resp[4];
+        size_t got = 0;
+        char err[DOE_ERR_SIZE];
+        CHECK(doe_csv_read_metric(path, "response", resp, 4, &got, err) != 0);
+        CHECK(strstr(err, "non-finite") != NULL);
+        remove(path);
+    }
+    return 1;
+}
+
+/* Negative control for H6: has_ctrl rejects only C0 + DEL, so UTF-8 factor
+ * names (bytes >= 0x80) must keep parsing. Guards against "hardening" the
+ * check into ASCII-only and silently breaking non-English names. */
+static int test_space_allows_utf8(void) {
+    doe_space_t sp;
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse("factors:\n  café: 0,1\n", &sp, err) == 0);
+    CHECK(sp.factor_count == 1);
+    CHECK(strcmp(sp.factors[0].name, "café") == 0);
+    /* ...and in level values */
+    CHECK(doe_space_parse("factors:\n  mode: rápido, lento\n", &sp, err) == 0);
+    CHECK(strcmp(sp.factors[0].levels[0], "rápido") == 0);
+    return 1;
+}
+
 int main(void) {
     printf("security / adversarial-input tests\n");
     RUN_TEST(test_null_inputs);
@@ -133,5 +204,10 @@ int main(void) {
     RUN_TEST(test_csv_long_line);
     RUN_TEST(test_csv_runid_bounds);
     RUN_TEST(test_parser_boundaries);
+    RUN_TEST(test_space_rejects_ctrl_in_name);
+    RUN_TEST(test_space_rejects_ctrl_in_level);
+    RUN_TEST(test_space_rejects_nonfinite_bounds);
+    RUN_TEST(test_csv_rejects_nonfinite_response);
+    RUN_TEST(test_space_allows_utf8);
     return TEST_SUMMARY();
 }

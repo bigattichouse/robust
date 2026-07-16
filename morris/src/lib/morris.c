@@ -143,8 +143,8 @@ int morris_analyze(const doe_space_t *space, const double *responses, size_t nre
             size_t i0 = t * (k + 1) + s;
             size_t i1 = i0 + 1;
             double y0 = responses[i0], y1 = responses[i1];
-            if (isnan(y0) || isnan(y1)) {
-                snprintf(err, DOE_ERR_SIZE, "missing response for run %zu or %zu", i0 + 1, i1 + 1);
+            if (!isfinite(y0) || !isfinite(y1)) {
+                snprintf(err, DOE_ERR_SIZE, "missing or non-finite response for run %zu or %zu", i0 + 1, i1 + 1);
                 rc = -1;
                 break;
             }

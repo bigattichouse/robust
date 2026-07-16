@@ -13,5 +13,14 @@ maturity" (idea.txt) made executable.
 in-process; it shells out only to your model `<script>`, which reads
 `ROBUST_<factor>` env vars and prints one numeric response to stdout.
 
+**Security:** `ROBUST_<factor>` values are passed to the script as environment
+*data* (via `setenv`, never spliced into a command). Your script must read them as
+data — don't interpolate them into a shell / `eval` / `awk` program — so a hostile
+`.space` can't inject through it. See [../HARDENING.md](../HARDENING.md).
+
+**Responses must be finite.** A script that prints `inf`/`nan` (e.g. a "never
+converges" sentinel) hard-fails the run with a clean error rather than
+propagating NaN into the indices — clamp to a large finite penalty instead.
+
 Status: **built (M4)** — funnel + screen + report + `.tgu` hand-off, validated by
 orchestrated-process tests. See [../DESIGN.md](../DESIGN.md) §6.

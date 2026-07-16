@@ -5,6 +5,12 @@
  * environment variables, exec the user's script via `/bin/sh -c`, and wait.
  * doe_run prints exit codes (used by `morris run` / `sobol run`); doe_run_capture
  * captures each child's stdout as a numeric response (used by the orchestrator).
+ *
+ * SECURITY: factor values reach the script as <PREFIX>_<factor> environment *values*
+ * (set via setenv — never spliced into a command string). A model script must treat
+ * them as data, not code: do not interpolate <PREFIX>_* into a shell/eval/awk program,
+ * or an adversarial .space could inject through your script. Env var names are guarded
+ * against '=' and length overflow.
  */
 
 #define _POSIX_C_SOURCE 200809L

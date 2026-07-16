@@ -123,10 +123,48 @@ static int test_determinism(void) {
     return 1;
 }
 
+/* H1 — design sizing that would overflow size_t is rejected. */
+static int test_design_build_overflow(void) {
+    doe_space_t sp;
+    memset(&sp, 0, sizeof sp);
+    sp.factor_count = 2;
+    strcpy(sp.factors[0].name, "a"); sp.factors[0].scale = DOE_LINEAR; sp.factors[0].lo = 0; sp.factors[0].hi = 1;
+    strcpy(sp.factors[1].name, "b"); sp.factors[1].scale = DOE_LINEAR; sp.factors[1].lo = 0; sp.factors[1].hi = 1;
+    sp.samples = (size_t)-1;   /* n*k overflows */
+
+    sobol_design_t d;
+    char err[DOE_ERR_SIZE];
+    CHECK(sobol_design_build(&sp, &d, err) != 0);
+    return 1;
+}
+
+/* H5 — a non-finite response is rejected by analyze. */
+static int test_analyze_rejects_nonfinite(void) {
+    const char *s = "factors:\n  a: 0,1\n  b: 0,1\nseed: 1\nsamples: 64\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(s, &sp, err) == 0);
+
+    sobol_design_t d;
+    CHECK(sobol_design_build(&sp, &d, err) == 0);
+    double *y = malloc(d.npoints * sizeof *y);
+    CHECK(y != NULL);
+    for (size_t i = 0; i < d.npoints; i++) y[i] = 1.0;
+    y[0] = NAN;
+
+    sobol_index_t *ix = NULL; size_t n = 0;
+    CHECK(sobol_analyze(&sp, y, d.npoints, &ix, &n, err) != 0);
+
+    free(y);
+    sobol_design_free(&d);
+    return 1;
+}
+
 int main(void) {
     printf("sobol tests\n");
     RUN_TEST(test_additive);
     RUN_TEST(test_ishigami);
     RUN_TEST(test_determinism);
+    RUN_TEST(test_design_build_overflow);
+    RUN_TEST(test_analyze_rejects_nonfinite);
     return TEST_SUMMARY();
 }

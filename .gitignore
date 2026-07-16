@@ -6,6 +6,17 @@ build/
 *.dylib
 *.dll
 
+# Python (the bindings at taguchi/bindings/python are a Python package;
+# without these, __pycache__ and egg-info get committed as orphaned artifacts)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
 # Editor / OS
 *.swp
 .DS_Store

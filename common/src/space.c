@@ -44,6 +44,14 @@ static int is_number(const char *s, double *out) {
     return 1;
 }
 
+static int has_ctrl(const char *s) {
+    for (; *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        if (c < 0x20 || c == 0x7f) return 1;   /* control char (UTF-8 bytes >= 0x80 allowed) */
+    }
+    return 0;
+}
+
 static int parse_factor(const char *name, char *value, doe_factor_t *f, char *err) {
     doe_scale_t scale = DOE_LINEAR;
     int have_marker = 0;
@@ -97,6 +105,10 @@ static int parse_factor(const char *name, char *value, doe_factor_t *f, char *er
         snprintf(err, DOE_ERR_SIZE, "factor name '%s' too long (max %d)", name, DOE_MAX_NAME - 1);
         return -1;
     }
+    if (has_ctrl(name)) {
+        snprintf(err, DOE_ERR_SIZE, "factor name has control characters");
+        return -1;
+    }
 
     memset(f, 0, sizeof *f);
     strncpy(f->name, name, DOE_MAX_NAME - 1);
@@ -106,6 +118,10 @@ static int parse_factor(const char *name, char *value, doe_factor_t *f, char *er
         if (ntok != 2 || !is_number(toks[0], &a) || !is_number(toks[1], &b)) {
             snprintf(err, DOE_ERR_SIZE, "factor '%s': %s scale needs two numeric bounds",
                      name, scale == DOE_LOG ? "log" : "linear");
+            return -1;
+        }
+        if (!isfinite(a) || !isfinite(b)) {
+            snprintf(err, DOE_ERR_SIZE, "factor '%s': bounds must be finite", name);
             return -1;
         }
         if (a >= b) {
@@ -129,6 +145,10 @@ static int parse_factor(const char *name, char *value, doe_factor_t *f, char *er
         for (size_t i = 0; i < ntok; i++) {
             if (strlen(toks[i]) >= DOE_MAX_VALUE) {
                 snprintf(err, DOE_ERR_SIZE, "factor '%s': level '%s' too long", name, toks[i]);
+                return -1;
+            }
+            if (has_ctrl(toks[i])) {
+                snprintf(err, DOE_ERR_SIZE, "factor '%s': level has control characters", name);
                 return -1;
             }
             strncpy(f->levels[i], toks[i], DOE_MAX_VALUE - 1);

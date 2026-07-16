@@ -125,8 +125,8 @@ int sobol_analyze(const doe_space_t *space, const double *responses, size_t nres
         return -1;
     }
     for (size_t i = 0; i < M; i++) {
-        if (isnan(responses[i])) {
-            snprintf(err, DOE_ERR_SIZE, "missing response for run %zu", i + 1);
+        if (!isfinite(responses[i])) {
+            snprintf(err, DOE_ERR_SIZE, "missing or non-finite response for run %zu", i + 1);
             sobol_design_free(&d);
             return -1;
         }
