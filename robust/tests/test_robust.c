@@ -4,6 +4,8 @@
  * survivors, results are reproducible, and the reports are self-contained.
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include "robust.h"
 #include "test_framework.h"
 
@@ -11,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
 
 /* in-process evaluator: scale each design point and apply an analytic function */
 typedef double (*scalar_fn)(const double *x, size_t k);
@@ -200,6 +203,48 @@ static int test_report_escapes_hostile_name(void) {
     return 1;
 }
 
+/* H8 — the survivors .tgu robust writes must be accepted by `taguchi validate`:
+ * the funnel→bench hand-off round-trips through taguchi's (already hardened)
+ * parser. Covers all three writer branches: linear, log, categorical. */
+static const char *find_taguchi(void) {
+    static const char *cands[] = { "build/bin/taguchi", "taguchi/build/taguchi" };
+    for (size_t i = 0; i < sizeof cands / sizeof cands[0]; i++) {
+        if (access(cands[i], X_OK) == 0) return cands[i];
+    }
+    return NULL;
+}
+
+static int test_tgu_roundtrip_taguchi_validate(void) {
+    const char *tg = find_taguchi();
+    CHECK(tg != NULL);   /* needs the taguchi binary — `make taguchi` first */
+
+    robust_result_t r;
+    memset(&r, 0, sizeof r);
+    doe_space_t *s = &r.subspace;
+    s->factor_count = 3;
+    strcpy(s->factors[0].name, "temp");
+    s->factors[0].scale = DOE_LINEAR; s->factors[0].lo = 20; s->factors[0].hi = 80;
+    strcpy(s->factors[1].name, "conc");
+    s->factors[1].scale = DOE_LOG; s->factors[1].lo = 1e-6; s->factors[1].hi = 1;
+    strcpy(s->factors[2].name, "mode");
+    s->factors[2].scale = DOE_CATEGORICAL; s->factors[2].level_count = 3;
+    strcpy(s->factors[2].levels[0], "fast");
+    strcpy(s->factors[2].levels[1], "slow");
+    strcpy(s->factors[2].levels[2], "turbo_v2");
+
+    const char *tgu = "build/robust_h8_roundtrip.tgu";
+    char err[DOE_ERR_SIZE];
+    CHECK(robust_write_tgu(&r, tgu, err) == 0);
+
+    char cmd[512];
+    snprintf(cmd, sizeof cmd, "./%s validate %s > /dev/null 2>&1", tg, tgu);
+    CHECK(system(cmd) == 0);
+
+    remove(tgu);
+    /* r.subspace is inline and nothing was allocated — no robust_result_free */
+    return 1;
+}
+
 int main(void) {
     printf("robust funnel tests\n");
     RUN_TEST(test_funnel_screen_and_attribute);
@@ -207,5 +252,6 @@ int main(void) {
     RUN_TEST(test_funnel_determinism);
     RUN_TEST(test_report_outputs);
     RUN_TEST(test_report_escapes_hostile_name);
+    RUN_TEST(test_tgu_roundtrip_taguchi_validate);
     return TEST_SUMMARY();
 }

@@ -22,5 +22,10 @@ data — don't interpolate them into a shell / `eval` / `awk` program — so a h
 converges" sentinel) hard-fails the run with a clean error rather than
 propagating NaN into the indices — clamp to a large finite penalty instead.
 
+**Output paths are trusted as given.** `--html`/`--json`/`--tgu` come from your
+own invocation (never from the `.space`), and robust simply overwrites whatever
+they point to — no symlink or privilege checks. Don't run it with elevated
+privileges against paths you don't control.
+
 Status: **built (M4)** — funnel + screen + report + `.tgu` hand-off, validated by
 orchestrated-process tests. See [../DESIGN.md](../DESIGN.md) §6.

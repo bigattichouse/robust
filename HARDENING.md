@@ -97,10 +97,26 @@ corruption from absurd-but-parseable parameters.
    returns `inf`/`nan` (e.g. a "never converges" sentinel) now hard-fails analysis —
    clamp to a large finite penalty instead.
 
-3. **Assurance (H8–H9 + tooling).** `.tgu` round-trip, doc notes, and a **fuzz target**:
-   feed random bytes to `doe_space_parse` and `doe_csv_read_metric` under
-   ASan/UBSan (`make fuzz`) — cheapest way to find the cases this table missed. Fold a
-   sanitizer build and `make test` into CI.
+3. **Assurance (H8–H9 + tooling) — done (2026-07-16).**
+   - **H8:** `test_tgu_roundtrip_taguchi_validate` (robust suite) writes a survivors
+     `.tgu` covering all three writer branches (linear, log, categorical) and asserts
+     `taguchi validate` accepts it — the funnel→bench hand-off round-trips through
+     taguchi's hardened parser. `make test` now builds taguchi first for this.
+   - **H9:** documented in the `robust` README — output paths are the caller's own,
+     never from the `.space`; no symlink/privilege checks are made.
+   - **`make fuzz`:** `common/tests/fuzz_parsers.c` feeds deterministic
+     random-bytes / dictionary-soup / template-mutation inputs to `doe_space_parse`
+     and `doe_csv_read_metric` under ASan/UBSan, asserting the err buffer is always
+     NUL-terminated. Seedable (`./build/fuzz_parsers <seed> <iters>`); clean over
+     600k space + 60k CSV inputs across three seeds.
+   - **`make test-asan`:** re-runs every suite under ASan/UBSan in its own object
+     tree (`build/asan`), kept separate from `test`'s valgrind pass (the two can't
+     run together).
+   - **CI:** `.github/workflows/ci.yml` runs `make all` → `make test-all` (valgrind)
+     → `make test-asan` → `make fuzz` on every push/PR.
+
+All nine backlog items (H1–H9) are closed. New findings — e.g. anything a longer fuzz
+run turns up — go on a fresh backlog.
 
 **Invariant for every fix:** the offending input returns `-1` with a bounded,
 NUL-terminated `err` message and performs **no** allocation it can't account for —

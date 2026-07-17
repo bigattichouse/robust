@@ -49,7 +49,7 @@ ROBUST_DEPS     = $(ROBUST_LIB_OBJ) $(MORRIS_LIB_OBJ) $(SOBOL_LIB_OBJ) $(COMMON_
 CORE_TEST_BIN = $(BUILD)/test_doe
 SEC_TEST_BIN  = $(BUILD)/test_security
 
-.PHONY: all common morris sobol robust taguchi tools test test-taguchi test-all clean
+.PHONY: all common morris sobol robust taguchi tools test run-tests test-asan fuzz test-taguchi test-all clean
 
 all: common morris sobol robust taguchi
 
@@ -111,12 +111,21 @@ taguchi:
 	@echo "  taguchi -> $(BIN)/taguchi"
 
 # ---- tests --------------------------------------------------------------
-test: $(CORE_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) $(ROBUST_TEST_BIN)
+TEST_BINS = $(CORE_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) $(ROBUST_TEST_BIN)
+
+# Build + run the suites, nothing else. `test` adds valgrind on top; `test-asan`
+# reuses this under sanitizers (valgrind and ASan cannot run together).
+# The robust suite's H8 round-trip test invokes the taguchi binary, so `test`
+# builds taguchi first; `test-asan` does the same at the top level, with normal
+# flags, before recursing (so taguchi's own sub-make never sees sanitizer flags).
+run-tests: $(TEST_BINS)
 	./$(CORE_TEST_BIN)
 	./$(SEC_TEST_BIN)
 	./$(MORRIS_TEST_BIN)
 	./$(SOBOL_TEST_BIN)
 	./$(ROBUST_TEST_BIN)
+
+test: taguchi run-tests
 	@if command -v valgrind >/dev/null 2>&1; then \
 		echo "Running valgrind..."; \
 		valgrind --leak-check=full --error-exitcode=1 ./$(CORE_TEST_BIN)   >/dev/null 2>&1 && echo "  test_doe: clean"; \
@@ -142,6 +151,20 @@ $(SOBOL_TEST_BIN): $(SOBOL_TEST_SRC) $(SOBOL_LIB_OBJ) $(COMMON_OBJ) | $(BUILD)
 
 $(ROBUST_TEST_BIN): $(ROBUST_TEST_SRC) $(ROBUST_DEPS) | $(BUILD)
 	$(CC) $(CFLAGS) $(COMMON_INC) $(ROBUST_INC) -I$(COMMON_DIR)/tests $(ROBUST_TEST_SRC) $(ROBUST_DEPS) -o $@ $(LDFLAGS)
+
+# ---- sanitizers + fuzz (HARDENING.md Phase 3) ----------------------------
+SANFLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer
+FUZZ_BIN = $(BUILD)/fuzz_parsers
+
+# Re-run every suite under ASan/UBSan in its own object tree (build/asan).
+test-asan: taguchi
+	$(MAKE) BUILD=build/asan CFLAGS="$(CFLAGS) $(SANFLAGS)" run-tests
+
+# Deterministic random-input fuzz of doe_space_parse + doe_csv_read_metric
+# under ASan/UBSan. Seedable: ./build/fuzz_parsers <seed> <iters>.
+fuzz: | $(BUILD)
+	$(CC) $(CFLAGS) $(SANFLAGS) $(COMMON_INC) common/tests/fuzz_parsers.c $(COMMON_SRC) -o $(FUZZ_BIN) $(LDFLAGS)
+	./$(FUZZ_BIN)
 
 # ---- aggregate targets --------------------------------------------------
 tools:

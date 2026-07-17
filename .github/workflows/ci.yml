@@ -1,0 +1,30 @@
+# CI — build + full test discipline (HARDENING.md Phase 3).
+# Every push/PR gets: -Werror build of the umbrella + taguchi, all C suites
+# under valgrind, the same suites again under ASan/UBSan, and the parser fuzz.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Build (libdoe + morris/sobol/robust + taguchi)
+        run: make all
+
+      - name: Test (all C suites + valgrind, incl. taguchi)
+        run: make test-all
+
+      - name: Test under ASan/UBSan
+        run: make test-asan
+
+      - name: Fuzz parsers under ASan/UBSan
+        run: make fuzz
