@@ -64,7 +64,7 @@ spec/     design notes               idea, screening-methods, blueprints
 parsing + scaling, fork/env runner, results CSV, stats), `morris` (μ\*/σ screening),
 `sobol` (Saltelli Sᵢ/S_Tᵢ with bootstrap CIs), and `robust` (Morris → Sobol funnel with
 HTML/JSON reports and `.tgu` hand-off). All suites pass under `-Werror` and valgrind,
-with adversarial-input coverage per [HARDENING.md](HARDENING.md) (Phases 1–2 done).
+with adversarial-input coverage per [SECURITY.md](SECURITY.md).
 See [DESIGN.md](DESIGN.md).
 
 ## License

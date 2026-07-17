@@ -1,6 +1,6 @@
 /*
  * fuzz_parsers.c — deterministic random-input fuzz for doe_space_parse and
- * doe_csv_read_metric (HARDENING.md Phase 3). Built and run with ASan/UBSan
+ * doe_csv_read_metric (see SECURITY.md). Built and run with ASan/UBSan
  * via `make fuzz`. Not coverage-guided; three generation strategies per input:
  *
  *   1. pure random bytes

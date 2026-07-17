@@ -1,7 +1,7 @@
 /*
- * test_security.c — adversarial-input tests for the libdoe core (HARDENING.md
- * Phase 1). Hostile .space / results input must produce a clean error, never a
- * crash, overflow, or injection.
+ * test_security.c — adversarial-input tests for the libdoe core (H-IDs refer
+ * to SECURITY.md). Hostile .space / results input must produce a clean error,
+ * never a crash, overflow, or injection.
  */
 
 #include "doe.h"

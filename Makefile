@@ -152,7 +152,7 @@ $(SOBOL_TEST_BIN): $(SOBOL_TEST_SRC) $(SOBOL_LIB_OBJ) $(COMMON_OBJ) | $(BUILD)
 $(ROBUST_TEST_BIN): $(ROBUST_TEST_SRC) $(ROBUST_DEPS) | $(BUILD)
 	$(CC) $(CFLAGS) $(COMMON_INC) $(ROBUST_INC) -I$(COMMON_DIR)/tests $(ROBUST_TEST_SRC) $(ROBUST_DEPS) -o $@ $(LDFLAGS)
 
-# ---- sanitizers + fuzz (HARDENING.md Phase 3) ----------------------------
+# ---- sanitizers + fuzz (see SECURITY.md) ----------------------------------
 SANFLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer
 FUZZ_BIN = $(BUILD)/fuzz_parsers
 

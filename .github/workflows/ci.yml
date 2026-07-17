@@ -1,4 +1,4 @@
-# CI — build + full test discipline (HARDENING.md Phase 3).
+# CI — build + full test discipline (see SECURITY.md).
 # Every push/PR gets: -Werror build of the umbrella + taguchi, all C suites
 # under valgrind, the same suites again under ASan/UBSan, and the parser fuzz.
 name: CI

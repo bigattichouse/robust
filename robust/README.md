@@ -16,7 +16,7 @@ in-process; it shells out only to your model `<script>`, which reads
 **Security:** `ROBUST_<factor>` values are passed to the script as environment
 *data* (via `setenv`, never spliced into a command). Your script must read them as
 data — don't interpolate them into a shell / `eval` / `awk` program — so a hostile
-`.space` can't inject through it. See [../HARDENING.md](../HARDENING.md).
+`.space` can't inject through it. See [../SECURITY.md](../SECURITY.md).
 
 **Responses must be finite.** A script that prints `inf`/`nan` (e.g. a "never
 converges" sentinel) hard-fails the run with a clean error rather than

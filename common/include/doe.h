@@ -31,7 +31,7 @@ extern "C" {
 #define DOE_MAX_VALUE    64
 
 /* Resource caps — reject absurd .space parameters before they reach an
- * allocation (hardening: see HARDENING.md H1). */
+ * allocation (hardening: see SECURITY.md H1). */
 #define DOE_MAX_SAMPLES       1048576u   /* Sobol N  (2^20) */
 #define DOE_MAX_TRAJECTORIES    10000u   /* Morris r        */
 #define DOE_MAX_GRID_LEVELS        64u   /* Morris p        */
