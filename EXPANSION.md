@@ -15,6 +15,15 @@ Every addition inherits the house rules: C99 `-Werror`, valgrind/ASan-clean,
 deterministic from the `.space` seed, the clean-error invariant of SECURITY.md,
 and validation against a closed-form reference before it ships.
 
+**Delivery shape — standalone Unix tools.** Each capability ships as its own
+small binary in the DESIGN.md mold: read a `.space` and/or a results CSV (file
+or stdin), write text/CSV/JSON to stdout, exit nonzero with a clean error on
+stderr. Filters (`pareto`, `desire`) emit the same CSV dialect they consume, so
+they compose in pipelines and every downstream tool works unchanged. `robust`
+and `report` are *consumers* of these tools' output, never the only door to a
+feature. Analysis flags land on an existing binary only when the math is
+inseparable from that tool's design (e.g. DGSM needs the Morris trajectories).
+
 ---
 
 ## E0. Prerequisites (do first, small)
@@ -34,13 +43,13 @@ and validation against a closed-form reference before it ships.
 
 | Item | What it adds | Sketch | Validation |
 |---|---|---|---|
-| **SRC / SRRC + R²** | *Direction* of each effect (raise `temp` → response up or down?) — the one thing variance shares can't say. R² doubles as a trust diagnostic: ≈1 ⇒ the linear story suffices; low ⇒ the variance-based indices were needed. | OLS on the (standardized) sample matrix; SRRC = same on ranks for monotone-nonlinear models. A few hundred lines in `common/` (stats.c grows a small least-squares). | Exact on a known linear model (`y = 10x0 + 5x1`): SRC ∝ coefficients, R² = 1. |
-| **Output UQ summary** | What the output *distribution* looks like, not just who drives it: mean, variance, P5/P50/P95, histogram + empirical CDF as SVG in the report. | Sort + percentile + binning over the already-captured responses; render in `report.c`. | Percentiles of a uniform-driven linear model match closed form. |
-| **Morris μ\* bootstrap CIs** | Error bars on the keep/drop cut, so `--keep-fraction` decisions aren't made on point estimates. | Bootstrap over trajectories (the CI machinery already exists in `sobol`). | CI shrinks ~1/√r; covers the analytic μ\* on a linear model. |
-| **Pareto chart of effects** | The classic DOE view: contribution bars ranked largest-first with a cumulative-share line — the "vital few vs trivial many" read of μ\* or Sᵢ at a glance. | Sort + cumulative sum over indices already computed; SVG bars in `report.c`. | Cumulative line reaches 100%; bar order matches the ranked indices exactly. |
+| **`regress`** — SRC/SRRC + R² | *Direction* of each effect (raise `temp` → response up or down?) — the one thing variance shares can't say. R² doubles as a trust diagnostic: ≈1 ⇒ the linear story suffices; low ⇒ the variance-based indices were needed. | Standalone: `regress <file.space> <results.csv>` → ranked coefficient table (`--json` for machines). OLS on the standardized sample matrix; SRRC = same on ranks. `common/stats.c` grows the small least-squares core. | Exact on a known linear model (`y = 10x0 + 5x1`): SRC ∝ coefficients, R² = 1. |
+| **`uq`** — output distribution summary | What the output *distribution* looks like, not just who drives it: mean, variance, P5/P50/P95, histogram + empirical CDF. | Standalone: `uq <results.csv>` (or stdin) → text summary; `--svg` emits the histogram/CDF panel that `report` embeds. Sort + percentiles + binning. | Percentiles of a uniform-driven linear model match closed form. |
+| **Morris μ\* bootstrap CIs** | Error bars on the keep/drop cut, so `--keep-fraction` decisions aren't made on point estimates. | Flag on `morris analyze` — inseparable from the trajectory structure (the CI machinery already exists in `sobol`). | CI shrinks ~1/√r; covers the analytic μ\* on a linear model. |
+| **Pareto chart of effects** | The classic DOE view: contribution bars ranked largest-first with a cumulative-share line — the "vital few vs trivial many" read of μ\* or Sᵢ at a glance. | Presentation of already-computed indices: lands in the standalone `report` tool (M6) and `robust report`. Sort + cumulative sum, SVG bars. | Cumulative line reaches 100%; bar order matches the ranked indices exactly. |
 
-Deliverable: `robust` report gains a regression table + distribution panel +
-Pareto panel; `morris analyze` gains CI columns. The funnel also gains a
+Deliverable: two new binaries (`regress`, `uq`) under `tools/`, CI columns on
+`morris analyze`, and the Pareto panel in `report`. The funnel also gains a
 Pareto-style keep rule — `--keep-share S` keeps top factors until cumulative
 μ\*-share ≥ S (an 80/20 cut, vs `--keep-fraction`'s point threshold).
 **This is the highest value-per-effort tier.**
@@ -101,21 +110,34 @@ setting differs from the mean-optimal one exactly as constructed.
 The results CSV already carries multiple metric columns; the funnel analyzes
 one. Real experiments trade objectives off (yield ↑ vs cost ↓ vs cycle time ↓):
 
-- **`objectives:` in `.space`** — `yield: max`, `cost: min` — declaring which
-  metrics matter and their direction (parser hardening rules apply).
+Two new standalone filters that read and write the results-CSV dialect, so
+they compose with everything else:
+
+- **`pareto`** — non-dominated filter: `pareto --max yield --min cost
+  results.csv` → the front members, same CSV format out (`--svg` for the 2-D
+  scatter with the front highlighted). A simple O(n²) dominance filter,
+  deterministic, no new sampling; the surviving rows' settings are the
+  candidate operating points.
+- **`desire`** — Derringer–Suich desirability: maps each metric to [0,1],
+  combines by geometric mean, and *appends a `desirability` column* — so the
+  entire existing single-response pipeline (screen → attribute → RSM optimize)
+  runs on its output unchanged. The scalar path and the front view complement
+  each other: one recommends, the other shows the trade-off space.
+
+```
+desire --max yield --min cost results.csv > scored.csv     # adds a column
+sobol analyze model.space scored.csv --metric desirability # pipeline unchanged
+pareto --max yield --min cost results.csv > front.csv      # the trade-off set
+```
+
+Supporting changes:
+
+- **`objectives:` in `.space`** — `yield: max`, `cost: min` — the declared
+  default for both filters (CLI flags override; parser hardening rules apply).
 - **Per-metric analysis:** run the screen/attribution once per declared metric;
   report indices side by side (a factor inert for yield may drive cost).
-- **Pareto front extraction:** the non-dominated subset of *completed* runs — a
-  simple O(n²) dominance filter, deterministic, no new sampling. Report it as a
-  table plus a 2-D scatter SVG with the front highlighted; the front members'
-  settings are the candidate operating points.
-- **Desirability scalarization (Derringer–Suich):** map each metric to [0,1],
-  combine by geometric mean → a single response the *entire existing pipeline*
-  (screen → attribute → RSM optimize) runs on unchanged. The scalar path and
-  the front view complement each other: one recommends, the other shows the
-  trade-off space.
 - **E5 tie-in:** mean performance vs S/N robustness is itself a two-objective
-  problem — the robust-design stage should report *its* Pareto front too.
+  problem — pipe the robust-design stage's output through `pareto` too.
 
 Validation: on a synthetic bi-objective with a known front (e.g. `y1 = x`,
 `y2 = 1 − x²`), the extracted set matches the analytic front; the desirability
@@ -128,13 +150,13 @@ optimum matches closed form; a dominated point never appears in the front.
 | Milestone | Deliverable | Depends on | |
 |---|---|---|---|
 | **E0** | `second_order` rejected until implemented; M5–M7 closed out. | — | |
-| **E1** | SRC/SRRC + R², output UQ panel, Pareto chart + `--keep-share`, Morris μ\* CIs. | E0 | |
+| **E1** | `regress` + `uq` tools, Pareto chart in `report`, `--keep-share`, Morris μ\* CIs. | E0 | |
 | **E2** | `--target-ci` sequential convergence for morris + sobol. | E1 (CIs) | |
 | **E3** | `pawn` tool; `morris analyze --dgsm`; (optional) eFAST cross-check. | E1 | |
 | **E4** | `rsm` tool + `robust funnel --optimize`. | E1 (LSQ), M6 | |
 | **E5** | `noise:` factors, crossed designs, S/N analysis. | E4 | |
 | **E6** | PCE surrogate; Shapley (gated on correlated inputs). | E3 | |
-| **E7** | `objectives:`, per-metric analysis, Pareto-front extraction, desirability. | E1; E4 for the optimize path | |
+| **E7** | `pareto` + `desire` filter tools, `objectives:`, per-metric analysis. | E1; E4 for the optimize path | |
 
 **Recommended order: E0 → E1 → E2, then E3 and E4 in either order.** E1 is the
 cheapest large win (direction + distribution from runs already paid for); E4
