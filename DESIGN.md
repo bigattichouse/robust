@@ -293,8 +293,9 @@ funnel orchestrator, all suites green under `-Werror` and valgrind.
 | **MI** | **Taguchi integration** — folded in + GitHub repo renamed to robust (§12). | ✓ |
 | **M7** | Python (ctypes) bindings mirroring taguchi; CI running `make test`. | |
 
-Beyond M7 — new methods (PAWN, DGSM, RSM, noise factors, PCE) and post-run
-analysis (SRC/SRRC, UQ summaries, convergence targets): see **EXPANSION.md**.
+Beyond M7 — new methods (PAWN, DGSM, RSM, noise factors, PCE), post-run
+analysis (SRC/SRRC, UQ summaries, Pareto charts, convergence targets), and
+multi-response Pareto fronts: see **EXPANSION.md**.
 
 ## 12. Taguchi integration (done 2026-06-29)
 
