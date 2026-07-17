@@ -293,6 +293,9 @@ funnel orchestrator, all suites green under `-Werror` and valgrind.
 | **MI** | **Taguchi integration** — folded in + GitHub repo renamed to robust (§12). | ✓ |
 | **M7** | Python (ctypes) bindings mirroring taguchi; CI running `make test`. | |
 
+Beyond M7 — new methods (PAWN, DGSM, RSM, noise factors, PCE) and post-run
+analysis (SRC/SRRC, UQ summaries, convergence targets): see **EXPANSION.md**.
+
 ## 12. Taguchi integration (done 2026-06-29)
 
 `robust` will absorb `taguchi` into one repo so users get every tool from a

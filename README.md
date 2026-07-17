@@ -31,7 +31,8 @@ deterministic simulator to find what matters; Taguchi runs on the bench to optim
 
 All of them share one `.space` factor-definition format and a common C core
 (`common/libdoe`) holding the PRNG, sampling, factor scaling, the fork/env run-loop,
-CSV/JSON, and stats. See **[DESIGN.md](DESIGN.md)** for the full plan.
+CSV/JSON, and stats. See **[DESIGN.md](DESIGN.md)** for the full plan and
+**[EXPANSION.md](EXPANSION.md)** for the methods roadmap beyond it.
 
 ## Building
 
