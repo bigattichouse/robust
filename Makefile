@@ -197,6 +197,7 @@ run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN)
 	./$(TAGUCHI_TEST_BIN)
 	./$(TAGUCHI_INTEG_BIN)
 	@TAGUCHI=$(TAGUCHI_BIN) bash $(TAGUCHI_DIR)/tests/test_csv_multicolumn.sh
+	@TAGUCHI=$(TAGUCHI_BIN) bash $(TAGUCHI_DIR)/tests/test_cli.sh
 
 # The valgrind stage used to be a sequence of `valgrind ... && echo clean;`
 # lines. Because each ended in `;`, only the LAST suite's exit status reached
@@ -354,6 +355,7 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 	./$(TAGUCHI_TEST_BIN)
 	./$(TAGUCHI_INTEG_BIN)
 	@TAGUCHI=$(TAGUCHI_BIN) bash $(TAGUCHI_DIR)/tests/test_csv_multicolumn.sh
+	@TAGUCHI=$(TAGUCHI_BIN) bash $(TAGUCHI_DIR)/tests/test_cli.sh
 
 test-all: test
 
