@@ -120,7 +120,19 @@ void  doe_free(void *p);
 
 /* Latin Hypercube: fill out[n*k] (row-major) with a sample in [0,1). */
 int doe_sample_lhs(doe_rng_t *rng, size_t n, size_t k, double *out);
-/* Sobol low-discrepancy sequence (Joe-Kuo direction numbers). */
+/*
+ * Sobol low-discrepancy sequence (Joe-Kuo direction numbers).
+ *
+ * NOT IMPLEMENTED YET (M5). It always returns -1 and writes NOTHING to `out`,
+ * so a caller that ignores the return value reads uninitialised memory --
+ * deliberately, because a sanitizer will catch that immediately, whereas
+ * plausible-looking zeros would sail through and quietly corrupt a design.
+ * Check the return value.
+ *
+ * When implementing: `sobol` needs A and B as the left and right halves of a
+ * single 2k-dimensional sequence, NOT two k-dimensional draws. See the comment
+ * at the draw site in attribute/sobol/src/lib/sobol.c before starting.
+ */
 int doe_sample_sobol(size_t n, size_t k, double *out);
 
 /* ============================================================================

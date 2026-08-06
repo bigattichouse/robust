@@ -51,13 +51,23 @@ taguchi_experiment_def_t *taguchi_parse_definition(const char *content, char *er
 }
 
 taguchi_experiment_def_t *taguchi_create_definition(const char *array_type) {
+    /*
+     * NULL means "choose an array for me": an empty array_type is exactly what
+     * generate_experiments() treats as a request for auto-selection. This used
+     * to reach strlen(NULL) and segfault, which matters more than it looks --
+     * this is the entry point the language bindings call, so a Python None or
+     * a JS null took the whole process down rather than returning an error.
+     */
+    if (array_type == NULL) array_type = "";
+
     taguchi_experiment_def_t *def = xmalloc(sizeof(taguchi_experiment_def_t));
     memset(&def->internal_def, 0, sizeof(def->internal_def));
-    
+
     if (strlen(array_type) >= sizeof(def->internal_def.array_type)) {
+        free(def);          /* was leaked on this path */
         return NULL;
     }
-    
+
     strcpy(def->internal_def.array_type, array_type);
     return def;
 }

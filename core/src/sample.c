@@ -35,7 +35,12 @@ int doe_sample_lhs(doe_rng_t *rng, size_t n, size_t k, double *out) {
     return 0;
 }
 
+/*
+ * TODO(M5): Joe-Kuo Sobol sequence. Until then this always fails, and it
+ * deliberately leaves `out` untouched -- see the contract in doe.h. Nothing
+ * calls it today; `sobol` uses doe_sample_lhs.
+ */
 int doe_sample_sobol(size_t n, size_t k, double *out) {
     (void)n; (void)k; (void)out;
-    return -1;   /* TODO(M5): Sobol low-discrepancy sequence */
+    return -1;
 }

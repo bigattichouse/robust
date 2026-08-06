@@ -42,9 +42,11 @@ taguchi_experiment_def_t *taguchi_parse_definition(
 
 /**
  * Create experiment definition programmatically.
- * 
- * @param array_type Array type (e.g., "L4", "L9", "L16")
- * @return Experiment definition handle, or NULL on error
+ *
+ * @param array_type Array type (e.g., "L4", "L9", "L16"). Pass NULL or "" to
+ *                   have a suitable array chosen automatically at generation
+ *                   time.
+ * @return Experiment definition handle, or NULL on error (array_type too long)
  */
 taguchi_experiment_def_t *taguchi_create_definition(const char *array_type);
 
@@ -331,7 +333,12 @@ void taguchi_free_effects(taguchi_main_effect_t **effects, size_t count);
  * @param effects Array of effect pointers
  * @param effect_count Number of effects
  * @param higher_is_better True if maximizing metric
- * @param recommendation_buf Output buffer for recommendation
+ * @param recommendation_buf Output buffer for recommendation. Receives a
+ *        comma-separated list naming the best LEVEL INDEX per factor, 1-based,
+ *        in the form "A=level_3, B=level_1". It reports indices rather than
+ *        level values, so a caller wanting the value must map the index back
+ *        through its own level list (the same order given to
+ *        taguchi_add_factor, and the order of taguchi_effect_get_level_means).
  * @param buf_size Size of output buffer
  * @return 0 on success, -1 on error
  */

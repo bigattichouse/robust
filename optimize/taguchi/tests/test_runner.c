@@ -6,6 +6,15 @@ extern void test_set_error_with_args(void);
 extern void test_set_error_truncation(void);
 extern void test_set_error_null_buffer(void);
 
+/* Declare test functions from test_public_api.c */
+extern void test_api_create_definition_and_add_factors(void);
+extern void test_api_add_factor_rejects_bad_input(void);
+extern void test_api_create_definition_null_array_is_auto(void);
+extern void test_api_full_workflow_effects_and_recommendation(void);
+extern void test_api_analysis_rejects_null(void);
+extern void test_api_recommend_rejects_bad_buffer(void);
+extern void test_api_json_of_nothing_is_empty_array(void);
+
 /* Declare test functions from test_serializer.c */
 extern void test_serializer_escape_null_and_empty(void);
 extern void test_serializer_escape_plain_text_unchanged(void);
@@ -307,6 +316,15 @@ int main(void) {
     RUN_TEST(serializer_runs_many_runs_growth);
     RUN_TEST(serializer_effects_placeholder);
     RUN_TEST(serializer_free_null_is_safe);
+
+    printf("\nPublic API Tests:\n");
+    RUN_TEST(api_create_definition_and_add_factors);
+    RUN_TEST(api_add_factor_rejects_bad_input);
+    RUN_TEST(api_create_definition_null_array_is_auto);
+    RUN_TEST(api_full_workflow_effects_and_recommendation);
+    RUN_TEST(api_analysis_rejects_null);
+    RUN_TEST(api_recommend_rejects_bad_buffer);
+    RUN_TEST(api_json_of_nothing_is_empty_array);
 
     printf("\nSecurity Tests:\n");
     RUN_TEST(parse_oversized_factor_name);

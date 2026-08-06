@@ -51,8 +51,8 @@ unaccounted allocation. Enforced by:
   `pareto_read_csv` and `pareto_front_load`
   (`analyze/pareto/tests/fuzz_pareto.c`). **Every new parser gets a target here.**
 - `make coverage` — line/branch coverage over the suites (gcovr, or raw gcov
-  as a fallback). Baseline at 2026-08-06: **79.2% lines, 89.3% functions,
-  67.6% branches**. Use it before claiming something is tested.
+  as a fallback). Baseline at 2026-08-06: **81.2% lines, 92.9% functions,
+  69.6% branches**. Use it before claiming something is tested.
 - CI (`.github/workflows/ci.yml`) runs build → test-all → test-asan → fuzz →
   validate on every push/PR.
 
