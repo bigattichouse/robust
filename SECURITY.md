@@ -50,8 +50,41 @@ unaccounted allocation. Enforced by:
   `doe_csv_read_metric` (`core/tests/fuzz_parsers.c`), plus
   `pareto_read_csv` and `pareto_front_load`
   (`analyze/pareto/tests/fuzz_pareto.c`). **Every new parser gets a target here.**
+- `make coverage` — line/branch coverage over the suites (gcovr, or raw gcov
+  as a fallback). Baseline at 2026-08-06: **74.8% lines, 86.9% functions,
+  62.9% branches**. Use it before claiming something is tested.
 - CI (`.github/workflows/ci.yml`) runs build → test-all → test-asan → fuzz →
   validate on every push/PR.
+
+### The run loop is now tested (2026-08-06)
+
+`make coverage`'s first run reported `core/src/runner.c` at **0.00% of 65
+lines**. That is the fork/exec loop every tool uses to execute a user's model —
+`fork`, `setenv` per factor, `execl /bin/sh -c`, `waitpid` — so the most
+security-sensitive file in the repo was also the only one with no coverage at
+all. Nothing anywhere called `doe_run` or `doe_run_capture`.
+
+`core/tests/test_runner.c` now covers it in 14 tests, including the property
+this document asserts and nothing verified: **factor values reach the script as
+environment *values* and are never spliced into the command string.** Values of
+`; touch FILE`, `$(touch FILE)` and `` `touch FILE` `` are passed through both
+`doe_run` and `doe_run_capture`; the test asserts no marker file appears and
+that each value arrives byte-for-byte intact.
+
+Also covered: `RUN_ID` is 1-based and distinct per row, a NULL from the value
+callback becomes an empty string, a factor name containing `=` is refused,
+non-zero child exit and signal death are both rejected by `doe_run_capture`
+even when a valid number was already printed, non-numeric and empty output are
+rejected, and 100 KB of child output neither overflows the 256-byte read buffer
+nor deadlocks on a full pipe.
+
+**Do not chase runner.c's coverage percentage.** It reads ~50% because
+`child_set_env`, `execl` and the child's `dup2` execute in the forked child,
+which then execs or `_exit`s — gcov's counters are never flushed either way, so
+those lines cannot be attributed no matter how well exercised they are.
+`test_run_exports_env` passes only if `child_set_env` ran. The genuinely
+uncovered paths that remain are `fork()` and `pipe()` failure, which need
+resource exhaustion to reach.
 
 ### Two assurance defects found and fixed, 2026-08-06
 

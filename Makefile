@@ -91,7 +91,8 @@ endif
 TAGUCHI_SHARED = $(BUILD)/$(TAGUCHI_SONAME)
 
 # core test suites (one binary per test file — each has its own main())
-CORE_TEST_BIN = $(BUILD)/test_doe
+CORE_TEST_BIN   = $(BUILD)/test_doe
+RUNNER_TEST_BIN = $(BUILD)/test_runner
 SEC_TEST_BIN  = $(BUILD)/test_security
 
 # validation — reproduces published results against closed-form ground truth.
@@ -177,7 +178,7 @@ $(TAGUCHI_INTEG_BIN): $(TAGUCHI_INTEG_SRC) $(TAGUCHI_LIB_OBJ) | $(BUILD)
 	$(CC) $(CFLAGS) $(TAGUCHI_INC) $(TAGUCHI_INTEG_SRC) $(TAGUCHI_LIB_OBJ) -o $@ $(LDFLAGS)
 
 # ---- tests --------------------------------------------------------------
-TEST_BINS = $(CORE_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) \
+TEST_BINS = $(CORE_TEST_BIN) $(RUNNER_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) \
             $(ROBUST_TEST_BIN) $(PARETO_TEST_BIN) $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 
 # Build + run the suites, nothing else. `test` adds valgrind on top; `test-asan`
@@ -186,6 +187,7 @@ TEST_BINS = $(CORE_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN
 # same build now produces, so no special ordering is needed.
 run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN)
 	./$(CORE_TEST_BIN)
+	./$(RUNNER_TEST_BIN)
 	./$(SEC_TEST_BIN)
 	./$(MORRIS_TEST_BIN)
 	./$(SOBOL_TEST_BIN)
@@ -256,6 +258,9 @@ $(VALIDATION_BIN): $(VALIDATION_SRC) $(MORRIS_LIB_OBJ) $(SOBOL_LIB_OBJ) $(COMMON
 
 $(CORE_TEST_BIN): $(COMMON_DIR)/tests/test_doe.c $(COMMON_OBJ) | $(BUILD)
 	$(CC) $(CFLAGS) $(COMMON_INC) -I$(COMMON_DIR)/tests $(COMMON_DIR)/tests/test_doe.c $(COMMON_OBJ) -o $@ $(LDFLAGS)
+
+$(RUNNER_TEST_BIN): $(COMMON_DIR)/tests/test_runner.c $(COMMON_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) $(COMMON_INC) -I$(COMMON_DIR)/tests $(COMMON_DIR)/tests/test_runner.c $(COMMON_OBJ) -o $@ $(LDFLAGS)
 
 $(SEC_TEST_BIN): $(COMMON_DIR)/tests/test_security.c $(COMMON_OBJ) | $(BUILD)
 	$(CC) $(CFLAGS) $(COMMON_INC) -I$(COMMON_DIR)/tests $(COMMON_DIR)/tests/test_security.c $(COMMON_OBJ) -o $@ $(LDFLAGS)
