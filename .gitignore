@@ -23,3 +23,11 @@ venv/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Reference PDFs — re-fetch with sources/fetch.sh
+sources/pdf/
+
+# Compiled erratum checks — rebuild with `make` in the relevant directory.
+# The sources and errata.md are the deliverable; the binaries are not.
+sources/*_erratum/*/check_*
+!sources/*_erratum/*/check_*.c
