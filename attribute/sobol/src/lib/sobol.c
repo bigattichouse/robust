@@ -49,6 +49,24 @@ int sobol_design_build(const doe_space_t *space, sobol_design_t *d, char *err) {
     if (k == 0) { snprintf(err, DOE_ERR_SIZE, "no factors"); return -1; }
     if (n < 2) { snprintf(err, DOE_ERR_SIZE, "samples must be >= 2 (got %zu)", n); return -1; }
 
+    /*
+     * `second_order:` parses and is carried through the .space struct, but no
+     * estimator computes second-order indices yet (M5). Until then, refuse the
+     * run rather than quietly returning first-order results to someone who
+     * asked for interactions -- silently answering a different question is
+     * worse than not answering. EXPANSION.md E0.
+     *
+     * This is the single choke point: every sobol entry path reaches here,
+     * including sobol_analyze and the robust funnel, so one check covers them
+     * all and none can drift.
+     */
+    if (space->second_order) {
+        snprintf(err, DOE_ERR_SIZE,
+                 "second_order is not implemented yet (planned for M5); "
+                 "remove it from the .space to run first-order and total indices");
+        return -1;
+    }
+
     size_t nk, npoints;
     if (!doe_size_mul_ok(n, k, &nk) || !doe_size_mul_ok(n, k + 2, &npoints)) {
         snprintf(err, DOE_ERR_SIZE, "design too large (size overflow)");
@@ -142,6 +160,14 @@ static void est_factor(const double *yA, const double *yB, const double *yABi,
         s += b * (ab - a);          /* Saltelli 2010 */
         t += (a - ab) * (a - ab);   /* Jansen 1999    */
     }
+    /* A bootstrap replicate can be degenerate (every resampled row identical)
+     * even when the full sample is not. Dividing by that variance yields NaN,
+     * and NaN in the array makes the qsort below produce an arbitrary order,
+     * so the reported CI would be garbage rather than obviously wrong. Report
+     * zero for such a replicate instead. The full-sample case is caught up
+     * front in sobol_analyze with a clean error. */
+    if (!(var > 0.0) || !isfinite(var)) { *si = 0.0; *sti = 0.0; return; }
+
     *si  = (s / (double)n) / var;
     *sti = (t / (2.0 * (double)n)) / var;
 }
@@ -172,6 +198,34 @@ int sobol_analyze(const doe_space_t *space, const double *responses, size_t nres
 
     const double *yA = responses;
     const double *yB = responses + N;
+
+    /*
+     * Sobol indices are variance SHARES, so they are undefined when the output
+     * has no variance. Without this the estimator divides by zero and every
+     * index prints as -nan while the tool exits 0 -- silent garbage. A
+     * constant response usually means the model ignores its inputs, the script
+     * echoes a fixed value, or the ranges are too narrow to move it, so say so.
+     */
+    {
+        double mean = 0.0;
+        for (size_t i = 0; i < N; i++) mean += yA[i] + yB[i];
+        mean /= (2.0 * (double)N);
+        double var = 0.0;
+        for (size_t i = 0; i < N; i++) {
+            double da = yA[i] - mean, db = yB[i] - mean;
+            var += da * da + db * db;
+        }
+        var /= (2.0 * (double)N - 1.0);
+        if (!(var > 0.0) || !isfinite(var)) {
+            snprintf(err, DOE_ERR_SIZE,
+                     "output variance is zero over %zu samples (every response is %g): "
+                     "sensitivity indices are shares of variance and are undefined. "
+                     "Check that the model actually depends on the factors and that "
+                     "their ranges are wide enough to move it.", N, yA[0]);
+            sobol_design_free(&d);
+            return -1;
+        }
+    }
 
     sobol_index_t *res = calloc(k, sizeof *res);
     size_t *id0 = malloc(N * sizeof *id0);

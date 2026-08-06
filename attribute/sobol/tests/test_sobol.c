@@ -159,8 +159,93 @@ static int test_analyze_rejects_nonfinite(void) {
     return 1;
 }
 
+/*
+ * EXPANSION.md E0: `second_order:` parses but no estimator implements it, so a
+ * space that sets it must be REFUSED rather than quietly analysed first-order
+ * only. Answering a different question than the one asked is worse than
+ * failing. Asserted at the choke point every entry path shares.
+ */
+static int test_second_order_is_rejected(void) {
+    const char *with =
+        "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n"
+        "seed: 7\n  samples: 16\n  second_order: true\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(with, &sp, err) == 0);
+    CHECK(sp.second_order == true);          /* the parser still accepts it */
+
+    memset(err, 'A', sizeof err);
+    sobol_design_t d;
+    CHECK(sobol_design_build(&sp, &d, err) != 0);
+    CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);
+    CHECK(strstr(err, "second_order") != NULL);
+    CHECK(strstr(err, "not implemented") != NULL);
+
+    /* sobol_analyze builds the design internally, so it must refuse too --
+     * this is what stops the robust funnel from slipping past the guard. */
+    double dummy[64] = {0};
+    sobol_index_t *out = NULL; size_t cnt = 0;
+    memset(err, 'A', sizeof err);
+    CHECK(sobol_analyze(&sp, dummy, 64, &out, &cnt, err) != 0);
+    CHECK(strstr(err, "second_order") != NULL);
+
+    /* And the identical space without the flag still works. */
+    const char *without =
+        "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n"
+        "seed: 7\n  samples: 16\n";
+    doe_space_t sp2;
+    CHECK(doe_space_parse(without, &sp2, err) == 0);
+    CHECK(sp2.second_order == false);
+    sobol_design_t d2;
+    CHECK(sobol_design_build(&sp2, &d2, err) == 0);
+    sobol_design_free(&d2);
+    return 1;
+}
+
+/*
+ * Sobol indices are variance SHARES, so a constant response makes them
+ * undefined. Before this guard the estimator divided by zero and every index
+ * printed as -nan while the tool exited 0 -- silent garbage, and the most
+ * likely real cause is a model script that ignores its environment.
+ */
+static int test_zero_variance_is_rejected(void) {
+    const char *spec =
+        "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n"
+        "seed: 3\n  samples: 8\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(spec, &sp, err) == 0);
+
+    size_t np = sobol_npoints(&sp);
+    double *y = malloc(np * sizeof *y);
+    CHECK(y != NULL);
+    for (size_t i = 0; i < np; i++) y[i] = 2.5;      /* every run identical */
+
+    sobol_index_t *out = NULL; size_t cnt = 0;
+    memset(err, 'A', sizeof err);
+    int rc = sobol_analyze(&sp, y, np, &out, &cnt, err);
+    CHECK(rc != 0);
+    CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);
+    CHECK(strstr(err, "variance is zero") != NULL);
+
+    /* A varying response over the same design must still succeed, and must
+     * produce finite indices -- no NaN leaking through the new branch. */
+    for (size_t i = 0; i < np; i++) y[i] = (double)i;
+    memset(err, 'A', sizeof err);
+    CHECK(sobol_analyze(&sp, y, np, &out, &cnt, err) == 0);
+    for (size_t i = 0; i < cnt; i++) {
+        CHECK(isfinite(out[i].s1));
+        CHECK(isfinite(out[i].st));
+        CHECK(isfinite(out[i].s1_lo) && isfinite(out[i].s1_hi));
+        CHECK(isfinite(out[i].st_lo) && isfinite(out[i].st_hi));
+    }
+    free(out);
+    free(y);
+    return 1;
+}
+
 int main(void) {
     printf("sobol tests\n");
+    RUN_TEST(test_second_order_is_rejected);
+    RUN_TEST(test_zero_variance_is_rejected);
     RUN_TEST(test_additive);
     RUN_TEST(test_ishigami);
     RUN_TEST(test_determinism);

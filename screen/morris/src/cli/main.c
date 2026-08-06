@@ -174,6 +174,26 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric) {
     printf("\nRanked by mu* (importance). sigma >= mu*/2 flags interaction/nonlinearity;\n"
            "factors at the bottom with small mu* are screening drop candidates.\n");
 
+    /*
+     * Every mu* being exactly zero is legal -- it means no factor moved the
+     * output anywhere in the space -- but in practice it almost always means
+     * the model script ignores its environment, prints a constant, or the
+     * ranges are too narrow to move it. Reporting a table of zeros without
+     * comment invites someone to conclude "nothing matters" from what is
+     * really a broken harness. Note it on stderr so piped output is unchanged.
+     */
+    int all_zero = 1;
+    for (size_t i = 0; i < count; i++)
+        if (eff[i].mu_star != 0.0) { all_zero = 0; break; }
+    if (all_zero && count > 0) {
+        fprintf(stderr,
+            "\nNote: every mu* is exactly zero -- the response did not change at any\n"
+            "design point. That is a valid result only if every factor is genuinely\n"
+            "inert. Check first that the model reads MORRIS_<factor> from the\n"
+            "environment, that it prints a varying number, and that the ranges in\n"
+            "the .space are wide enough to move it.\n");
+    }
+
     free(eff);
     return 0;
 }

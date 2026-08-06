@@ -43,9 +43,11 @@ inseparable from that tool's design (e.g. DGSM needs the Morris trajectories).
 
 ## E0. Prerequisites (do first, small)
 
-- **`second_order:` honesty.** The parser accepts the flag; nothing implements
-  it — a silent no-op today. Until M5 lands, `sobol` must *reject* a space that
-  sets it ("second_order not yet implemented") rather than quietly ignore it.
+- ~~**`second_order:` honesty.**~~ ✓ **DONE 2026-08-06.** `sobol` now refuses a
+  space that sets it, with a message naming M5. The check sits in
+  `sobol_design_build`, the one choke point every entry path reaches —
+  including `sobol_analyze` and the `robust` funnel — so no path can drift back
+  to silently answering the first-order question instead.
 - **M5's Joe-Kuo sequence has a trap, now documented.** Saltelli et al. (2010)
   §5.1 p.263 requires that `A` and `B` be the **left and right halves of a
   single 2k-dimensional** quasi-random sequence — not two k-dimensional draws

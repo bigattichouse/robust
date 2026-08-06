@@ -56,6 +56,30 @@ unaccounted allocation. Enforced by:
 - CI (`.github/workflows/ci.yml`) runs build → test-all → test-asan → fuzz →
   validate on every push/PR.
 
+### Degenerate input now fails loudly (2026-08-06)
+
+Two paths returned confident nonsense instead of an error:
+
+- **`second_order:` was a silent no-op.** The parser accepted it and `robust`'s
+  funnel propagated it, but no estimator implemented it, so anyone asking for
+  interaction indices got first-order results with no indication. `sobol` now
+  refuses, at the single choke point every entry path shares.
+- **A constant response produced `-nan` and exit 0.** Sobol indices are shares
+  of variance, so they are undefined when the output has none — the estimator
+  was dividing by zero. It now errors with the likely causes named (a model
+  that ignores its environment, a fixed echo, ranges too narrow to move it).
+  The bootstrap estimator also guards internally: a degenerate resample would
+  otherwise put NaN into the array that gets `qsort`ed for the CI bounds, and
+  NaN makes that ordering arbitrary — a wrong interval rather than an obviously
+  broken one.
+- **`morris` was correct but quiet.** An all-zero μ\* table is legal, and
+  usually means a broken harness rather than genuinely inert factors. It now
+  says so on stderr, leaving stdout byte-identical so pipelines are unaffected.
+
+The general rule these share: **when the answer is undefined, say so.** A tool
+that prints `-nan` and exits 0 is worse than one that fails, because the number
+gets copied into a decision.
+
 ### The run loop is now tested (2026-08-06)
 
 `make coverage`'s first run reported `core/src/runner.c` at **0.00% of 65
