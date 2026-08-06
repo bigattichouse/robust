@@ -207,7 +207,12 @@ static int test_report_escapes_hostile_name(void) {
  * the funnel→bench hand-off round-trips through taguchi's (already hardened)
  * parser. Covers all three writer branches: linear, log, categorical. */
 static const char *find_taguchi(void) {
-    static const char *cands[] = { "build/bin/taguchi", "taguchi/build/taguchi" };
+    /* The Makefile passes TAGUCHI_BIN, which is what makes this work under
+     * `make test-asan` (BUILD=build/asan, so the binary is not in build/bin).
+     * The literal fallbacks keep the test runnable by hand from the repo root. */
+    const char *env = getenv("TAGUCHI_BIN");
+    if (env && *env && access(env, X_OK) == 0) return env;
+    static const char *cands[] = { "build/bin/taguchi", "build/asan/bin/taguchi" };
     for (size_t i = 0; i < sizeof cands / sizeof cands[0]; i++) {
         if (access(cands[i], X_OK) == 0) return cands[i];
     }
@@ -237,7 +242,9 @@ static int test_tgu_roundtrip_taguchi_validate(void) {
     CHECK(robust_write_tgu(&r, tgu, err) == 0);
 
     char cmd[512];
-    snprintf(cmd, sizeof cmd, "./%s validate %s > /dev/null 2>&1", tg, tgu);
+    /* No "./" prefix: tg may be absolute (TAGUCHI_BIN) or relative, and every
+     * candidate contains a slash, so the shell treats it as a path either way. */
+    snprintf(cmd, sizeof cmd, "%s validate %s > /dev/null 2>&1", tg, tgu);
     CHECK(system(cmd) == 0);
 
     remove(tgu);

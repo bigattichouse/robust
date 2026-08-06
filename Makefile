@@ -57,6 +57,39 @@ PARETO_TEST_SRC = $(filter-out %fuzz_pareto.c,$(wildcard analyze/pareto/tests/*.
 PARETO_FUZZ_SRC = analyze/pareto/tests/fuzz_pareto.c
 PARETO_TEST_BIN = $(BUILD)/test_pareto
 
+# taguchi tool (optimize stage) — the original tool this project grew from.
+# Built here like every other peer: no sub-make. Its suites join $(TEST_BINS),
+# so they get the same valgrind/ASan discipline as everything else, which they
+# did not while it built itself.
+TAGUCHI_DIR       = optimize/taguchi
+TAGUCHI_INC       = -I$(TAGUCHI_DIR) -I$(TAGUCHI_DIR)/include -I$(TAGUCHI_DIR)/src/lib
+TAGUCHI_LIB_SRC   = $(wildcard $(TAGUCHI_DIR)/src/lib/*.c)
+TAGUCHI_LIB_OBJ   = $(TAGUCHI_LIB_SRC:$(TAGUCHI_DIR)/src/lib/%.c=$(BUILD)/taguchi/lib/%.o)
+TAGUCHI_CLI_SRC   = $(wildcard $(TAGUCHI_DIR)/src/cli/*.c)
+TAGUCHI_CLI_OBJ   = $(TAGUCHI_CLI_SRC:$(TAGUCHI_DIR)/src/cli/%.c=$(BUILD)/taguchi/cli/%.o)
+TAGUCHI_BIN       = $(BIN)/taguchi
+# test_integration.c carries its own main(), so it links as a second binary.
+TAGUCHI_TEST_SRC  = $(filter-out %test_integration.c,$(wildcard $(TAGUCHI_DIR)/tests/*.c))
+TAGUCHI_TEST_BIN  = $(BUILD)/test_taguchi
+TAGUCHI_INTEG_SRC = $(TAGUCHI_DIR)/tests/test_integration.c
+TAGUCHI_INTEG_BIN = $(BUILD)/test_taguchi_integration
+TAGUCHI_STATIC    = $(BUILD)/libtaguchi.a
+
+# Shared library, for the ctypes bindings. Platform naming carried over from
+# the Makefile this replaced.
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    TAGUCHI_SONAME = libtaguchi.dylib
+    TAGUCHI_SOFLAG = -dynamiclib -install_name @rpath/libtaguchi.dylib
+else ifeq ($(OS),Windows_NT)
+    TAGUCHI_SONAME = taguchi.dll
+    TAGUCHI_SOFLAG = -shared
+else
+    TAGUCHI_SONAME = libtaguchi.so
+    TAGUCHI_SOFLAG = -shared -Wl,-soname,libtaguchi.so
+endif
+TAGUCHI_SHARED = $(BUILD)/$(TAGUCHI_SONAME)
+
 # core test suites (one binary per test file — each has its own main())
 CORE_TEST_BIN = $(BUILD)/test_doe
 SEC_TEST_BIN  = $(BUILD)/test_security
@@ -67,7 +100,7 @@ SEC_TEST_BIN  = $(BUILD)/test_security
 VALIDATION_SRC = $(wildcard validation/*.c)
 VALIDATION_BIN = $(BUILD)/validate
 
-.PHONY: all common morris sobol robust taguchi tools pareto test run-tests test-asan fuzz test-taguchi test-all validate clean
+.PHONY: all common morris sobol robust taguchi pareto install install-cli uninstall test run-tests test-asan fuzz test-taguchi test-all validate clean
 
 all: common morris sobol robust pareto taguchi
 
@@ -84,7 +117,7 @@ $(BUILD)/common/%.o: $(COMMON_DIR)/src/%.c | $(BUILD)/common
 morris: $(MORRIS_BIN)
 
 $(MORRIS_BIN): $(MORRIS_CLI_OBJ) $(MORRIS_LIB_OBJ) $(COMMON_OBJ) | $(BIN)
-	$(CC) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BUILD)/morris/lib/%.o: screen/morris/src/lib/%.c | $(BUILD)/morris/lib
 	$(CC) $(CFLAGS) $(COMMON_INC) $(MORRIS_INC) -c $< -o $@
@@ -96,7 +129,7 @@ $(BUILD)/morris/cli/%.o: screen/morris/src/cli/%.c | $(BUILD)/morris/cli
 sobol: $(SOBOL_BIN)
 
 $(SOBOL_BIN): $(SOBOL_CLI_OBJ) $(SOBOL_LIB_OBJ) $(COMMON_OBJ) | $(BIN)
-	$(CC) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BUILD)/sobol/lib/%.o: attribute/sobol/src/lib/%.c | $(BUILD)/sobol/lib
 	$(CC) $(CFLAGS) $(COMMON_INC) $(SOBOL_INC) -c $< -o $@
@@ -108,7 +141,7 @@ $(BUILD)/sobol/cli/%.o: attribute/sobol/src/cli/%.c | $(BUILD)/sobol/cli
 robust: $(ROBUST_BIN)
 
 $(ROBUST_BIN): $(ROBUST_CLI_OBJ) $(ROBUST_DEPS) | $(BIN)
-	$(CC) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BUILD)/robust/lib/%.o: orchestrate/robust/src/lib/%.c | $(BUILD)/robust/lib
 	$(CC) $(CFLAGS) $(COMMON_INC) $(ROBUST_INC) -c $< -o $@
@@ -116,33 +149,51 @@ $(BUILD)/robust/lib/%.o: orchestrate/robust/src/lib/%.c | $(BUILD)/robust/lib
 $(BUILD)/robust/cli/%.o: orchestrate/robust/src/cli/%.c | $(BUILD)/robust/cli
 	$(CC) $(CFLAGS) $(COMMON_INC) $(ROBUST_INC) -c $< -o $@
 
-# ---- taguchi (vendored peer tool, builds with its own Makefile) ---------
-# It builds to optimize/taguchi/build/taguchi via its own Makefile, so copy it into
-# $(BIN) alongside morris/sobol/robust. Without this, taguchi is the only tool
-# NOT in build/bin/, and downstream consumers that hardcode a path break when the
-# layout moves — which is exactly what happened to the gluesticks experiments
-# after the umbrella restructure.
-taguchi:
-	$(MAKE) -C optimize/taguchi
-	@mkdir -p $(BIN)
-	@cp -f optimize/taguchi/build/taguchi $(BIN)/taguchi
-	@echo "  taguchi -> $(BIN)/taguchi"
+# ---- taguchi -------------------------------------------------------------
+# CLI links the static lib, so the binary has no runtime .so dependency.
+taguchi: $(TAGUCHI_BIN) $(TAGUCHI_SHARED) $(TAGUCHI_STATIC)
+
+$(TAGUCHI_BIN): $(TAGUCHI_CLI_OBJ) $(TAGUCHI_STATIC) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(TAGUCHI_STATIC): $(TAGUCHI_LIB_OBJ)
+	ar rcs $@ $^
+
+$(TAGUCHI_SHARED): $(TAGUCHI_LIB_OBJ)
+	$(CC) $(CFLAGS) $(TAGUCHI_SOFLAG) $^ -o $@ $(LDFLAGS)
+
+$(BUILD)/taguchi/lib/%.o: $(TAGUCHI_DIR)/src/lib/%.c | $(BUILD)/taguchi/lib
+	$(CC) $(CFLAGS) $(TAGUCHI_INC) -c $< -o $@
+
+$(BUILD)/taguchi/cli/%.o: $(TAGUCHI_DIR)/src/cli/%.c | $(BUILD)/taguchi/cli
+	$(CC) $(CFLAGS) $(TAGUCHI_INC) -c $< -o $@
+
+# Both suites link the lib objects directly. The integration test used to need
+# LD_LIBRARY_PATH against the shared lib; linking the objects removes that.
+$(TAGUCHI_TEST_BIN): $(TAGUCHI_TEST_SRC) $(TAGUCHI_LIB_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) $(TAGUCHI_INC) $(TAGUCHI_TEST_SRC) $(TAGUCHI_LIB_OBJ) -o $@ $(LDFLAGS)
+
+$(TAGUCHI_INTEG_BIN): $(TAGUCHI_INTEG_SRC) $(TAGUCHI_LIB_OBJ) | $(BUILD)
+	$(CC) $(CFLAGS) $(TAGUCHI_INC) $(TAGUCHI_INTEG_SRC) $(TAGUCHI_LIB_OBJ) -o $@ $(LDFLAGS)
 
 # ---- tests --------------------------------------------------------------
-TEST_BINS = $(CORE_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) $(ROBUST_TEST_BIN) $(PARETO_TEST_BIN)
+TEST_BINS = $(CORE_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN) \
+            $(ROBUST_TEST_BIN) $(PARETO_TEST_BIN) $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 
 # Build + run the suites, nothing else. `test` adds valgrind on top; `test-asan`
 # reuses this under sanitizers (valgrind and ASan cannot run together).
-# The robust suite's H8 round-trip test invokes the taguchi binary, so `test`
-# builds taguchi first; `test-asan` does the same at the top level, with normal
-# flags, before recursing (so taguchi's own sub-make never sees sanitizer flags).
-run-tests: $(TEST_BINS)
+# The robust suite's H8 round-trip test invokes the taguchi binary, which the
+# same build now produces, so no special ordering is needed.
+run-tests: $(TEST_BINS) $(TAGUCHI_BIN)
 	./$(CORE_TEST_BIN)
 	./$(SEC_TEST_BIN)
 	./$(MORRIS_TEST_BIN)
 	./$(SOBOL_TEST_BIN)
-	./$(ROBUST_TEST_BIN)
+	TAGUCHI_BIN=$(TAGUCHI_BIN) ./$(ROBUST_TEST_BIN)
 	./$(PARETO_TEST_BIN)
+	./$(TAGUCHI_TEST_BIN)
+	./$(TAGUCHI_INTEG_BIN)
+	@TAGUCHI=$(TAGUCHI_BIN) bash $(TAGUCHI_DIR)/tests/test_csv_multicolumn.sh
 
 # The valgrind stage used to be a sequence of `valgrind ... && echo clean;`
 # lines. Because each ended in `;`, only the LAST suite's exit status reached
@@ -153,7 +204,7 @@ run-tests: $(TEST_BINS)
 # This loop propagates failure, prints the report for whichever suite failed,
 # and iterates $(TEST_BINS), so a newly added suite is covered without editing
 # a second list.
-test: taguchi run-tests
+test: run-tests
 	@if command -v valgrind >/dev/null 2>&1; then \
 		echo "Running valgrind..."; \
 		fail=0; \
@@ -178,7 +229,7 @@ test: taguchi run-tests
 pareto: $(PARETO_BIN)
 
 $(PARETO_BIN): $(PARETO_CLI_OBJ) $(PARETO_LIB_OBJ) $(COMMON_OBJ) | $(BIN)
-	$(CC) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BUILD)/pareto/lib/%.o: analyze/pareto/src/lib/%.c | $(BUILD)/pareto/lib
 	$(CC) $(CFLAGS) $(COMMON_INC) $(PARETO_INC) -c $< -o $@
@@ -223,7 +274,7 @@ FUZZ_BIN        = $(BUILD)/fuzz_parsers
 PARETO_FUZZ_BIN = $(BUILD)/fuzz_pareto
 
 # Re-run every suite under ASan/UBSan in its own object tree (build/asan).
-test-asan: taguchi
+test-asan:
 	$(MAKE) BUILD=build/asan CFLAGS="$(CFLAGS) $(SANFLAGS)" run-tests
 
 # Deterministic random-input fuzz of every hand-rolled parser that reads
@@ -237,17 +288,42 @@ fuzz: | $(BUILD)
 	$(CC) $(CFLAGS) $(SANFLAGS) $(COMMON_INC) $(PARETO_INC) $(PARETO_FUZZ_SRC) $(PARETO_LIB_SRC) $(COMMON_SRC) -o $(PARETO_FUZZ_BIN) $(LDFLAGS)
 	./$(PARETO_FUZZ_BIN)
 
+# ---- install ------------------------------------------------------------
+# Suite-wide, replacing the per-tool install that lived in taguchi's Makefile.
+PREFIX ?= /usr/local
+
+install: all
+	install -d $(PREFIX)/bin $(PREFIX)/lib $(PREFIX)/include
+	install -m 755 $(BIN)/* $(PREFIX)/bin/
+	install -m 755 $(TAGUCHI_SHARED) $(PREFIX)/lib/
+	install -m 644 $(TAGUCHI_STATIC)  $(PREFIX)/lib/
+	install -m 644 $(TAGUCHI_DIR)/include/taguchi.h $(PREFIX)/include/
+	install -m 644 $(COMMON_DIR)/include/doe.h      $(PREFIX)/include/
+	@if command -v ldconfig >/dev/null 2>&1; then ldconfig; fi
+
+install-cli: all
+	install -d $(PREFIX)/bin
+	install -m 755 $(BIN)/* $(PREFIX)/bin/
+
+uninstall:
+	rm -f $(PREFIX)/bin/morris $(PREFIX)/bin/sobol $(PREFIX)/bin/robust
+	rm -f $(PREFIX)/bin/pareto $(PREFIX)/bin/taguchi
+	rm -f $(PREFIX)/lib/libtaguchi.* $(PREFIX)/include/taguchi.h $(PREFIX)/include/doe.h
+
 # ---- aggregate targets --------------------------------------------------
 tools:
 	@echo "Built: morris, sobol, robust, pareto, taguchi. Pending: ofat, grid, report, regress, uq (see DESIGN.md/EXPANSION.md)."
 
-test-taguchi:
-	$(MAKE) -C optimize/taguchi test
+# Aliases: taguchi's suites are part of `test` now.
+test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
+	./$(TAGUCHI_TEST_BIN)
+	./$(TAGUCHI_INTEG_BIN)
+	@TAGUCHI=$(TAGUCHI_BIN) bash $(TAGUCHI_DIR)/tests/test_csv_multicolumn.sh
 
-test-all: test test-taguchi
+test-all: test
 
 # ---- housekeeping -------------------------------------------------------
-$(BUILD) $(BIN) $(BUILD)/common $(BUILD)/morris/lib $(BUILD)/morris/cli $(BUILD)/sobol/lib $(BUILD)/sobol/cli $(BUILD)/robust/lib $(BUILD)/robust/cli $(BUILD)/pareto/lib $(BUILD)/pareto/cli:
+$(BUILD) $(BIN) $(BUILD)/common $(BUILD)/morris/lib $(BUILD)/morris/cli $(BUILD)/sobol/lib $(BUILD)/sobol/cli $(BUILD)/robust/lib $(BUILD)/robust/cli $(BUILD)/pareto/lib $(BUILD)/pareto/cli $(BUILD)/taguchi/lib $(BUILD)/taguchi/cli:
 	mkdir -p $@
 
 clean:

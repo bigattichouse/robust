@@ -15,7 +15,7 @@ many factors ──► MORRIS ──► survivors ──► SOBOL ──► key 
 These are **stages of maturity, not competitors**: Morris and Sobol run on a cheap
 deterministic simulator to find what matters; Taguchi runs on the bench to optimize it.
 `robust` orchestrates the funnel. Every tool is a small POSIX binary over a shared
-`libdoe` core; [`taguchi`](taguchi/) — the original tool this grew from — lives here as a peer.
+`libdoe` core; [`taguchi`](optimize/taguchi/) — the original tool this grew from — is the `optimize/` stage.
 
 ## The binaries
 
@@ -52,10 +52,11 @@ a skipped memory check is never reported as a pass. `make validate` is separate
 from `make test` because it pins the *claims* the roadmap rests on rather than
 our code; see [validation/](validation/README.md).
 
-`make` builds `libdoe` and the `morris`/`sobol`/`robust` binaries into `build/bin/`;
-`taguchi` builds via its own sub-make (`make -C taguchi`) and is then copied into
-`build/bin/` too, so every tool binary lands in the one place. Further tools land
-per the DESIGN.md roadmap.
+`make` builds `libdoe` and every tool binary into `build/bin/`. **`taguchi` is a
+peer like any other** — this Makefile compiles it, there is no sub-make, and its
+two suites are part of `make test`, so they get the same valgrind and ASan/UBSan
+discipline as everything else. `make install` covers the whole suite. Further
+tools land per the DESIGN.md roadmap.
 
 ## Layout — one directory per stage of use
 

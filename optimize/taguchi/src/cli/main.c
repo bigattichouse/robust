@@ -407,8 +407,10 @@ static int parse_csv_results(const char *filename, const char *metric_name,
             /* Decide if this row is a header by checking whether its first
              * comma-delimited field parses as a plain integer. */
             char tmp[4096];
-            strncpy(tmp, line, sizeof(tmp) - 1);
-            tmp[sizeof(tmp) - 1] = '\0';
+            /* snprintf, not strncpy: same truncating copy, always
+             * NUL-terminated, and it does not trip -Wstringop-truncation
+             * when the compiler cannot prove the source is shorter. */
+            snprintf(tmp, sizeof tmp, "%s", line);
 
             char *hfields[512];
             int nhf = csv_split(tmp, hfields, 512);
@@ -454,8 +456,7 @@ static int parse_csv_results(const char *filename, const char *metric_name,
 
         /* --- Data row --- */
         char row[4096];
-        strncpy(row, line, sizeof(row) - 1);
-        row[sizeof(row) - 1] = '\0';
+        snprintf(row, sizeof row, "%s", line);
 
         char *fields[512];
         int nf = csv_split(row, fields, 512);

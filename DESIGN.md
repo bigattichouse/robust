@@ -250,7 +250,7 @@ robust/
 ├── sobol/   include/ src/{lib,cli}/ tests/
 ├── robust/  src/cli/ tests/         # orchestrator
 ├── tools/   ofat/ grid/ report/     # cross-cutting binaries
-└── taguchi/                         # the taguchi tool — own Makefile, bindings, history
+└── optimize/taguchi/                # the taguchi tool — built by the top-level Makefile
 ```
 
 Each tool mirrors taguchi's `lib` (opaque handles, `error_buf` pattern) + thin
@@ -323,8 +323,8 @@ fronted by stubs. The GitHub rename is the user's action; the local reorg is our
 
 **Layout: (B) — done.** taguchi's files were `git mv`'d into `taguchi/` (full
 history preserved); the umbrella root now holds `common/ morris/ sobol/ robust/
-tools/`. taguchi keeps its own `Makefile`/bindings; the top-level `Makefile`
-builds the new tools and delegates `make -C taguchi`.
+tools/`. taguchi keeps its own bindings and docs; the top-level `Makefile`
+builds every tool, taguchi included; there is no sub-make.
 
 **Done.** The GitHub repo was renamed **taguchi → robust** (stars + redirects
 intact) and the consolidation is pushed — live at `github.com/bigattichouse/robust`
