@@ -278,8 +278,16 @@ independent, and any design can be regenerated from the `.space` file alone.
 
 ## 11. Roadmap
 
-**Status: M0–M4 complete** — common core + `morris` + `sobol` + the `robust`
-funnel orchestrator, all suites green under `-Werror` and valgrind.
+**Status: M0–M4 complete, plus E1's `pareto`** — common core + `morris` +
+`sobol` + the `robust` funnel orchestrator + `pareto`, all suites green under
+`-Werror`, valgrind and ASan/UBSan.
+
+Two additions since this section was written, both in EXPANSION.md:
+`validation/` (`make validate`) reproduces the published results the roadmap
+relies on against closed-form ground truth, and `sobol`'s estimators have been
+verified line-by-line against Saltelli et al. 2010 — including a documented
+trap for M5's quasi-random sampling (`A` and `B` must be halves of one
+2k-dimensional sequence, not two k-dimensional draws).
 
 | Milestone | Deliverable | |
 |---|---|---|
@@ -288,7 +296,7 @@ funnel orchestrator, all suites green under `-Werror` and valgrind.
 | **M2** | `morris` (sample/generate/run/analyze); validated on linear + interaction functions. | ✓ |
 | **M3** | `sobol` Saltelli + Sᵢ/S_Tᵢ with bootstrap CIs; validated against Ishigami. | ✓ |
 | **M4** | `robust funnel`/`screen` (Morris→Sobol, in-process) + self-contained HTML/JSON report + `.tgu` hand-off; orchestrated-process tests. | ✓ |
-| **M5** | Sobol low-discrepancy sequence (Joe-Kuo); optional second-order indices. | |
+| **M5** | Sobol low-discrepancy sequence (Joe-Kuo); optional second-order indices. **See the A/B warning in `sobol/src/lib/sobol.c` before starting.** | |
 | **M6** | `ofat` + `grid` + confirmation checker. | |
 | **MI** | **Taguchi integration** — folded in + GitHub repo renamed to robust (§12). | ✓ |
 | **M7** | Python (ctypes) bindings mirroring taguchi; CI running `make test`. | |
