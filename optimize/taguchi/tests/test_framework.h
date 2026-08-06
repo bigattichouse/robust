@@ -10,14 +10,14 @@
 #define TEST(name) void test_##name(void)
 
 #define RUN_TEST(name) do { \
-    printf("Running %s...\\n", #name); \
+    printf("Running %s...\n", #name); \
     test_##name(); \
-    printf("  PASSED\\n"); \
+    printf("  PASSED\n"); \
 } while(0)
 
 #define ASSERT(cond) do { \
     if (!(cond)) { \
-        fprintf(stderr, "ASSERTION FAILED: %s:%d: %s\\n", \
+        fprintf(stderr, "ASSERTION FAILED: %s:%d: %s\n", \
                 __FILE__, __LINE__, #cond); \
         exit(1); \
     } \

@@ -7,7 +7,7 @@
 void *xmalloc(size_t size) {
     void *ptr = malloc(size);
     if (ptr == NULL) {
-        fprintf(stderr, "Fatal: malloc failed\\n");
+        fprintf(stderr, "Fatal: malloc failed\n");
         exit(EXIT_FAILURE);
     }
     return ptr;
@@ -16,7 +16,7 @@ void *xmalloc(size_t size) {
 void *xcalloc(size_t count, size_t size) {
     void *ptr = calloc(count, size);
     if (ptr == NULL) {
-        fprintf(stderr, "Fatal: calloc failed\\n");
+        fprintf(stderr, "Fatal: calloc failed\n");
         exit(EXIT_FAILURE);
     }
     return ptr;
@@ -25,7 +25,7 @@ void *xcalloc(size_t count, size_t size) {
 void *xrealloc(void *ptr, size_t size) {
     void *new_ptr = realloc(ptr, size);
     if (new_ptr == NULL) {
-        fprintf(stderr, "Fatal: realloc failed\\n");
+        fprintf(stderr, "Fatal: realloc failed\n");
         exit(EXIT_FAILURE);
     }
     return new_ptr;

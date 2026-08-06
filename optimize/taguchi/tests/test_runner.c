@@ -6,6 +6,20 @@ extern void test_set_error_with_args(void);
 extern void test_set_error_truncation(void);
 extern void test_set_error_null_buffer(void);
 
+/* Declare test functions from test_generator.c */
+extern void test_generator_auto_selects_for_3level(void);
+extern void test_generator_auto_selects_for_2level(void);
+extern void test_generator_auto_selects_for_many_factors(void);
+extern void test_generator_auto_selection_covers_all_levels(void);
+extern void test_generator_mixed_level_l18(void);
+extern void test_generator_mixed_level_rejects_unmatchable_factor(void);
+extern void test_generator_compat_null_parameters(void);
+extern void test_generator_compat_array_too_small(void);
+extern void test_generator_rejects_null_parameters(void);
+extern void test_generator_rejects_unknown_array(void);
+extern void test_generator_free_null_is_safe(void);
+extern void test_generator_column_pairing_stays_in_range(void);
+
 /* Declare test functions from test_arrays.c */
 extern void test_get_array_valid(void);
 extern void test_get_array_invalid(void);
@@ -135,15 +149,15 @@ extern void test_auto_select_l27_for_5_3level_factors(void);
 
 
 int main(void) {
-    printf("=== Taguchi Library Test Suite ===\\n\\n");
+    printf("=== Taguchi Library Test Suite ===\n\n");
 
-    printf("Utils Tests:\\n");
+    printf("Utils Tests:\n");
     RUN_TEST(set_error_basic);
     RUN_TEST(set_error_with_args);
     RUN_TEST(set_error_truncation);
     RUN_TEST(set_error_null_buffer);
 
-    printf("\\nArrays Tests:\\n");
+    printf("\nArrays Tests:\n");
     RUN_TEST(get_array_valid);
     RUN_TEST(get_array_invalid);
     RUN_TEST(get_array_null);
@@ -189,7 +203,7 @@ int main(void) {
     RUN_TEST(l2187_spot_check);
     RUN_TEST(columns_needed_basic);
 
-    printf("\\nParser Tests:\\n");
+    printf("\nParser Tests:\n");
     RUN_TEST(parse_simple_factor_definition);
     RUN_TEST(parse_multiple_factors);
     RUN_TEST(parse_with_whitespace);
@@ -198,7 +212,7 @@ int main(void) {
     RUN_TEST(validate_correct_definition);
     RUN_TEST(validate_empty_factor_name);
 
-    printf("\\nAuto-Selection Tests:\\n");
+    printf("\nAuto-Selection Tests:\n");
     RUN_TEST(suggest_optimal_array_basic_2level);
     RUN_TEST(suggest_optimal_array_3level);
     RUN_TEST(suggest_optimal_array_mixed_levels);
@@ -220,7 +234,7 @@ int main(void) {
     RUN_TEST(generation_with_l729);
     RUN_TEST(auto_select_l729_for_100_three_level_factors);
 
-    printf("\\nAnalyzer Tests:\\n");
+    printf("\nAnalyzer Tests:\n");
     RUN_TEST(analyzer_create_result_set);
     RUN_TEST(analyzer_create_null_inputs);
     RUN_TEST(analyzer_add_result_null);
@@ -234,7 +248,7 @@ int main(void) {
     RUN_TEST(analyzer_duplicate_values_9level);
     RUN_TEST(analyzer_duplicate_values_5level);
 
-    printf("\\nGeneration & Column Pairing Tests:\\n");
+    printf("\nGeneration & Column Pairing Tests:\n");
     RUN_TEST(generate_l27_regression);
     RUN_TEST(column_pairing_4level_factor);
     RUN_TEST(column_pairing_5level_factor);
@@ -252,7 +266,21 @@ int main(void) {
     RUN_TEST(auto_select_prefers_smallest);
     RUN_TEST(auto_select_l27_for_5_3level_factors);
 
-    printf("\\nSecurity Tests:\\n");
+    printf("\nGenerator Tests:\n");
+    RUN_TEST(generator_auto_selects_for_3level);
+    RUN_TEST(generator_auto_selects_for_2level);
+    RUN_TEST(generator_auto_selects_for_many_factors);
+    RUN_TEST(generator_auto_selection_covers_all_levels);
+    RUN_TEST(generator_mixed_level_l18);
+    RUN_TEST(generator_mixed_level_rejects_unmatchable_factor);
+    RUN_TEST(generator_compat_null_parameters);
+    RUN_TEST(generator_compat_array_too_small);
+    RUN_TEST(generator_rejects_null_parameters);
+    RUN_TEST(generator_rejects_unknown_array);
+    RUN_TEST(generator_free_null_is_safe);
+    RUN_TEST(generator_column_pairing_stays_in_range);
+
+    printf("\nSecurity Tests:\n");
     RUN_TEST(parse_oversized_factor_name);
     RUN_TEST(parse_max_valid_factor_name);
     RUN_TEST(parse_oversized_level_value);
@@ -270,6 +298,6 @@ int main(void) {
     RUN_TEST(parse_large_valid_input);
     RUN_TEST(error_buffer_never_overflows);
 
-    printf("\\n=== All Tests Passed ===\\n");
+    printf("\n=== All Tests Passed ===\n");
     return 0;
 }
