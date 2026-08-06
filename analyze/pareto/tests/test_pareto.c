@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
 
 /* ---- helpers ---------------------------------------------------------- */
 
@@ -38,10 +39,29 @@ static pareto_point_t mk(double a, double b, unsigned long long id) {
     return p;
 }
 
-static const char *TMPDIR = "build";
+/*
+ * Scratch files live in a per-process directory created by main() and removed
+ * on the way out, whatever the outcome. Fixed names under build/ collided
+ * under `make -j` or two concurrent runs, and a CHECK that returns early skips
+ * every remove() after it, so failures used to leave litter behind.
+ */
+static char TMPDIR[128];
 
 static void tmp_path(char *out, size_t n, const char *name) {
-    snprintf(out, n, "%s/test_pareto_%s", TMPDIR, name);
+    snprintf(out, n, "%s/%s", TMPDIR, name);
+}
+
+static void tmpdir_setup(void) {
+    snprintf(TMPDIR, sizeof TMPDIR, "build/test_pareto_%ld", (long)getpid());
+    char cmd[256];
+    snprintf(cmd, sizeof cmd, "mkdir -p %s", TMPDIR);
+    if (system(cmd) != 0) { fprintf(stderr, "cannot create %s\n", TMPDIR); exit(2); }
+}
+
+static void tmpdir_teardown(void) {
+    char cmd[256];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", TMPDIR);
+    if (system(cmd) != 0) fprintf(stderr, "warning: could not remove %s\n", TMPDIR);
 }
 
 static int write_file(const char *path, const char *content) {
@@ -101,14 +121,19 @@ static int err_terminated(const guarded_err_t *g) {
     return memchr(g->err, '\0', DOE_ERR_SIZE) != NULL;
 }
 
-static char *slurp(const char *path) {
+/*
+ * Reads into a caller-supplied buffer. This used to return a pointer into a
+ * `static char buf[]`, which made every two-file comparison depend on copying
+ * the first result before the second call -- correct only by careful ordering,
+ * and silently wrong after one careless edit.
+ */
+static int slurp(const char *path, char *out, size_t n) {
     FILE *f = fopen(path, "r");
-    if (!f) return NULL;
-    static char buf[16384];
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    buf[n] = '\0';
+    if (!f) { if (n) out[0] = '\0'; return -1; }
+    size_t got = fread(out, 1, n - 1, f);
+    out[got] = '\0';
     fclose(f);
-    return buf;
+    return 0;
 }
 
 /* ---- unit: dominance axioms ------------------------------------------- */
@@ -586,8 +611,8 @@ static int test_merge_idempotent(void) {
     CHECK(make_front(fp) == 0);
     CHECK(merge_file(fp, b1, "batch1", NULL) == 0);
 
-    char first[16384];
-    snprintf(first, sizeof first, "%s", slurp(fp));
+    char first[16384], again[16384];
+    CHECK(slurp(fp, first, sizeof first) == 0);
 
     pareto_merge_t rec;
     CHECK(merge_file(fp, b1, "batch1", &rec) == 0);
@@ -595,7 +620,7 @@ static int test_merge_idempotent(void) {
     CHECK(rec.evicted == 0);
 
     /* Only the history preamble may grow; the data rows must be identical. */
-    const char *again = slurp(fp);
+    CHECK(slurp(fp, again, sizeof again) == 0);
     const char *d1 = strstr(first, "run_id");
     const char *d2 = strstr(again, "run_id");
     CHECK(d1 && d2);
@@ -620,12 +645,12 @@ static int test_merge_order_independent(void) {
     CHECK(merge_file(fb, b2, "b2", NULL) == 0);
     CHECK(merge_file(fb, b1, "b1", NULL) == 0);
 
-    const char *sa = slurp(fa);
-    char bufa[16384]; snprintf(bufa, sizeof bufa, "%s", sa);
-    const char *sb = slurp(fb);
+    char bufa[16384], bufb[16384];
+    CHECK(slurp(fa, bufa, sizeof bufa) == 0);
+    CHECK(slurp(fb, bufb, sizeof bufb) == 0);
 
     const char *da = strstr(bufa, "run_id");
-    const char *db = strstr(sb, "run_id");
+    const char *db = strstr(bufb, "run_id");
     CHECK(da && db);
     CHECK(strcmp(da, db) == 0);
 
@@ -764,8 +789,8 @@ static int test_atomic_write_leaves_original(void) {
     CHECK(make_front(fp) == 0);
     CHECK(merge_file(fp, b1, "b1", NULL) == 0);
 
-    char before[16384];
-    snprintf(before, sizeof before, "%s", slurp(fp));
+    char before[16384], after[16384];
+    CHECK(slurp(fp, before, sizeof before) == 0);
 
     /* Unwritable target directory path -> save must fail cleanly and leave
      * the original file untouched. */
@@ -777,13 +802,15 @@ static int test_atomic_write_leaves_original(void) {
     CHECK(rc != 0);
     CHECK(strlen(err) > 0);
 
-    CHECK(strcmp(before, slurp(fp)) == 0);
+    CHECK(slurp(fp, after, sizeof after) == 0);
+    CHECK(strcmp(before, after) == 0);
     remove(fp); remove(b1);
     return 1;
 }
 
 int main(void) {
     printf("pareto tests\n");
+    tmpdir_setup();
     RUN_TEST(test_dominance_axioms);
     RUN_TEST(test_analytic_front_2d);
     RUN_TEST(test_analytic_front_with_interior);
@@ -803,5 +830,6 @@ int main(void) {
     RUN_TEST(test_header_mismatch_detected);
     RUN_TEST(test_not_a_front_errors);
     RUN_TEST(test_atomic_write_leaves_original);
+    tmpdir_teardown();
     return TEST_SUMMARY();
 }

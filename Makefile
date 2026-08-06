@@ -100,7 +100,7 @@ SEC_TEST_BIN  = $(BUILD)/test_security
 VALIDATION_SRC = $(wildcard validation/*.c)
 VALIDATION_BIN = $(BUILD)/validate
 
-.PHONY: all common morris sobol robust taguchi pareto install install-cli uninstall test run-tests test-asan fuzz test-taguchi test-all validate clean
+.PHONY: all common morris sobol robust taguchi pareto install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all validate clean
 
 all: common morris sobol robust pareto taguchi
 
@@ -184,13 +184,14 @@ TEST_BINS = $(CORE_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BIN) $(SOBOL_TEST_BIN
 # reuses this under sanitizers (valgrind and ASan cannot run together).
 # The robust suite's H8 round-trip test invokes the taguchi binary, which the
 # same build now produces, so no special ordering is needed.
-run-tests: $(TEST_BINS) $(TAGUCHI_BIN)
+run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN)
 	./$(CORE_TEST_BIN)
 	./$(SEC_TEST_BIN)
 	./$(MORRIS_TEST_BIN)
 	./$(SOBOL_TEST_BIN)
 	TAGUCHI_BIN=$(TAGUCHI_BIN) ./$(ROBUST_TEST_BIN)
 	./$(PARETO_TEST_BIN)
+	@PARETO=$(PARETO_BIN) bash analyze/pareto/tests/test_pareto_cli.sh
 	./$(TAGUCHI_TEST_BIN)
 	./$(TAGUCHI_INTEG_BIN)
 	@TAGUCHI=$(TAGUCHI_BIN) bash $(TAGUCHI_DIR)/tests/test_csv_multicolumn.sh
@@ -287,6 +288,35 @@ fuzz: | $(BUILD)
 	./$(FUZZ_BIN)
 	$(CC) $(CFLAGS) $(SANFLAGS) $(COMMON_INC) $(PARETO_INC) $(PARETO_FUZZ_SRC) $(PARETO_LIB_SRC) $(COMMON_SRC) -o $(PARETO_FUZZ_BIN) $(LDFLAGS)
 	./$(PARETO_FUZZ_BIN)
+
+# ---- coverage -----------------------------------------------------------
+# Line coverage over the C suites, in its own object tree so it never disturbs
+# a normal build. Reports with gcovr if available, else raw gcov totals.
+#   make coverage            summary to stdout
+#   make coverage COVHTML=1  also writes build/coverage/index.html (needs gcovr)
+COVFLAGS = --coverage -O0 -g
+
+coverage:
+	$(MAKE) BUILD=build/cov CFLAGS="-Wall -Wextra -std=c99 -pedantic $(COVFLAGS)" \
+	        LDFLAGS="-lm --coverage" run-tests
+	@mkdir -p build/coverage
+	@if command -v gcovr >/dev/null 2>&1; then \
+		gcovr --root . --exclude '.*/tests/.*' --exclude 'validation/.*' \
+		      --print-summary --output build/coverage/summary.txt \
+		      $(if $(COVHTML),--html-details build/coverage/index.html,) && \
+		echo "  wrote build/coverage/summary.txt"; \
+	elif command -v gcov >/dev/null 2>&1; then \
+		echo "gcovr not installed — per-file line coverage via gcov:"; \
+		echo "  (install gcovr for totals and HTML: sudo apt-get install gcovr)"; \
+		cd build/coverage && \
+		find ../cov -name '*.gcno' -printf '%p\n' | while read -r g; do \
+			gcov -n -o "$$(dirname "$$g")" "$$g" 2>/dev/null; \
+		done | awk '/^File /{f=$$2} /^Lines executed/{print "  " $$0 "  " f}' \
+		     | grep -vE "tests/|validation/" | sort -u; \
+	else \
+		echo "Neither gcovr nor gcov found. Install one: sudo apt-get install gcovr"; \
+		exit 1; \
+	fi
 
 # ---- install ------------------------------------------------------------
 # Suite-wide, replacing the per-tool install that lived in taguchi's Makefile.
