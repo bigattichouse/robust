@@ -6,6 +6,20 @@ extern void test_set_error_with_args(void);
 extern void test_set_error_truncation(void);
 extern void test_set_error_null_buffer(void);
 
+/* Declare test functions from test_serializer.c */
+extern void test_serializer_escape_null_and_empty(void);
+extern void test_serializer_escape_plain_text_unchanged(void);
+extern void test_serializer_escape_each_case(void);
+extern void test_serializer_escape_all_escapable_is_exact_fit(void);
+extern void test_serializer_runs_null_or_empty_is_empty_array(void);
+extern void test_serializer_runs_single(void);
+extern void test_serializer_runs_multiple_are_comma_separated(void);
+extern void test_serializer_runs_escapes_values(void);
+extern void test_serializer_runs_growth_at_declared_limits(void);
+extern void test_serializer_runs_many_runs_growth(void);
+extern void test_serializer_effects_placeholder(void);
+extern void test_serializer_free_null_is_safe(void);
+
 /* Declare test functions from test_generator.c */
 extern void test_generator_auto_selects_for_3level(void);
 extern void test_generator_auto_selects_for_2level(void);
@@ -279,6 +293,20 @@ int main(void) {
     RUN_TEST(generator_rejects_unknown_array);
     RUN_TEST(generator_free_null_is_safe);
     RUN_TEST(generator_column_pairing_stays_in_range);
+
+    printf("\nSerializer Tests:\n");
+    RUN_TEST(serializer_escape_null_and_empty);
+    RUN_TEST(serializer_escape_plain_text_unchanged);
+    RUN_TEST(serializer_escape_each_case);
+    RUN_TEST(serializer_escape_all_escapable_is_exact_fit);
+    RUN_TEST(serializer_runs_null_or_empty_is_empty_array);
+    RUN_TEST(serializer_runs_single);
+    RUN_TEST(serializer_runs_multiple_are_comma_separated);
+    RUN_TEST(serializer_runs_escapes_values);
+    RUN_TEST(serializer_runs_growth_at_declared_limits);
+    RUN_TEST(serializer_runs_many_runs_growth);
+    RUN_TEST(serializer_effects_placeholder);
+    RUN_TEST(serializer_free_null_is_safe);
 
     printf("\nSecurity Tests:\n");
     RUN_TEST(parse_oversized_factor_name);

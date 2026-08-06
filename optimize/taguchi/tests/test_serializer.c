@@ -1,0 +1,252 @@
+/*
+ * test_serializer.c — src/lib/serializer.c, which had no tests at all.
+ *
+ * `make coverage` put it at 48%, and the uncovered block was the whole of
+ * escape_json_string()'s switch: every escape case, the code that decides what
+ * the JSON a user consumes actually looks like.
+ *
+ * Two things here go beyond line coverage, because the buffer arithmetic in
+ * serialize_runs_to_json deserves it:
+ *
+ *   - the growth path is stressed at the declared limits (MAX_FACTORS
+ *     factors, MAX_LEVEL_VALUE-length values, every character escapable) so
+ *     that `pos += snprintf(...)` -- which accumulates the length snprintf
+ *     WOULD have written, not what it did -- is exercised where truncation
+ *     could occur. Under ASan this is what would catch an overflow.
+ *   - the emitted JSON is checked for structural validity, not just presence,
+ *     so a mangled escape cannot pass as "some output was produced".
+ */
+
+#include "test_framework.h"
+#include "src/lib/serializer.h"
+#include "src/lib/generator.h"
+#include "src/config.h"
+#include <stdlib.h>
+#include <string.h>
+
+/* escape_json_string is not in the header but is non-static and is the
+ * function under test here. */
+extern char *escape_json_string(const char *input);
+
+/* ---- escape_json_string ----------------------------------------------- */
+
+TEST(serializer_escape_null_and_empty) {
+    ASSERT_NULL(escape_json_string(NULL));
+
+    char *e = escape_json_string("");
+    ASSERT_NOT_NULL(e);
+    ASSERT_STR_EQ(e, "");
+    free(e);
+}
+
+TEST(serializer_escape_plain_text_unchanged) {
+    char *e = escape_json_string("plain value 123");
+    ASSERT_NOT_NULL(e);
+    ASSERT_STR_EQ(e, "plain value 123");
+    free(e);
+}
+
+/* Every branch of the switch, one per case. */
+TEST(serializer_escape_each_case) {
+    struct { const char *in; const char *want; } cases[] = {
+        { "a\"b",  "a\\\"b"  },   /* quote      */
+        { "a\\b",  "a\\\\b"  },   /* backslash  */
+        { "a\bb",  "a\\bb"   },   /* backspace  */
+        { "a\fb",  "a\\fb"   },   /* form feed  */
+        { "a\nb",  "a\\nb"   },   /* newline    */
+        { "a\rb",  "a\\rb"   },   /* carriage   */
+        { "a\tb",  "a\\tb"   },   /* tab        */
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        char *e = escape_json_string(cases[i].in);
+        ASSERT_NOT_NULL(e);
+        ASSERT_STR_EQ(e, cases[i].want);
+        free(e);
+    }
+}
+
+/* Worst case for the allocation: every character needs escaping, so the
+ * output is exactly twice the input. escape_json_string allocates
+ * len * 2 + 1, which must be exactly sufficient -- not one byte short. */
+TEST(serializer_escape_all_escapable_is_exact_fit) {
+    char in[128];
+    for (size_t i = 0; i < sizeof in - 1; i++) in[i] = '"';
+    in[sizeof in - 1] = '\0';
+
+    char *e = escape_json_string(in);
+    ASSERT_NOT_NULL(e);
+    ASSERT_EQ(strlen(e), (sizeof in - 1) * 2);
+    for (size_t i = 0; i < strlen(e); i += 2) {
+        ASSERT_EQ(e[i], '\\');
+        ASSERT_EQ(e[i + 1], '"');
+    }
+    free(e);
+}
+
+/* ---- serialize_runs_to_json ------------------------------------------- */
+
+TEST(serializer_runs_null_or_empty_is_empty_array) {
+    char *j = serialize_runs_to_json(NULL, 0);
+    ASSERT_NOT_NULL(j);
+    ASSERT_STR_EQ(j, "[]");
+    free_serialized_string(j);
+
+    ExperimentRun dummy;
+    memset(&dummy, 0, sizeof dummy);
+    j = serialize_runs_to_json(&dummy, 0);
+    ASSERT_NOT_NULL(j);
+    ASSERT_STR_EQ(j, "[]");
+    free_serialized_string(j);
+
+    j = serialize_runs_to_json(NULL, 5);          /* NULL wins over count */
+    ASSERT_NOT_NULL(j);
+    ASSERT_STR_EQ(j, "[]");
+    free_serialized_string(j);
+}
+
+/* Brackets balanced, one object per run, every factor present. */
+static void check_json_shape(const char *j, size_t nruns) {
+    ASSERT_NOT_NULL(j);
+    ASSERT_EQ(j[0], '[');
+    ASSERT_EQ(j[strlen(j) - 1], ']');
+
+    size_t open = 0, close = 0;
+    for (const char *p = j; *p; p++) {
+        if (*p == '{') open++;
+        if (*p == '}') close++;
+    }
+    ASSERT_EQ(open, nruns);
+    ASSERT_EQ(close, nruns);
+}
+
+TEST(serializer_runs_single) {
+    ExperimentRun run;
+    memset(&run, 0, sizeof run);
+    run.run_id = 1;
+    run.factor_count = 2;
+    strcpy(run.factor_names[0], "temp");
+    strcpy(run.values[0], "hot");
+    strcpy(run.factor_names[1], "ph");
+    strcpy(run.values[1], "7");
+
+    char *j = serialize_runs_to_json(&run, 1);
+    check_json_shape(j, 1);
+    ASSERT_NOT_NULL(strstr(j, "\"run_id\": 1"));
+    ASSERT_NOT_NULL(strstr(j, "\"temp\": \"hot\""));
+    ASSERT_NOT_NULL(strstr(j, "\"ph\": \"7\""));
+    free_serialized_string(j);
+}
+
+TEST(serializer_runs_multiple_are_comma_separated) {
+    ExperimentRun runs[3];
+    memset(runs, 0, sizeof runs);
+    for (size_t i = 0; i < 3; i++) {
+        runs[i].run_id = i + 1;
+        runs[i].factor_count = 1;
+        strcpy(runs[i].factor_names[0], "f");
+        snprintf(runs[i].values[0], MAX_LEVEL_VALUE, "v%zu", i);
+    }
+
+    char *j = serialize_runs_to_json(runs, 3);
+    check_json_shape(j, 3);
+    /* Exactly two separators between three objects. */
+    size_t seps = 0;
+    for (const char *p = j; (p = strstr(p, "},")) != NULL; p++) seps++;
+    ASSERT_EQ(seps, (size_t)2);
+    ASSERT_NOT_NULL(strstr(j, "\"run_id\": 3"));
+    free_serialized_string(j);
+}
+
+/* Escaping must survive the round trip into the emitted document: a value
+ * containing a quote must appear escaped, never raw. */
+TEST(serializer_runs_escapes_values) {
+    ExperimentRun run;
+    memset(&run, 0, sizeof run);
+    run.run_id = 1;
+    run.factor_count = 1;
+    strcpy(run.factor_names[0], "quo\"te");
+    strcpy(run.values[0], "tab\there");
+
+    char *j = serialize_runs_to_json(&run, 1);
+    ASSERT_NOT_NULL(j);
+    ASSERT_NOT_NULL(strstr(j, "quo\\\"te"));
+    ASSERT_NOT_NULL(strstr(j, "tab\\there"));
+    /* and no raw tab leaked into the document */
+    ASSERT_NULL(strchr(j, '\t'));
+    free_serialized_string(j);
+}
+
+/*
+ * The growth path, at the declared limits. serialize_runs_to_json starts at
+ * count * BUFFER_SIZE and doubles as it goes, using `pos += snprintf(...)`,
+ * which accumulates the length snprintf WOULD have written. If a write ever
+ * truncates, pos passes the end of the buffer and the next `estimated_size -
+ * pos` underflows to an enormous size_t. This drives it as hard as the
+ * declared constants allow: one run, MAX_FACTORS factors, names and values at
+ * their maximum length, every character escapable so each doubles on output.
+ */
+TEST(serializer_runs_growth_at_declared_limits) {
+    ExperimentRun *run = calloc(1, sizeof *run);
+    ASSERT_NOT_NULL(run);
+    run->run_id = 1;
+    run->factor_count = MAX_FACTORS;
+
+    for (size_t f = 0; f < MAX_FACTORS; f++) {
+        memset(run->factor_names[f], '"', MAX_FACTOR_NAME - 1);
+        run->factor_names[f][MAX_FACTOR_NAME - 1] = '\0';
+        memset(run->values[f], '\\', MAX_LEVEL_VALUE - 1);
+        run->values[f][MAX_LEVEL_VALUE - 1] = '\0';
+    }
+
+    char *j = serialize_runs_to_json(run, 1);
+    check_json_shape(j, 1);
+
+    /* Every factor must be represented: count the separators the writer emits
+     * between fields. One per factor, plus none for run_id itself. */
+    size_t fields = 0;
+    for (const char *p = j; (p = strstr(p, ", \"")) != NULL; p++) fields++;
+    ASSERT_EQ(fields, (size_t)MAX_FACTORS);
+
+    free_serialized_string(j);
+    free(run);
+}
+
+/* Many runs, each modest -- exercises the 75%-full resize between runs. */
+TEST(serializer_runs_many_runs_growth) {
+    const size_t N = 64;
+    ExperimentRun *runs = calloc(N, sizeof *runs);
+    ASSERT_NOT_NULL(runs);
+    for (size_t i = 0; i < N; i++) {
+        runs[i].run_id = i + 1;
+        runs[i].factor_count = 8;
+        for (size_t f = 0; f < 8; f++) {
+            snprintf(runs[i].factor_names[f], MAX_FACTOR_NAME, "factor_%zu", f);
+            memset(runs[i].values[f], 'v', MAX_LEVEL_VALUE - 1);
+            runs[i].values[f][MAX_LEVEL_VALUE - 1] = '\0';
+        }
+    }
+
+    char *j = serialize_runs_to_json(runs, N);
+    check_json_shape(j, N);
+    ASSERT_NOT_NULL(strstr(j, "\"run_id\": 64"));
+    free_serialized_string(j);
+    free(runs);
+}
+
+/* ---- serialize_effects_to_json / free --------------------------------- */
+
+TEST(serializer_effects_placeholder) {
+    char *j = serialize_effects_to_json(NULL, 0);
+    ASSERT_NOT_NULL(j);
+    ASSERT_STR_EQ(j, "[]");
+    free_serialized_string(j);
+
+    j = serialize_effects_to_json(NULL, 7);
+    ASSERT_NOT_NULL(j);
+    ASSERT_NOT_NULL(strstr(j, "7"));
+    free_serialized_string(j);
+}
+
+TEST(serializer_free_null_is_safe) {
+    free_serialized_string(NULL);
+}
