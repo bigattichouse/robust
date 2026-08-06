@@ -1,6 +1,7 @@
 # CI — build + full test discipline (see SECURITY.md).
 # Every push/PR gets: -Werror build of the umbrella + taguchi, all C suites
-# under valgrind, the same suites again under ASan/UBSan, and the parser fuzz.
+# under valgrind, the same suites again under ASan/UBSan, the parser fuzz, and
+# the literature-validation suite.
 name: CI
 
 on:
@@ -17,9 +18,13 @@ jobs:
       - name: Install valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
 
-      - name: Build (libdoe + morris/sobol/robust + taguchi)
+      - name: Build (libdoe + morris/sobol/robust/pareto + taguchi)
         run: make all
 
+      # `make test` fails the build if ANY suite leaks. That was not true
+      # before 2026-08-06: the valgrind stage was a `cmd; cmd; cmd` sequence,
+      # so only the last suite's status reached make and all output went to
+      # /dev/null. See the comment on the `test` target.
       - name: Test (all C suites + valgrind, incl. taguchi)
         run: make test-all
 
@@ -28,3 +33,11 @@ jobs:
 
       - name: Fuzz parsers under ASan/UBSan
         run: make fuzz
+
+      # Pins the published results the roadmap rests on against closed-form
+      # ground truth (validation/README.md). Without this, a change to the
+      # morris or sobol math could silently invalidate the claims in
+      # EXPANSION.md and the corrections in sources/ — including a paper
+      # erratum we assert against.
+      - name: Validate against published results
+        run: make validate

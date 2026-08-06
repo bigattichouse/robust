@@ -13,4 +13,4 @@ converges" sentinel) fails analysis with a clean error rather than propagating
 into μ\*/σ — have your model clamp to a large finite penalty instead.
 
 Status: planned — see [../DESIGN.md](../DESIGN.md) §4 and roadmap **M2**.
-Builds on `common/libdoe` (PRNG, `.space` scaling, run-loop).
+Builds on `core/libdoe` (PRNG, `.space` scaling, run-loop).

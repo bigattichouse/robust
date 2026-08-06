@@ -1,0 +1,445 @@
+// BluePrint Specification: pareto — multi-objective frontier tool
+// Depends on: core/libdoe (csv, space, json, prng-free), SECURITY.md caps
+// Produces: analyze/pareto/{include/pareto.h, src/lib/pareto.c, src/cli/main.c}
+//
+// Extracts and maintains the non-dominated set over a results CSV carrying
+// several metric columns. Two modes share one dominance core:
+//
+//   FILTER  — stateless. Read a results CSV, write the non-dominated rows in
+//             the same CSV dialect. Composes in pipes; every downstream tool
+//             works on the output unchanged.
+//   STORE   — stateful. A .front file accumulates a frontier across many
+//             experiment batches, so a study's trade-off set is a durable
+//             artifact rather than something recomputed and lost each run.
+//
+// The store is what makes this "manage a frontier" rather than "compute one".
+// Real campaigns arrive in batches weeks apart; without a store, every batch
+// either reruns the whole history or silently loses earlier front members.
+//
+// Roadmap: EXPANSION.md E1 tier (moved out of E7 — the filter depends on
+// neither E1's least-squares core nor E4's RSM, and is the cheapest binary in
+// the roadmap). `desire`, `objectives:` parsing and per-metric analysis stay
+// in E7 where their dependencies are real.
+
+// ── DATA TYPES ──────────────────────────────────────────────────
+
+Data [Objective] {
+  description: "One metric and the direction that counts as better.",
+
+  name: string,                  // must match a results-CSV column header
+  sense: enum {MAX, MIN},        // MAX: larger is better
+}
+
+Data [Point] {
+  description: "One candidate operating point: its objective values plus the
+    full original row, kept verbatim so the frontier round-trips as a results
+    CSV and the factor settings travel with the outcome.",
+
+  run_id: uint64,                // column 0 of the results CSV
+  values: float[],               // one per Objective, in declared order
+  row: string,                   // the original CSV line, unmodified
+  source: string,                // batch label this row entered from
+  entered: string,               // ISO-8601 UTC, when it joined the front
+}
+
+Data [Frontier] {
+  description: "A declared objective set plus the current non-dominated
+    points and the provenance of every merge that shaped it.",
+
+  objectives: [Objective][],
+  points: [Point][],
+  columns: string,               // the CSV header line, fixed at init
+  history: [MergeRecord][],
+}
+
+Data [MergeRecord] {
+  description: "One line of audit trail. The frontier is a claim about which
+    configurations are worth running; the claim is only trustworthy if you can
+    see what it was built from.",
+
+  source: string,
+  when: string,                  // ISO-8601 UTC
+  rows_in: uint64,
+  admitted: uint64,              // new points that joined the front
+  evicted: uint64,               // incumbents newly dominated and removed
+  rejected: uint64,              // rows dominated on arrival
+  duplicate: uint64,             // rows already present: same run_id AND the
+                                 // same value on every objective. Added during
+                                 // implementation -- merge idempotence is
+                                 // impossible without it, because identical
+                                 // points do not dominate each other, so a
+                                 // re-merged batch would grow the front.
+                                 // NOT the tie rule: a tie is a *different*
+                                 // run with equal objectives, and both of
+                                 // those are kept.
+  // invariant: rows_in = admitted + rejected + duplicate
+}
+
+// ── FILE FORMAT (.front) ────────────────────────────────────────
+//
+// Deliberately a results CSV with a comment preamble. `#`-prefixed lines are
+// already skipped by core/src/csv.c, so a .front file IS a valid results
+// CSV: `sobol analyze model.space study.front --metric yield` just works, and
+// `pareto list` is only a convenience for stripping the preamble.
+//
+//   # tgu-front 1
+//   # objectives: yield max, cost min
+//   # merge: batch1.csv 2026-08-06T12:00:00Z in=128 admitted=7 evicted=0 rejected=121
+//   # merge: batch2.csv 2026-08-06T14:31:02Z in=128 admitted=3 evicted=2 rejected=125
+//   run_id,yield,cost,temp,ph
+//   17,0.82,14.2,350,6.5
+//   ...
+//
+// Rows are written sorted by the first objective (descending for MAX), then by
+// run_id, so a merge that changes nothing produces a byte-identical file and
+// `git diff` on a .front shows exactly what moved.
+
+// ── DOMINANCE CORE ──────────────────────────────────────────────
+
+Service [Dominance] {
+  description: "The whole semantic content of the tool. Standard Pareto
+    dominance: a dominates b iff a is at least as good on every objective and
+    strictly better on at least one.
+    Source: Deb, K. (2001), Multi-Objective Optimization using Evolutionary
+    Algorithms, Wiley, Sec. 2.4 (definition of dominance and the
+    non-dominated set).",
+
+  methods: {
+
+    better(a: float, b: float, sense: Sense) -> bool {
+      description: "Is a strictly better than b on this objective?",
+      // MAX: a > b     MIN: a < b
+    },
+
+    dominates(a: [Point], b: [Point], objs: [Objective][]) -> bool {
+      description: "Weak dominance with strict improvement somewhere.",
+      // no_worse = for all i: not better(b.values[i], a.values[i])
+      // strictly = exists i: better(a.values[i], b.values[i])
+      // return no_worse AND strictly
+
+      postconditions: [
+        "irreflexive: dominates(a, a) is always false",
+        "asymmetric: dominates(a,b) implies not dominates(b,a)",
+        "transitive: dominates(a,b) and dominates(b,c) implies dominates(a,c)",
+      ],
+    },
+
+    // Points equal on every objective dominate each other in NEITHER
+    // direction, so both survive. That is deliberate: two settings with
+    // identical measured performance are genuinely distinct operating points,
+    // and the user may prefer one for reasons the objectives do not encode.
+    // `list --duplicates` reports them rather than silently collapsing.
+
+    non_dominated(pts: [Point][], objs: [Objective][]) -> [Point][] {
+      description: "The front. O(n^2) pairwise; deterministic; no sampling.",
+      // For n <= PARETO_MAX_ROWS this is fast enough that the simple,
+      // obviously-correct algorithm is the right one. Kung's O(n log^(d-1) n)
+      // is a later optimisation and must reproduce this output exactly.
+
+      preconditions: [
+        "every point has exactly |objs| values",
+        "every value is finite",
+      ],
+      postconditions: [
+        "no member of the result dominates another member",
+        "every excluded point is dominated by at least one member",
+        "result is a subset of pts (rows are never synthesized)",
+        "output order is deterministic given input order",
+      ],
+    },
+  }
+}
+
+// ── SERVICE ─────────────────────────────────────────────────────
+
+Service [Pareto] {
+  description: "CLI over the dominance core. Reads a results CSV and/or a
+    .front; writes CSV, text, JSON or SVG to stdout. Exits nonzero with a
+    clean one-line error on stderr (SECURITY.md clean-error invariant).",
+
+  dependencies: {
+    csv: [doe_csv],              // core/src/csv.c — multi-column reader
+    space: [doe_space],          // for `objectives:` once E7 lands
+  },
+
+  methods: {
+
+    // ── filter: stateless one-shot ─────────────────────────
+
+    filter(results: path|stdin, objs: [Objective][], opts) -> csv {
+      description: "Emit the non-dominated rows of `results`, same dialect in
+        and out. The E7 behaviour, available without touching a .front.",
+
+      // pareto filter --max yield --min cost results.csv > front.csv
+
+      preconditions: [
+        "at least 2 objectives named (1 objective is a sort, not a front —
+         error and say so, suggesting `sort`)",
+        "every named objective exists as a column header",
+        "row count <= PARETO_MAX_ROWS",
+      ],
+      errors: [
+        "unknown objective column 'X' (available: ...)",
+        "objective 'X' named twice",
+        "non-numeric value in column 'X' at line N",
+        "results file has no header row (needed to resolve objective names)",
+      ],
+    },
+
+    // ── init: declare a study ──────────────────────────────
+
+    init(objs: [Objective][], columns: string) -> front {
+      description: "Write an empty .front with the objective set fixed.",
+      // pareto init --max yield --min cost --columns-from batch1.csv > study.front
+      postconditions: ["file parses as an empty results CSV"],
+    },
+
+    // ── merge: the accumulating operation ──────────────────
+
+    merge(front: path, results: path|stdin, opts) -> MergeRecord {
+      description: "Fold a new batch into an existing frontier, in place.
+        Reports what changed on stderr; --json for machines.",
+
+      // pareto merge study.front batch2.csv
+      //   batch2.csv: 128 rows -> 3 admitted, 2 evicted, 125 dominated
+      //   front: 8 points (was 7)
+
+      // Step 1: parse front; its objective set is authoritative
+      // Step 2: parse incoming rows; require identical column header
+      // Step 3: union, then non_dominated() over the union
+      // Step 4: classify each incoming/incumbent for the MergeRecord
+      // Step 5: append MergeRecord to history
+      // Step 6: write atomically — temp file in the same directory, fsync,
+      //         rename(2). A crash mid-merge must never leave a truncated
+      //         frontier, because the frontier is the accumulated result of
+      //         work that may have cost weeks of runs.
+
+      preconditions: [
+        "front file parses and declares >= 2 objectives",
+        "incoming header matches the front's `columns` exactly",
+        "|front| + |incoming| <= PARETO_MAX_ROWS",
+      ],
+      postconditions: [
+        "the front is non-dominated (Dominance postconditions hold)",
+        "merging a batch twice is idempotent — the second merge admits 0,
+         evicts 0 (run_id + values identify a point)",
+        "merge order does not matter: merge(A) then merge(B) yields the same
+         point set as merge(B) then merge(A)",
+        "no point is ever admitted that the union does not contain",
+      ],
+      errors: [
+        "column header mismatch: front has '...', batch2.csv has '...'",
+        "cannot write front: <reason> (original file left untouched)",
+        "front declares objective 'X' which batch2.csv does not have",
+      ],
+    },
+
+    // ── list / why: reading the store ──────────────────────
+
+    list(front: path, opts) -> csv {
+      description: "Emit the front's rows without the preamble, so it pipes.
+        --duplicates flags points tied on every objective.",
+    },
+
+    why(front: path, results: path, run_id: uint64) -> text {
+      description: "Explain a verdict: why is run 47 not on the frontier?
+        Names the dominating point and the margin on each objective.
+
+        This is the trust feature. A frontier that silently drops a run the
+        experimenter believed in is exactly as suspect as an OA effect that
+        turns out to be aliasing — and the fix is the same, make the tool
+        show its work.",
+
+      // pareto why study.front batch2.csv --run 47
+      //   run 47 (yield=0.71, cost=18.4) is dominated by run 17:
+      //     yield  0.71 -> 0.82   better by 0.11
+      //     cost   18.4 -> 14.2   better by 4.2
+      //   1 other point also dominates it: run 23.
+
+      postconditions: [
+        "a run on the front reports 'non-dominated' and names its nearest
+         rival on each objective",
+        "a dominated run always names at least one dominator",
+      ],
+    },
+
+    // ── svg ────────────────────────────────────────────────
+
+    svg(front: path, results: path?, opts) -> svg {
+      description: "2-D scatter with the front highlighted and connected.
+        With >2 objectives, requires --x and --y to pick the pair, and says
+        so rather than guessing.",
+      // Self-contained SVG, no external refs — same rule as robust report.
+    },
+  }
+}
+
+// ── RESOURCE CAPS (SECURITY.md H1) ──────────────────────────────
+//
+//   PARETO_MAX_ROWS       1048576   rows across front + incoming
+//   PARETO_MAX_OBJECTIVES      16   named objectives
+//   line length            reuses csv.c's existing 8192 limit
+//
+// O(n^2) at the row cap is ~10^12 comparisons — far too slow. So the cap that
+// actually binds is a *time* guard: above PARETO_WARN_ROWS (65536) print a
+// one-line stderr notice with the expected comparison count before starting,
+// so a user who pipes in a million rows learns why it is slow instead of
+// wondering whether it hung.
+
+// ── TEST DESCRIPTIONS ───────────────────────────────────────────
+
+Tests [Pareto] {
+
+  unit: {
+
+    Test dominance_axioms {
+      "On 200 random 3-objective points: dominates() is irreflexive,
+      asymmetric, and transitive. These are the properties every later
+      optimisation must preserve."
+    },
+
+    Test analytic_front_2d {
+      "y1 = x, y2 = 1 - x^2 for x in [0,1], sampled at 101 points, both
+      maximized. Since y1 strictly increases and y2 strictly decreases in x,
+      every sampled point is non-dominated: the filter must return all 101.
+      Source: EXPANSION.md E7 validation clause."
+    },
+
+    Test analytic_front_with_interior {
+      "Same curve, plus 500 interior points generated as (0.9*y1, 0.9*y2) for
+      random x. Every interior point is strictly worse on both objectives than
+      the curve point at the same x, so the filter must return exactly the 101
+      curve points and drop all 500. This is the test with teeth — the
+      all-pass case above cannot detect an over-permissive filter."
+    },
+
+    Test dominated_point_never_survives {
+      "For 1000 random 2- to 5-objective sets: for every point excluded from
+      the result, exhibit a member that dominates it; for every pair inside
+      the result, assert neither dominates the other. Exhaustive, not
+      sampled — the front is small."
+    },
+
+    Test ties_are_kept {
+      "Two rows with identical objective values but different factor settings:
+      both appear in the front, and `list --duplicates` flags them."
+    },
+
+    Test sense_directions {
+      "min and max on the same data give complementary fronts: filtering with
+      all senses inverted returns the anti-front, and the two share only
+      points that are extremal on every objective."
+    },
+
+    Test one_objective_errors {
+      "A single --max errors with a message naming `sort` as the right tool,
+      rather than returning the single best row."
+    },
+
+    Test nonfinite_rejected {
+      "NaN or inf in an objective column is a clean error naming the line,
+      never a silent drop and never a comparison against NaN (which would make
+      dominance non-transitive and corrupt the front)."
+    },
+  },
+
+  store: {
+
+    Test merge_idempotent {
+      "merge(front, batch) twice: the second reports 0 admitted, 0 evicted,
+      and leaves the file byte-identical."
+    },
+
+    Test merge_order_independent {
+      "Three batches merged in all 6 orders yield the same point set. Fails if
+      eviction is implemented as a one-pass filter against incumbents rather
+      than non_dominated() over the union."
+    },
+
+    Test merge_equals_batch_filter {
+      "Merging batches A then B into an empty front gives the same point set
+      as filtering concat(A, B) in one shot. The store must not be able to
+      drift from the stateless answer."
+    },
+
+    Test eviction_recorded {
+      "A batch containing a point that dominates an incumbent: the incumbent
+      leaves the front and the MergeRecord reports evicted=1."
+    },
+
+    Test atomic_write {
+      "Simulate a write failure partway through merge (read-only directory,
+      or an injected short write): the original .front is byte-identical
+      afterwards and the exit is a clean nonzero error."
+    },
+
+    Test front_is_a_results_csv {
+      "A .front file is accepted unchanged by doe_csv_read_metric() for any
+      of its metric columns — the preamble is skipped as comments. This is the
+      property that makes the whole pipeline compose."
+    },
+
+    Test round_trip_stability {
+      "list | merge into a fresh front reproduces the same file (modulo the
+      history preamble). Guards the sort order."
+    },
+  },
+
+  cli: {
+
+    Test why_names_a_dominator {
+      "For every dominated run in a fixture, `why` names at least one
+      dominating run and the per-objective margins are arithmetically correct."
+    },
+
+    Test why_on_front_member {
+      "`why` on a front member reports non-dominated and does not name a
+      dominator."
+    },
+
+    Test clean_errors {
+      "Unknown column, duplicate objective, header mismatch, missing file,
+      and unreadable front each exit nonzero with one line on stderr and no
+      partial stdout. SECURITY.md clean-error invariant."
+    },
+
+    Test svg_selfcontained {
+      "Emitted SVG parses as XML and contains no external references."
+    },
+
+    Test svg_requires_pair_above_2d {
+      "3 objectives without --x/--y errors and names the available columns."
+    },
+  },
+
+  integration: {
+
+    Test composes_with_sobol {
+      "pareto filter | sobol analyze --metric yield runs unchanged."
+    },
+
+    Test robust_funnel_tie_in {
+      "EXPANSION.md E5: mean vs S/N is itself bi-objective. Piping the robust
+      stage's output through `pareto --max mean --max sn` yields the robust
+      trade-off set."
+    },
+  }
+}
+
+// ── DELIVERY CHECKLIST ──────────────────────────────────────────
+//
+// Built 2026-08-06. 18/18 tests pass. One thing the spec got right and the
+// first implementation got wrong: merge idempotence needs an explicit
+// duplicate rule (same run_id AND same values), because identical points do
+// not dominate each other, so without it a re-merged batch grows the front.
+// That is deliberately NOT the tie rule -- a tie is a *different* run with
+// equal objectives, and both of those are kept. `pareto_merge_t` gained a
+// `duplicate` counter; invariant: rows_in = admitted + rejected + duplicate.
+// `svg` is specified above but not yet implemented.
+//
+// [x] analyze/pareto/ builds under -Wall -Wextra -Werror -std=c99 -pedantic
+// [x] ASan/UBSan clean on every test above (valgrind absent on this host)
+// [x] the two analytic-front tests pass before any store work begins
+// [x] .front round-trips through doe_csv_read_metric unchanged
+// [x] README row in tools/README.md
+// [x] EXPANSION.md E1 row ticked, E7 row narrowed to desire/objectives

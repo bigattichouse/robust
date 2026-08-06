@@ -296,7 +296,7 @@ trap for M5's quasi-random sampling (`A` and `B` must be halves of one
 | **M2** | `morris` (sample/generate/run/analyze); validated on linear + interaction functions. | ✓ |
 | **M3** | `sobol` Saltelli + Sᵢ/S_Tᵢ with bootstrap CIs; validated against Ishigami. | ✓ |
 | **M4** | `robust funnel`/`screen` (Morris→Sobol, in-process) + self-contained HTML/JSON report + `.tgu` hand-off; orchestrated-process tests. | ✓ |
-| **M5** | Sobol low-discrepancy sequence (Joe-Kuo); optional second-order indices. **See the A/B warning in `sobol/src/lib/sobol.c` before starting.** | |
+| **M5** | Sobol low-discrepancy sequence (Joe-Kuo); optional second-order indices. **See the A/B warning in `attribute/sobol/src/lib/sobol.c` before starting.** | |
 | **M6** | `ofat` + `grid` + confirmation checker. | |
 | **MI** | **Taguchi integration** — folded in + GitHub repo renamed to robust (§12). | ✓ |
 | **M7** | Python (ctypes) bindings mirroring taguchi; CI running `make test`. | |

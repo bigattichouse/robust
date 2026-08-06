@@ -1,0 +1,387 @@
+// BluePrint Specification: morris --groups — group elementary effects
+// Depends on: core/libdoe (space parser, prng), screen/morris/src/lib/morris.c
+// Produces: changes to core/src/space.c, screen/morris/include/morris.h,
+//           screen/morris/src/lib/morris.c, screen/morris/src/cli/main.c
+//
+// Screens GROUPS of factors instead of individual factors, at r*(G+1)
+// evaluations for G groups instead of r*(k+1) for k factors. Survivor groups
+// can be split and re-screened, which reaches factor counts the per-factor
+// design cannot.
+//
+// Source: Campolongo, F., Cariboni, J., Saltelli, A. (2007). "An effective
+//   screening design for sensitivity analysis of large models."
+//   Environmental Modelling & Software 22(10), 1509-1518. Sec. 3.3, p.1512.
+//   Local copy: sources/pdf/campolongo-2007-morris-screening.pdf
+//
+// Validated: validation/validate.c check B reproduces all three [C07] Table 1
+// test cases — 9 factors in 3 groups at 40 runs where per-factor needs 100.
+// Run `make validate`.
+//
+// ── WHY THIS AND NOT SEQUENTIAL BIFURCATION ─────────────────────
+//
+// EXPANSION_NOTE.md §2 proposed sequential bifurcation (SB) for the same job.
+// SB buys its speed by assuming effects are monotone and that signs are known
+// or consistent within a group; when signs are mixed, important factors cancel
+// inside a group and SB discards it. That is a SILENT FALSE NEGATIVE — the
+// worst failure mode a screening tool can have.
+//
+// Group mu* gets the same cost reduction without that assumption. [C07]
+// Sec. 3.3 p.1512 is explicit about the mechanism: the elementary-effect
+// definition "could not be extended straightforwardly to cases in which more
+// than one factor are moved at the same time, as two factors may have been
+// changed in opposite directions. In contrast, if using mu*, this problem is
+// overcome, as the focus is not on the elementary effect itself but on its
+// absolute value."
+//
+// Taking |y(X~) - y(X)| of the GROUP means a group holding two important
+// factors with opposing effects still registers as important. Cancellation
+// can still occur within a single trajectory, but it does not bias the mean
+// of absolute effects toward zero the way a signed group total does.
+//
+// This is additive, not a replacement: per-factor `morris` is unchanged and
+// remains the default. --groups is a new mode on the existing binary.
+
+// ── DATA TYPES ──────────────────────────────────────────────────
+
+Data [FactorGroup] {
+  description: "A named set of factor indices moved together.",
+
+  name: char[DOE_MAX_NAME],
+  members: bool[DOE_MAX_FACTORS],   // mask over space->factors
+  member_count: size_t,
+}
+
+Data [GroupEffect] {
+  description: "Screening result for one group. Deliberately has no `mu`
+    field: a signed mean over a group whose members may move in opposite
+    directions is not a meaningful quantity, and offering it would invite
+    exactly the sign-cancellation reasoning this design avoids.",
+
+  name: char[DOE_MAX_NAME],
+  mu_star: double,        // mean |group elementary effect| — importance
+  sigma: double,          // std of |d_u| across trajectories
+  member_count: size_t,
+}
+
+// sigma here is the spread of the ABSOLUTE group effect, not of a signed
+// effect as in the per-factor case. It still flags heterogeneity — a group
+// whose importance depends strongly on where in the space you measure — but
+// it must NOT be read as the per-factor sigma's "nonlinear/interacting"
+// signal. The report labels it "spread", not "interaction".
+
+// ── .space GRAMMAR ADDITION ─────────────────────────────────────
+//
+//   factors:
+//     w1: 0.0, 1.0
+//     w2: 0.0, 1.0
+//     ...
+//   groups:
+//     encoder: w1, w2, w3
+//     decoder: w4, w5, w6
+//     embed:   w7
+//   seed: 2026
+//   trajectories: 10
+//
+// Rules (parser hardening, SECURITY.md H6/H7):
+//   - `groups:` is optional; absent means per-factor screening as today.
+//   - Every named member must be a declared factor. Unknown name is an error
+//     naming the offender and listing valid factors.
+//   - Groups must PARTITION the factors: every factor in exactly one group.
+//     Overlapping groups make the group effect ill-defined (a factor would
+//     move twice in one step); uncovered factors would silently never be
+//     screened. Both are errors, not warnings.
+//   - Group count 1 is an error ("one group screens nothing").
+//   - Duplicate group names are an error.
+//   - Caps: DOE_MAX_GROUPS 64; a group may hold up to DOE_MAX_FACTORS members.
+
+// ── DESIGN CONSTRUCTION ─────────────────────────────────────────
+
+Service [MorrisGroupDesign] {
+  description: "Trajectories over groups. Mirrors morris_design_build exactly
+    — same grid spacing 1/(p-1), same Delta = p/(2(p-1)), same lower-half base
+    draw so every point stays in [0,1] — but permutes GROUPS and moves every
+    member of the chosen group at one step.
+    Source: [C07] Sec. 3.3 p.1512; base trajectory scheme Morris (1991).",
+
+  methods: {
+
+    build(space: [doe_space_t], groups: [FactorGroup][], G: size_t)
+        -> [morris_group_design_t] {
+
+      description: "r trajectories of G+1 points each.",
+
+      // per trajectory t:
+      //   perm      = random permutation of the G groups (Fisher-Yates)
+      //   base[i]   = random lower-half grid value, PER FACTOR i
+      //   dir[i]    = random +/-1, PER FACTOR i
+      //   point 0   : x[i] = dir[i] > 0 ? base[i] : base[i] + Delta
+      //   point s+1 : copy previous; for every i in group perm[s],
+      //               x[i] += dir[i] * Delta
+      //
+      // Directions are drawn PER FACTOR, not per group. That is what puts
+      // opposing movements inside a group and so exercises the exact case
+      // that breaks sequential bifurcation. Drawing one direction per group
+      // would make the design quietly easier than reality.
+
+      preconditions: [
+        "G >= 2",
+        "groups partition 0..k-1",
+        "p even and >= 2",
+        "r >= 1",
+        "r*(G+1) does not overflow size_t (doe_size_mul_ok)",
+      ],
+      postconditions: [
+        "every point lies in [0,1]^k",
+        "consecutive points differ exactly on the members of one group",
+        "each group moves exactly once per trajectory",
+        "design is a pure function of (factors, groups, r, p, seed) — so
+         analyze regenerates it and needs only the responses, same contract
+         as the per-factor design",
+      ],
+      errors: [
+        "groups must partition the factors: 'w7' is in no group",
+        "groups must partition the factors: 'w2' is in both 'encoder' and 'embed'",
+        "design too large (size overflow)",
+      ],
+    },
+
+    npoints(space, G) -> size_t {
+      description: "r * (G + 1).",
+      // The cost claim, stated so it can be checked before spending anything:
+      //   k=3072 factors, r=10, per-factor : 30,730 evaluations
+      //   same k in G=32 groups, r=10      :        330 evaluations
+      // Splitting survivors adds one further r*(G'+1) per round.
+    },
+  }
+}
+
+// ── ANALYSIS ────────────────────────────────────────────────────
+
+Service [MorrisGroupAnalyze] {
+  description: "Absolute group elementary effects.
+    Source: [C07] Sec. 3.3, p.1512:  |d_u(X)| = |y(X~) - y(X)| / Delta",
+
+  methods: {
+
+    analyze(space, groups, G, responses: double[], nresp: size_t)
+        -> [GroupEffect][] {
+
+      // for each trajectory t, step s:
+      //   |d| = |y[t*(G+1)+s+1] - y[t*(G+1)+s]| / Delta
+      //   accumulate under group perm[s]
+      // mu_star(u) = mean of |d| over the r trajectories
+      // sigma(u)   = std  of |d| over the r trajectories
+
+      preconditions: [
+        "nresp >= r*(G+1)",
+        "every response finite — a non-finite response is a clean error
+         naming the run, never a skipped trajectory",
+      ],
+      postconditions: [
+        "mu_star >= 0 for every group",
+        "a group of one factor gives exactly the per-factor mu* of that
+         factor, for the same seed and r — the group path must reduce to the
+         scalar path, or the two modes are not the same method",
+        "mu_star is invariant to the order groups are declared in (only the
+         seed and the partition matter)",
+      ],
+    },
+  }
+}
+
+// ── THE CUT DIAGNOSTIC ──────────────────────────────────────────
+//
+// validation/validate.c check C measured something that changes how a keep
+// rule should be reported. On the 12-factor g-function, mu*'s agreement with
+// the analytic total index is:
+//
+//     top-5 set correct : 85% at r=5, 95% at r=10, 100% at r>=20
+//     top-3 set correct : 47% at r=5, 35% at r=10, 55% at r=200
+//
+// Top-3 never converges. The reason is not the budget: the top-3 boundary
+// falls between two factors whose true S_T differ by 1.0%, and no sampling
+// resolves a 1% tie. The top-5 boundary falls in a 5.3x gap and is therefore
+// perfectly reliable at modest r.
+//
+// So mu*'s trustworthiness is a property of WHERE THE CUT FALLS, not of how
+// much was spent. Both the group and per-factor analyze paths must report it:
+//
+//   gap_at_cut = mu_star[rank m-1] / mu_star[rank m]
+//
+//   morris analyze model.space results.csv --groups --keep 3
+//     rank  group      mu*      spread
+//       1   encoder   8.629      2.11
+//       2   attn      0.501      0.19
+//       3   norm      0.487      0.14      <-- cut here
+//       4   embed     0.483      0.12
+//     WARNING: the keep/drop cut falls inside a 0.8% gap (rank 3 -> 4).
+//     This ranking is not resolvable at any trajectory count. Either keep
+//     both, or separate them with a method that estimates magnitude.
+//
+// A gap below GAP_WARN (1.05) prints that warning on stderr and sets a flag
+// in --json output. This is cheap, and it is the difference between a tool
+// that reports a number and one that reports whether the number means
+// anything.
+
+// ── RECURSIVE SPLITTING (the reach to thousands of factors) ─────
+
+Service [MorrisBifurcate] {
+  description: "Sequential bifurcation's control flow with an estimator that
+    cannot sign-cancel. Screen the current partition, drop groups below the
+    keep rule, split survivors, repeat.
+
+    This is what supersedes the `sb` proposal in EXPANSION_NOTE.md §2.",
+
+  methods: {
+
+    bifurcate(space, initial_partition, keep_rule, max_rounds) -> [Factor][] {
+
+      // round 0: G0 groups            cost r*(G0+1)
+      // round n: split each surviving group in two, re-screen
+      // stop when: groups are singletons, or no group survives, or
+      //            max_rounds hit, or the cut gap falls below GAP_WARN
+      //            (splitting further cannot help if the cut is a tie)
+
+      preconditions: [
+        "initial partition is valid",
+        "max_rounds <= ceil(log2(k)) + 1",
+        "total evaluation budget computed and reported BEFORE the first run —
+         a screening method whose cost you cannot predict in advance is not
+         usable for planning an expensive experiment, which is the entire
+         use case",
+      ],
+      postconditions: [
+        "cost matches the analytic model to within the rounding of the
+         split arithmetic",
+        "every dropped group's mu* was below the keep threshold at the round
+         it was dropped, and the trace records it",
+      ],
+      errors: [
+        "budget exceeds cap: predicted N evaluations (limit M)",
+      ],
+    },
+  }
+}
+
+// ── WHAT THIS DOES NOT CLAIM ────────────────────────────────────
+//
+// Measured in validation/validate.c check A: Spearman(mu*, S_T) = 0.923, but
+// the ratio mu*/S_T varies 118.6x across factors. mu* ranks like the total
+// index; it does not estimate its value. Group mu* inherits this exactly.
+//
+// So --groups answers "which groups can I drop?" and never "what share of
+// variance does this group own?". For shares, `sobol` remains the tool.
+// [C07] Sec. 6 supports the proxy claim only for ranking ("acceptable and
+// convenient"), and check A is where that boundary is pinned.
+//
+// Losing per-member resolution is inherent, not a defect: [C07] Sec. 3.3 notes
+// grouping works "at the cost of losing information on the relative strength
+// of the inputs belonging to the same group." Splitting is how you buy it back.
+
+// ── TEST DESCRIPTIONS ───────────────────────────────────────────
+
+Tests [MorrisGroups] {
+
+  unit: {
+
+    Test singleton_groups_equal_per_factor {
+      "k factors in k singleton groups, same seed and r: every group mu*
+      equals the corresponding per-factor mu* to 1e-12. If this fails the two
+      code paths have diverged and one of them is wrong."
+    },
+
+    Test linear_model_exact {
+      "y = 10*x0 + 5*x1 + 0*x2 + 0*x3, groups {x0,x2} and {x1,x3}.
+      Elementary effects are exact constants, so group mu* must be exactly
+      10 and 5 — the group effect is the sum of member effects when members
+      move in the +1 direction, and the absolute value leaves it unchanged."
+    },
+
+    Test opposing_signs_do_not_cancel {
+      "y = 10*x0 - 10*x1, both in ONE group. A signed group effect would be
+      ~0 whenever the two move in the same direction; mu* must stay well above
+      zero. This is the sequential-bifurcation failure mode, asserted absent.
+      Run it at r=50 and require mu* > 5."
+    },
+
+    Test campolongo_table1 {
+      "All three [C07] Table 1 test cases: 9-factor g-function, 3 groups,
+      r=10, 40 runs. The closed-form group S_T must reproduce the paper's
+      analytic column, and group mu* must order every well-separated pair
+      correctly. Ties are skipped — check C established they are coin flips.
+
+      NOTE: [C07] Table 1 test case 3 prints S_T(v) = 0.393 for
+      v = {X3,X5,X9}. That is an erratum; the correct value is 0.417,
+      confirmed by closed form and by an independent 2M-sample Jansen Monte
+      Carlo (validation/validate.c check D). Assert against 0.417."
+    },
+
+    Test cost_model_exact {
+      "npoints() equals the number of evaluations actually requested, for
+      50 random (k, G, r) combinations."
+    },
+
+    Test order_invariance {
+      "Declaring the same partition in a different order gives identical
+      mu* per group."
+    },
+
+    Test determinism {
+      "Same .space + seed gives a byte-identical design across two runs and
+      across a rebuild. Same contract as the per-factor design."
+    },
+  },
+
+  parser: {
+
+    Test partition_required {
+      "A factor in no group, and a factor in two groups, each produce a clean
+      error naming the factor and the group(s)."
+    },
+
+    Test unknown_member { "groups: a: w1, w99 -> error naming w99." },
+    Test single_group   { "One group is an error, not a degenerate run." },
+    Test duplicate_name { "Two groups named 'encoder' is an error." },
+    Test caps           { "65 groups is a clean cap error (DOE_MAX_GROUPS)." },
+    Test absent_groups  { "No groups: section -> per-factor behaviour, byte
+                           identical to today's output." },
+  },
+
+  diagnostic: {
+
+    Test gap_warning_fires {
+      "A model with two factors whose true effects differ by 1% triggers the
+      cut warning when --keep splits them; a 5x gap does not."
+    },
+
+    Test gap_in_json {
+      "--json carries gap_at_cut and a boolean cut_is_tie."
+    },
+  },
+
+  integration: {
+
+    Test bifurcation_finds_planted_factors {
+      "1024 factors, 8 of them with large coefficients and the rest near
+      zero, mixed signs among the important ones. Recursive splitting from 32
+      initial groups must recover all 8, and the measured evaluation count
+      must match the predicted budget. Report false negatives explicitly —
+      that number is the deliverable, per EXPANSION_NOTE.md §4A."
+    },
+
+    Test bifurcation_on_gfunction {
+      "Non-monotonic by construction. Sequential bifurcation would be invalid
+      here; group mu* must still recover the low-a_i factors."
+    },
+  }
+}
+
+// ── DELIVERY CHECKLIST ──────────────────────────────────────────
+//
+// [ ] singleton_groups_equal_per_factor passes before anything else is built
+// [ ] campolongo_table1 passes against the CORRECTED 0.417
+// [ ] opposing_signs_do_not_cancel passes at r=50
+// [ ] per-factor output is byte-identical to today when `groups:` is absent
+// [ ] cost printed before the first evaluation, always
+// [ ] -Werror, valgrind and ASan clean
+// [ ] EXPANSION_NOTE.md §2 rewritten: sb superseded, this is why
