@@ -93,6 +93,62 @@ int  morris_group_analyze(const doe_space_t *space, const double *responses,
                           size_t nresp, morris_group_effect_t **out,
                           size_t *count, char *err);
 
+/* ============================================================================
+ * Recursive splitting ("sequential bifurcation with an estimator that cannot
+ * sign-cancel"). Screen a partition, drop the groups the keep rule rejects,
+ * split each survivor in two, repeat. spec/morris-groups.bp.
+ *
+ * The loop takes an evaluation callback rather than running anything itself:
+ * the math paths in this library do no I/O, and it makes the whole thing
+ * testable in-process against a synthetic model with planted factors.
+ * ============================================================================ */
+
+/* Evaluate the model at every design point. `u` is npoints*k row-major in
+ * [0,1]. Fill responses[0..npoints). Return 0, or -1 with err filled. */
+typedef int (*morris_eval_fn)(void *ctx, const doe_space_t *space,
+                              const double *u, size_t npoints, size_t k,
+                              double *responses, char *err);
+
+typedef struct {
+    double keep_share;      /* keep top groups until cumulative mu*-share >=
+                             * this (0 < s <= 1). 0 means use 0.9.            */
+    size_t max_rounds;      /* 0 means ceil(log2(k)) + 1                      */
+    size_t initial_groups;  /* 0 means use the .space `groups:` section, or
+                             * split into ~sqrt(k) groups if it has none      */
+} morris_bifurcate_opts_t;
+
+typedef struct {
+    char   group[DOE_MAX_NAME];
+    size_t round;
+    double mu_star;
+    size_t member_count;
+    int    kept;
+} morris_bifurcate_step_t;
+
+typedef struct {
+    bool   survivors[DOE_MAX_FACTORS];  /* mask over space->factors */
+    size_t survivor_count;
+    size_t rounds_run;
+    size_t evaluations;                 /* actually spent                    */
+    size_t predicted_max;               /* worst-case upper bound, known
+                                         * BEFORE the first evaluation       */
+    morris_bifurcate_step_t *trace;     /* caller frees with free()          */
+    size_t trace_count;
+    int    stopped_on_tie;              /* the cut fell inside a near-tie    */
+} morris_bifurcate_result_t;
+
+/* Worst-case evaluation count: every group survives every round. Computable
+ * without running anything, which is the point -- a screening method whose
+ * cost you cannot predict is not usable for planning an expensive experiment. */
+size_t morris_bifurcate_budget(const doe_space_t *space,
+                               const morris_bifurcate_opts_t *opts);
+
+int  morris_bifurcate(const doe_space_t *space,
+                      const morris_bifurcate_opts_t *opts,
+                      morris_eval_fn eval, void *ctx,
+                      morris_bifurcate_result_t *out, char *err);
+void morris_bifurcate_free(morris_bifurcate_result_t *r);
+
 /* Compute elementary-effects statistics. `responses` is indexed by run_id-1
  * (length nresp must be >= npoints). Returns effects in factor order; caller
  * frees with free(). Returns 0 on success, -1 on error. */

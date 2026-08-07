@@ -64,3 +64,48 @@ per-factor σ's interaction flag; do not read it that way. To localise within a
 surviving group, split it and re-run.
 
 Spec: [`../../spec/morris-groups.bp`](../../spec/morris-groups.bp).
+
+## Recursive splitting — `morris bifurcate`
+
+Screen a partition, drop what the keep rule rejects, split each survivor in
+two, repeat:
+
+```
+$ morris bifurcate model.space ./run.sh --keep-share 0.95
+Bifurcating 16 factors, keep-share 0.95
+  worst-case budget : 186 evaluations
+  per-factor would be: 102
+
+Round 1:
+  g2                             10        4  keep
+  g1                              0        4  drop
+...
+2 survivor(s) of 16 factors, 3 round(s), 90 evaluations (worst case was 186)
+  x3
+  x9
+```
+
+**The cost is printed before anything runs.** A screening method whose price
+you learn afterwards is not usable for planning an expensive experiment, which
+is the whole reason to screen.
+
+**Two limits worth knowing before you reach for it:**
+
+- **The reach is 64 factors**, not thousands — `DOE_MAX_FACTORS` is 64, and
+  `doe_space_t` is already ~132 KB by value. Going further needs factor
+  storage moved off the stack first.
+- **The worst-case budget can exceed per-factor screening** (186 vs 102
+  above), because the bound assumes every group survives and splits every
+  round. Bifurcation is a bet that importance is *concentrated*. It paid there
+  — 90 actual — but when importance is diffuse, screening every factor
+  directly is cheaper and simpler.
+
+Measured on 64 factors with 8 important ones at alternating signs: 64 → 8
+survivors, 4 rounds, 460 evaluations against 650, **zero false negatives**.
+The alternating signs matter — that is the case that defeats sequential
+bifurcation, and it is why this uses the absolute group effect.
+
+Stopping: all groups singletons, nothing survives, `max_rounds`, or the
+keep/drop cut falls inside a near-tie. That last one matters — `make validate`
+check C measured that a boundary inside a tie never resolves at any trajectory
+count, so the tied groups are all kept rather than chosen between arbitrarily.

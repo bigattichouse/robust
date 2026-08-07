@@ -25,6 +25,8 @@ static void usage(const char *prog) {
         "screening: r*(G+1) runs instead of r*(k+1), ranked by the absolute\n"
         "group effect. The file decides, so the design and the analysis cannot\n"
         "disagree.\n"
+        "  bifurcate <file.space> <script> [--keep-share S]\n"
+        "                                        Screen groups, drop, split, repeat\n"
         "  validate <file.space>                 Check the .space definition\n"
         "  --version                             Show version\n",
         prog);
@@ -173,6 +175,95 @@ static int cmp_mu_star(const void *a, const void *b) {
     const morris_effect_t *x = a, *y = b;
     if (x->mu_star < y->mu_star) return 1;
     if (x->mu_star > y->mu_star) return -1;
+    return 0;
+}
+
+/* ---- bifurcate: screen, drop, split, repeat ---- */
+
+typedef struct {
+    const char        *script;
+    const doe_space_t *sp;
+    const double      *u;
+    size_t             k;
+    char               buf[DOE_MAX_VALUE];
+} bif_ctx_t;
+
+static const char *bif_value(void *vctx, size_t row, size_t col) {
+    bif_ctx_t *c = (bif_ctx_t *)vctx;
+    return doe_factor_value(&c->sp->factors[col], c->u[row * c->k + col],
+                            c->buf, sizeof c->buf);
+}
+
+static int bif_eval(void *ctx, const doe_space_t *sp, const double *u,
+                    size_t npoints, size_t k, double *responses, char *err) {
+    bif_ctx_t *c = (bif_ctx_t *)ctx;
+    c->sp = sp; c->u = u; c->k = k;
+    return doe_run_capture(sp, "MORRIS", c->script, npoints,
+                           bif_value, c, responses, err);
+}
+
+static int cmd_bifurcate(const char *path, const char *script, double keep_share) {
+    doe_space_t sp;
+    if (load_space(path, &sp) != 0) return 1;
+
+    morris_bifurcate_opts_t opts;
+    memset(&opts, 0, sizeof opts);
+    opts.keep_share = keep_share;
+
+    /*
+     * Cost first. A screening method whose price you learn afterwards is not
+     * usable for planning an expensive experiment, which is the entire point
+     * of screening. The worst case assumes every group survives and splits
+     * every round -- so it can exceed per-factor screening. Bifurcation is a
+     * bet that importance is concentrated; when it is not, screening every
+     * factor directly is cheaper.
+     */
+    size_t worst = morris_bifurcate_budget(&sp, &opts);
+    size_t flat  = sp.trajectories * (sp.factor_count + 1);
+    printf("Bifurcating %zu factors, keep-share %.2f\n", sp.factor_count, 
+           opts.keep_share > 0 ? opts.keep_share : 0.9);
+    printf("  worst-case budget : %zu evaluations\n", worst);
+    printf("  per-factor would be: %zu\n\n", flat);
+
+    bif_ctx_t ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.script = script;
+
+    char err[DOE_ERR_SIZE];
+    morris_bifurcate_result_t res;
+    if (morris_bifurcate(&sp, &opts, bif_eval, &ctx, &res, err) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 1;
+    }
+
+    size_t round = (size_t)-1;
+    for (size_t i = 0; i < res.trace_count; i++) {
+        if (res.trace[i].round != round) {
+            round = res.trace[i].round;
+            printf("Round %zu:\n", round + 1);
+            printf("  %-20s %12s %8s  %s\n", "group", "mu*", "members", "");
+        }
+        printf("  %-20s %12.4g %8zu  %s\n",
+               res.trace[i].group, res.trace[i].mu_star,
+               res.trace[i].member_count,
+               res.trace[i].kept ? "keep" : "drop");
+    }
+
+    printf("\n%zu survivor(s) of %zu factors, %zu round(s), %zu evaluations "
+           "(worst case was %zu):\n",
+           res.survivor_count, sp.factor_count, res.rounds_run,
+           res.evaluations, res.predicted_max);
+    for (size_t f = 0; f < sp.factor_count; f++)
+        if (res.survivors[f]) printf("  %s\n", sp.factors[f].name);
+
+    if (res.stopped_on_tie) {
+        fprintf(stderr,
+            "\nNote: stopped early -- the keep/drop cut fell inside a near-tie.\n"
+            "Splitting further cannot resolve it (see validation check C), so the\n"
+            "tied groups were all kept rather than chosen between arbitrarily.\n");
+    }
+
+    morris_bifurcate_free(&res);
     return 0;
 }
 
@@ -342,6 +433,21 @@ int main(int argc, char *argv[]) {
     if (strcmp(cmd, "run") == 0) {
         if (argc < 4) { fprintf(stderr, "run needs a script argument\n"); return 1; }
         return cmd_run(path, argv[3]);
+    }
+    if (strcmp(cmd, "bifurcate") == 0) {
+        if (argc < 4) { fprintf(stderr, "bifurcate needs a script argument\n"); return 1; }
+        double keep_share = 0.0;      /* 0 -> library default (0.9) */
+        for (int i = 4; i < argc - 1; i++) {
+            if (strcmp(argv[i], "--keep-share") == 0) {
+                keep_share = strtod(argv[i + 1], NULL);
+                if (!(keep_share > 0.0 && keep_share <= 1.0)) {
+                    fprintf(stderr, "--keep-share must be in (0, 1]\n");
+                    return 1;
+                }
+                break;
+            }
+        }
+        return cmd_bifurcate(path, argv[3], keep_share);
     }
     if (strcmp(cmd, "analyze") == 0) {
         if (argc < 4) { fprintf(stderr, "analyze needs a results.csv argument\n"); return 1; }

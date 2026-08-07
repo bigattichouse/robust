@@ -344,8 +344,162 @@ static int test_group_rejects_bad_input(void) {
     return 1;
 }
 
+/* ==========================================================================
+ * Recursive splitting
+ * ======================================================================== */
+
+/*
+ * A planted model: `NPLANT` of `NF` factors carry large coefficients, with
+ * ALTERNATING SIGNS so that any two of them landing in one group would cancel
+ * under a signed group total. The rest are exactly inert.
+ */
+#define BIF_NF     64
+#define BIF_NPLANT  6
+static const size_t bif_planted[BIF_NPLANT] = { 3, 4, 17, 18, 40, 55 };
+
+static double bif_coef(size_t i) {
+    for (size_t p = 0; p < BIF_NPLANT; p++)
+        if (bif_planted[p] == i) return (p % 2) ? -10.0 : 10.0;
+    return 0.0;
+}
+
+static int bif_eval(void *ctx, const doe_space_t *sp, const double *u,
+                    size_t npoints, size_t k, double *responses, char *err) {
+    (void)sp; (void)err;
+    size_t *calls = (size_t *)ctx;
+    for (size_t i = 0; i < npoints; i++) {
+        double y = 0.0;
+        for (size_t j = 0; j < k; j++) y += bif_coef(j) * u[i * k + j];
+        responses[i] = y;
+    }
+    if (calls) *calls += npoints;
+    return 0;
+}
+
+static int make_bif_space(doe_space_t *sp, char *err) {
+    char spec[8192];
+    int off = snprintf(spec, sizeof spec, "factors:\n");
+    for (size_t i = 0; i < BIF_NF; i++)
+        off += snprintf(spec + off, sizeof spec - (size_t)off,
+                        "  x%zu: 0.0, 1.0\n", i);
+    snprintf(spec + off, sizeof spec - (size_t)off,
+             "seed: 4242\ntrajectories: 8\ngrid_levels: 4\n");
+    return doe_space_parse(spec, sp, err);
+}
+
+/*
+ * THE DELIVERABLE from EXPANSION_NOTE.md §4A: the false-negative rate under
+ * mixed signs. Every planted factor must survive. A method that cancels
+ * opposing effects inside a group would drop one silently -- which is exactly
+ * why sequential bifurcation was not built.
+ */
+static int test_bifurcate_finds_planted_factors(void) {
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(make_bif_space(&sp, err) == 0);
+
+    morris_bifurcate_opts_t opts;
+    memset(&opts, 0, sizeof opts);
+    opts.keep_share = 0.95;
+
+    size_t calls = 0;
+    morris_bifurcate_result_t res;
+    CHECK(morris_bifurcate(&sp, &opts, bif_eval, &calls, &res, err) == 0);
+
+    /* No false negatives: every planted factor is in the survivor set. */
+    for (size_t p = 0; p < BIF_NPLANT; p++)
+        CHECK(res.survivors[bif_planted[p]]);
+
+    /* And it actually narrowed: far fewer survivors than factors. */
+    CHECK(res.survivor_count >= BIF_NPLANT);
+    CHECK(res.survivor_count < BIF_NF / 2);
+
+    morris_bifurcate_free(&res);
+    return 1;
+}
+
+/* Cost must be predictable before spending anything, and the prediction must
+ * be an upper bound on what is actually spent. */
+static int test_bifurcate_cost_is_bounded_and_predicted(void) {
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(make_bif_space(&sp, err) == 0);
+
+    morris_bifurcate_opts_t opts;
+    memset(&opts, 0, sizeof opts);
+    opts.keep_share = 0.95;
+
+    size_t predicted = morris_bifurcate_budget(&sp, &opts);
+    CHECK(predicted > 0);
+
+    size_t calls = 0;
+    morris_bifurcate_result_t res;
+    CHECK(morris_bifurcate(&sp, &opts, bif_eval, &calls, &res, err) == 0);
+
+    CHECK(res.predicted_max == predicted);   /* same answer before and after */
+    CHECK(res.evaluations == calls);         /* accounting matches reality   */
+    CHECK(res.evaluations <= res.predicted_max);
+
+    /* And the whole point: far cheaper than screening every factor. */
+    CHECK(res.evaluations < sp.trajectories * (BIF_NF + 1));
+
+    morris_bifurcate_free(&res);
+    return 1;
+}
+
+/* The trace must explain itself: every round recorded, drops marked. */
+static int test_bifurcate_trace(void) {
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(make_bif_space(&sp, err) == 0);
+
+    morris_bifurcate_opts_t opts;
+    memset(&opts, 0, sizeof opts);
+    opts.keep_share = 0.95;
+
+    morris_bifurcate_result_t res;
+    CHECK(morris_bifurcate(&sp, &opts, bif_eval, NULL, &res, err) == 0);
+    CHECK(res.trace_count > 0);
+    CHECK(res.rounds_run > 0);
+
+    int dropped_something = 0;
+    for (size_t i = 0; i < res.trace_count; i++) {
+        CHECK(res.trace[i].round < res.rounds_run);
+        CHECK(res.trace[i].mu_star >= 0.0);
+        CHECK(res.trace[i].member_count > 0);
+        if (!res.trace[i].kept) dropped_something = 1;
+    }
+    CHECK(dropped_something);      /* with 58 of 64 inert, it must drop some */
+
+    morris_bifurcate_free(&res);
+    return 1;
+}
+
+/* An eval callback that fails must surface as an error, not a partial answer. */
+static int bif_eval_fail(void *ctx, const doe_space_t *sp, const double *u,
+                         size_t npoints, size_t k, double *responses, char *err) {
+    (void)ctx; (void)sp; (void)u; (void)npoints; (void)k; (void)responses;
+    snprintf(err, DOE_ERR_SIZE, "model blew up");
+    return -1;
+}
+
+static int test_bifurcate_propagates_eval_failure(void) {
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(make_bif_space(&sp, err) == 0);
+    morris_bifurcate_opts_t opts;
+    memset(&opts, 0, sizeof opts);
+
+    morris_bifurcate_result_t res;
+    memset(err, 'A', sizeof err);
+    CHECK(morris_bifurcate(&sp, &opts, bif_eval_fail, NULL, &res, err) != 0);
+    CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);
+    CHECK(strstr(err, "blew up") != NULL);
+    return 1;
+}
+
 int main(void) {
     printf("morris tests\n");
+    RUN_TEST(test_bifurcate_finds_planted_factors);
+    RUN_TEST(test_bifurcate_cost_is_bounded_and_predicted);
+    RUN_TEST(test_bifurcate_trace);
+    RUN_TEST(test_bifurcate_propagates_eval_failure);
     RUN_TEST(test_group_singletons_equal_per_factor);
     RUN_TEST(test_group_opposing_signs_do_not_cancel);
     RUN_TEST(test_group_cost_model);

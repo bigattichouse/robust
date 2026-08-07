@@ -349,3 +349,274 @@ int morris_group_analyze(const doe_space_t *space, const double *responses,
     morris_group_design_free(&d);
     return rc;
 }
+
+/* ============================================================================
+ * Recursive splitting. See morris.h and spec/morris-groups.bp.
+ * ============================================================================ */
+
+#define BIFURCATE_GAP_WARN 1.05   /* cut inside this ratio is a near-tie */
+
+static size_t default_rounds(size_t k) {
+    size_t r = 1;
+    while ((size_t)1 << r < k) r++;
+    return r + 1;
+}
+
+static size_t default_initial_groups(size_t k) {
+    /* ~sqrt(k), clamped: enough groups that the first round is informative,
+     * few enough that it is cheap. */
+    size_t g = 2;
+    while (g * g < k) g++;
+    if (g > k) g = k;
+    if (g > DOE_MAX_GROUPS) g = DOE_MAX_GROUPS;
+    return g < 2 ? 2 : g;
+}
+
+size_t morris_bifurcate_budget(const doe_space_t *space,
+                               const morris_bifurcate_opts_t *opts) {
+    size_t k = space->factor_count;
+    if (k == 0) return 0;
+    size_t rounds = (opts && opts->max_rounds) ? opts->max_rounds : default_rounds(k);
+    size_t G = space->group_count ? space->group_count
+             : (opts && opts->initial_groups ? opts->initial_groups
+                                             : default_initial_groups(k));
+    if (G > k) G = k;
+
+    size_t total = 0;
+    for (size_t n = 0; n < rounds; n++) {
+        total += space->trajectories * (G + 1);
+        if (G >= k) break;              /* already singletons */
+        G *= 2;                          /* worst case: everything survives */
+        if (G > k) G = k;
+    }
+    return total;
+}
+
+/* Build a space carrying `part` as its groups: section. */
+static void set_partition(doe_space_t *sp, const doe_group_t *part, size_t G) {
+    sp->group_count = G;
+    for (size_t g = 0; g < G; g++) sp->groups[g] = part[g];
+}
+
+int morris_bifurcate(const doe_space_t *space,
+                     const morris_bifurcate_opts_t *opts,
+                     morris_eval_fn eval, void *ctx,
+                     morris_bifurcate_result_t *out, char *err) {
+    if (!space || !eval || !out) {
+        snprintf(err, DOE_ERR_SIZE, "null input to morris_bifurcate");
+        return -1;
+    }
+    size_t k = space->factor_count;
+    if (k == 0) { snprintf(err, DOE_ERR_SIZE, "no factors"); return -1; }
+
+    double keep_share = (opts && opts->keep_share > 0.0) ? opts->keep_share : 0.9;
+    if (keep_share > 1.0) keep_share = 1.0;
+    size_t max_rounds = (opts && opts->max_rounds) ? opts->max_rounds : default_rounds(k);
+
+    memset(out, 0, sizeof *out);
+    out->predicted_max = morris_bifurcate_budget(space, opts);
+
+    doe_space_t *work = malloc(sizeof *work);
+    doe_group_t *part = malloc(DOE_MAX_GROUPS * sizeof *part);
+    doe_group_t *next = malloc(DOE_MAX_GROUPS * sizeof *next);
+    if (!work || !part || !next) {
+        free(work); free(part); free(next);
+        snprintf(err, DOE_ERR_SIZE, "out of memory");
+        return -1;
+    }
+    *work = *space;
+
+    /* Initial partition: the .space's own groups, or contiguous blocks. */
+    size_t G;
+    if (space->group_count > 0) {
+        G = space->group_count;
+        for (size_t g = 0; g < G; g++) part[g] = space->groups[g];
+    } else {
+        G = (opts && opts->initial_groups) ? opts->initial_groups
+                                           : default_initial_groups(k);
+        if (G > k) G = k;
+        if (G > DOE_MAX_GROUPS) G = DOE_MAX_GROUPS;
+        memset(part, 0, G * sizeof *part);
+        for (size_t i = 0; i < k; i++) {
+            size_t g = (i * G) / k;                 /* contiguous blocks */
+            if (g >= G) g = G - 1;
+            part[g].members[i] = true;
+            part[g].member_count++;
+        }
+        for (size_t g = 0; g < G; g++)
+            snprintf(part[g].name, DOE_MAX_NAME, "g%zu", g);
+    }
+
+    size_t trace_cap = 64, trace_n = 0;
+    morris_bifurcate_step_t *trace = malloc(trace_cap * sizeof *trace);
+    if (!trace) {
+        free(work); free(part); free(next);
+        snprintf(err, DOE_ERR_SIZE, "out of memory");
+        return -1;
+    }
+
+    int rc = 0;
+    size_t round = 0;
+    for (; round < max_rounds; round++) {
+        set_partition(work, part, G);
+        /* Fresh trajectories each round; still a pure function of the seed. */
+        work->seed = space->seed ^ (0x9E3779B97F4A7C15ULL * (round + 1));
+
+        morris_group_design_t d;
+        if (morris_group_design_build(work, &d, err) != 0) { rc = -1; break; }
+
+        double *y = malloc(d.npoints * sizeof *y);
+        if (!y) { morris_group_design_free(&d);
+                  snprintf(err, DOE_ERR_SIZE, "out of memory"); rc = -1; break; }
+
+        if (eval(ctx, work, d.u, d.npoints, d.k, y, err) != 0) {
+            free(y); morris_group_design_free(&d); rc = -1; break;
+        }
+        out->evaluations += d.npoints;
+
+        morris_group_effect_t *eff = NULL; size_t n = 0;
+        if (morris_group_analyze(work, y, d.npoints, &eff, &n, err) != 0) {
+            free(y); morris_group_design_free(&d); rc = -1; break;
+        }
+        free(y);
+        morris_group_design_free(&d);
+
+        /* Rank by mu*, then keep until the cumulative share is reached. */
+        size_t *order = malloc(n * sizeof *order);
+        if (!order) { free(eff); snprintf(err, DOE_ERR_SIZE, "out of memory");
+                      rc = -1; break; }
+        for (size_t i = 0; i < n; i++) order[i] = i;
+        for (size_t i = 0; i < n; i++)
+            for (size_t j = i + 1; j < n; j++)
+                if (eff[order[j]].mu_star > eff[order[i]].mu_star) {
+                    size_t t = order[i]; order[i] = order[j]; order[j] = t;
+                }
+
+        double total = 0.0;
+        for (size_t i = 0; i < n; i++) total += eff[i].mu_star;
+
+        size_t keep_upto = 1;                     /* always keep at least one */
+        if (total > 0.0) {
+            double cum = 0.0;
+            for (size_t i = 0; i < n; i++) {
+                cum += eff[order[i]].mu_star;
+                keep_upto = i + 1;
+                if (cum / total >= keep_share) break;
+            }
+        } else {
+            keep_upto = n;   /* nothing moved: cannot discriminate, keep all */
+        }
+
+        /*
+         * The cut-gap check. Validation check C measured that a keep/drop
+         * boundary inside a near-tie never resolves, at any trajectory count.
+         * Splitting further cannot help either, so stop and say so rather
+         * than spend the next round pretending otherwise.
+         */
+        int tie_at_cut = 0;
+        if (keep_upto < n) {
+            double hi = eff[order[keep_upto - 1]].mu_star;
+            double lo = eff[order[keep_upto]].mu_star;
+            if (lo > 0.0 && hi / lo < BIFURCATE_GAP_WARN) tie_at_cut = 1;
+        }
+
+        /* Record the round, and build the surviving partition. */
+        size_t nkept = 0;
+        for (size_t i = 0; i < n; i++) {
+            size_t gi = order[i];
+            int kept = (i < keep_upto) || tie_at_cut;   /* a tie keeps both */
+            if (trace_n == trace_cap) {
+                size_t nc = trace_cap * 2;
+                morris_bifurcate_step_t *t2 = realloc(trace, nc * sizeof *t2);
+                /* Do NOT free here: the check after this loop owns the
+                 * cleanup for both buffers. Freeing in both places was a
+                 * use-after-free that -Werror caught. */
+                if (!t2) { snprintf(err, DOE_ERR_SIZE, "out of memory");
+                           rc = -1; break; }
+                trace = t2; trace_cap = nc;
+            }
+            snprintf(trace[trace_n].group, DOE_MAX_NAME, "%s", eff[gi].name);
+            trace[trace_n].round        = round;
+            trace[trace_n].mu_star      = eff[gi].mu_star;
+            trace[trace_n].member_count = eff[gi].member_count;
+            trace[trace_n].kept         = kept;
+            trace_n++;
+            if (kept) nkept++;
+        }
+        if (rc != 0) { free(order); free(eff); break; }
+
+        /* Survivors, in ranked order, split in two where possible. */
+        size_t G2 = 0;
+        int all_singletons = 1;
+        for (size_t i = 0; i < n && G2 < DOE_MAX_GROUPS; i++) {
+            if (!(i < keep_upto || tie_at_cut)) continue;
+            const doe_group_t *g = &part[order[i]];
+            if (g->member_count <= 1) {
+                next[G2++] = *g;                       /* already a singleton */
+                continue;
+            }
+            all_singletons = 0;
+            size_t half = g->member_count / 2, seen = 0;
+            doe_group_t a, b;
+            memset(&a, 0, sizeof a); memset(&b, 0, sizeof b);
+            for (size_t f = 0; f < k; f++) {
+                if (!g->members[f]) continue;
+                if (seen < half) { a.members[f] = true; a.member_count++; }
+                else             { b.members[f] = true; b.member_count++; }
+                seen++;
+            }
+            snprintf(a.name, DOE_MAX_NAME, "%.*sA", DOE_MAX_NAME - 2, g->name);
+            snprintf(b.name, DOE_MAX_NAME, "%.*sB", DOE_MAX_NAME - 2, g->name);
+            if (G2 < DOE_MAX_GROUPS) next[G2++] = a;
+            if (G2 < DOE_MAX_GROUPS) next[G2++] = b;
+        }
+
+        free(order);
+        free(eff);
+
+        out->rounds_run = round + 1;
+
+        if (tie_at_cut) { out->stopped_on_tie = 1; }
+
+        /* Stop when nothing can be split further, or the cut was a tie. */
+        if (all_singletons || tie_at_cut || G2 < 2) {
+            /* Survivors are whatever `next` holds. */
+            for (size_t g = 0; g < G2; g++)
+                for (size_t f = 0; f < k; f++)
+                    if (next[g].members[f]) out->survivors[f] = true;
+            G = G2;
+            round++;
+            break;
+        }
+
+        memcpy(part, next, G2 * sizeof *part);
+        G = G2;
+        (void)nkept;
+    }
+
+    if (rc == 0) {
+        /* If the loop ran out of rounds, the current partition is the answer. */
+        int any = 0;
+        for (size_t f = 0; f < k; f++) if (out->survivors[f]) { any = 1; break; }
+        if (!any) {
+            for (size_t g = 0; g < G; g++)
+                for (size_t f = 0; f < k; f++)
+                    if (part[g].members[f]) out->survivors[f] = true;
+        }
+        for (size_t f = 0; f < k; f++) if (out->survivors[f]) out->survivor_count++;
+        out->trace = trace;
+        out->trace_count = trace_n;
+    } else {
+        free(trace);
+    }
+
+    free(work); free(part); free(next);
+    return rc;
+}
+
+void morris_bifurcate_free(morris_bifurcate_result_t *r) {
+    if (!r) return;
+    free(r->trace);
+    r->trace = NULL;
+    r->trace_count = 0;
+}

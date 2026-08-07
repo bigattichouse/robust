@@ -389,7 +389,27 @@ Tests [MorrisGroups] {
 // [x] -Werror, valgrind and ASan clean
 // [x] EXPANSION_NOTE.md §2 rewritten: sb superseded, this is why
 //
-// Built 2026-08-06. Deviation from the sketch above, deliberate: group mode is
+// Recursive splitting built 2026-08-06 as `morris bifurcate`. Measured on 64
+// factors with 8 planted at alternating signs: 64 -> 8 survivors, 4 rounds,
+// 460 evaluations against 650 for per-factor screening, ZERO false negatives.
+//
+// TWO HONEST LIMITS, both worth stating plainly:
+//
+//   1. The reach is 64 factors, not thousands. DOE_MAX_FACTORS is 64 and
+//      doe_space_t is already ~132 KB by value; at 1024 factors it would be
+//      2.1 MB, too large for the stack it currently lives on. The k=3072 case
+//      that motivated EXPANSION_NOTE.md is NOT reachable without moving factor
+//      storage to the heap first. That is a prerequisite, not a detail.
+//
+//   2. The worst-case budget can EXCEED per-factor screening -- 1240 vs 650 in
+//      the run above -- because the bound assumes every group survives and
+//      splits every round. Bifurcation is a bet that importance is
+//      concentrated. It paid there (460 actual), but when importance is
+//      diffuse, screening every factor directly is both cheaper and simpler.
+//      This is the same caution EXPANSION_NOTE.md §1 raised about the sparsity
+//      premise, now measurable rather than argued.
+//
+// Deviation from the sketch above, deliberate: group mode is
 // selected by the PRESENCE of a `groups:` section, not by a `--groups` flag.
 // The design and the analysis have to agree, and a flag lets someone generate
 // one and analyse the other -- a silent wrong answer rather than an error. The
