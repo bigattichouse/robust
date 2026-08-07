@@ -58,6 +58,12 @@ expect_exit 1 "run needs a script" "$MORRIS" run "$TMP/f.space"
 expect_exit 0 "analyze runs" "$MORRIS" analyze "$TMP/f.space" "$TMP/r.csv"
 expect_match "mu\*" "analyze reports mu*" "$MORRIS" analyze "$TMP/f.space" "$TMP/r.csv"
 expect_exit 1 "analyze needs results" "$MORRIS" analyze "$TMP/f.space"
+expect_match "95% CI" "analyze reports a confidence interval on mu*" \
+    "$MORRIS" analyze "$TMP/f.space" "$TMP/r.csv"
+expect_match "keep-share" "analyze: --keep-share reports the cut" \
+    "$MORRIS" analyze "$TMP/f.space" "$TMP/r.csv" --keep-share 0.9
+expect_exit 1 "analyze: a bad --keep-share exits 1" \
+    "$MORRIS" analyze "$TMP/f.space" "$TMP/r.csv" --keep-share 2
 
 # all-inert note
 { echo "run_id,response"; "$MORRIS" sample "$TMP/f.space" | tail -n +2 \

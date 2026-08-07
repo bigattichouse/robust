@@ -18,8 +18,10 @@ static void usage(const char *prog) {
         "  sample   <file.space>                 Print the design matrix as CSV\n"
         "  generate <file.space>                 List the design points (human-readable)\n"
         "  run      <file.space> <script>        Run <script> once per point (MORRIS_* env)\n"
-        "  analyze  <file.space> <results.csv> [--metric NAME]\n"
-        "                                        Elementary effects: mu*, sigma\n"
+        "  analyze  <file.space> <results.csv> [--metric NAME] [--keep-share S]\n"
+        "                                        Elementary effects: mu* with 95%% CI,\n"
+        "                                        sigma; --keep-share cuts at cumulative\n"
+        "                                        mu*-share S (an 80/20 rule)\n"
         "\n"
         "A `groups:` section in the .space switches every command to group\n"
         "screening: r*(G+1) runs instead of r*(k+1), ranked by the absolute\n"
@@ -346,12 +348,14 @@ static int cmd_analyze_groups(const doe_space_t *sp, const char *csv, const char
     return 0;
 }
 
-static int cmd_analyze(const char *path, const char *csv, const char *metric) {
+static int cmd_analyze(const char *path, const char *csv, const char *metric,
+                       double keep_share) {
     doe_space_t sp;
     if (load_space(path, &sp) != 0) return 1;
 
     /* The .space decides; see the note on design_view_t. */
     if (sp.group_count > 0) return cmd_analyze_groups(&sp, csv, metric);
+    (void)keep_share;
 
     size_t np = morris_npoints(&sp);
     double *responses = malloc(np * sizeof *responses);
@@ -379,13 +383,59 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric) {
 
     printf("Morris elementary effects (metric: %s) — %zu trajectories\n\n",
            metric, sp.trajectories);
-    printf("%-20s %12s %12s   %s\n", "Factor", "mu*", "sigma", "note");
-    printf("%-20s %12s %12s   %s\n", "------", "----", "-----", "----");
+    printf("%-20s %20s %12s   %s\n", "Factor", "mu* [95% CI]", "sigma", "note");
+    printf("%-20s %20s %12s   %s\n", "------", "------------", "-----", "----");
+    double total_mu = 0.0;
+    for (size_t i = 0; i < count; i++) total_mu += eff[i].mu_star;
     for (size_t i = 0; i < count; i++) {
         const char *note = (eff[i].sigma >= 0.5 * eff[i].mu_star && eff[i].mu_star > 0)
                            ? "interacting/nonlinear" : "";
-        printf("%-20s %12.4g %12.4g   %s\n",
-               eff[i].name, eff[i].mu_star, eff[i].sigma, note);
+        char cell[48];
+        snprintf(cell, sizeof cell, "%.4g[%.3g,%.3g]",
+                 eff[i].mu_star, eff[i].mu_star_lo, eff[i].mu_star_hi);
+        printf("%-20s %20s %12.4g   %s\n", eff[i].name, cell, eff[i].sigma, note);
+    }
+
+    /*
+     * Keep rules. --keep-share is the default recommendation over a fixed
+     * count because validation check C measured that a fixed cut is only as
+     * trustworthy as the gap it lands in: on the g-function the top-5 cut was
+     * 100% correct from r=20 while the top-3 cut never resolved at any budget,
+     * because it fell inside a 1% tie. A share-based cut at least lands where
+     * the mass runs out rather than at an arbitrary index.
+     */
+    if (keep_share > 0.0 && total_mu > 0.0) {
+        double cum = 0.0;
+        size_t keep = 0;
+        for (size_t i = 0; i < count; i++) {
+            cum += eff[i].mu_star;
+            keep = i + 1;
+            if (cum / total_mu >= keep_share) break;
+        }
+        printf("\n--keep-share %.2f keeps %zu of %zu factors "
+               "(%.1f%% of total mu*):\n  ", keep_share, keep, count,
+               100.0 * cum / total_mu);
+        for (size_t i = 0; i < keep; i++) printf("%s%s", i ? ", " : "", eff[i].name);
+        printf("\n");
+
+        if (keep < count) {
+            double hi = eff[keep - 1].mu_star, lo = eff[keep].mu_star;
+            if (lo > 0.0 && hi / lo < 1.05) {
+                fprintf(stderr,
+                    "\nWARNING: the keep/drop cut falls inside a %.1f%% gap "
+                    "(%s -> %s).\nThat ranking is not resolvable at any trajectory "
+                    "count -- keep both, or separate them with a method that\n"
+                    "estimates magnitude (sobol).\n",
+                    (hi / lo - 1.0) * 100.0, eff[keep - 1].name, eff[keep].name);
+            }
+            if (eff[keep - 1].mu_star_lo < eff[keep].mu_star_hi) {
+                fprintf(stderr,
+                    "\nNote: the confidence intervals of '%s' (kept) and '%s' "
+                    "(dropped)\noverlap, so their order is not established at "
+                    "this trajectory count.\n",
+                    eff[keep - 1].name, eff[keep].name);
+            }
+        }
     }
     printf("\nRanked by mu* (importance). sigma >= mu*/2 flags interaction/nonlinearity;\n"
            "factors at the bottom with small mu* are screening drop candidates.\n");
@@ -462,10 +512,17 @@ int main(int argc, char *argv[]) {
     if (strcmp(cmd, "analyze") == 0) {
         if (argc < 4) { fprintf(stderr, "analyze needs a results.csv argument\n"); return 1; }
         const char *metric = "response";
-        for (int i = 4; i < argc - 1; i++) {
-            if (strcmp(argv[i], "--metric") == 0) { metric = argv[i + 1]; break; }
+        double keep_share = 0.0;
+        for (int i = 4; i < argc; i++) {
+            if (strcmp(argv[i], "--metric") == 0 && i + 1 < argc) metric = argv[++i];
+            else if (strcmp(argv[i], "--keep-share") == 0 && i + 1 < argc) {
+                keep_share = strtod(argv[++i], NULL);
+                if (!(keep_share > 0.0 && keep_share <= 1.0)) {
+                    fprintf(stderr, "--keep-share must be in (0, 1]\n"); return 1;
+                }
+            }
         }
-        return cmd_analyze(path, argv[3], metric);
+        return cmd_analyze(path, argv[3], metric, keep_share);
     }
 
     fprintf(stderr, "Unknown command: %s\n", cmd);

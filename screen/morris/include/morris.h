@@ -30,6 +30,11 @@ typedef struct {
     double mu;        /* mean elementary effect            */
     double mu_star;   /* mean |elementary effect| (importance) */
     double sigma;     /* std of elementary effects (interaction flag) */
+    /* 95% bootstrap interval on mu*, resampling TRAJECTORIES (the independent
+     * unit) rather than individual effects. Without it a keep/drop line is
+     * drawn on point estimates, and validation check C measured that such a
+     * line is only as trustworthy as the gap it falls in. */
+    double mu_star_lo, mu_star_hi;
 } morris_effect_t;
 
 /* Build the trajectory design from a parsed .space (uses space->seed,

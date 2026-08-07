@@ -119,3 +119,30 @@ Stopping: all groups singletons, nothing survives, `max_rounds`, or the
 keep/drop cut falls inside a near-tie. That last one matters — `make validate`
 check C measured that a boundary inside a tie never resolves at any trajectory
 count, so the tied groups are all kept rather than chosen between arbitrarily.
+
+
+## Confidence intervals and the keep rule
+
+`morris analyze` reports a 95% bootstrap interval on each μ\*, resampling
+**trajectories** — the independent unit — and seeded from the `.space` so the
+interval is reproducible from the file alone.
+
+```sh
+morris analyze model.space results.csv --keep-share 0.9
+```
+
+`--keep-share S` keeps the top factors until their cumulative μ\*-share reaches
+`S` — an 80/20 cut rather than a fixed count. That is deliberate:
+`make validate` check C measured that a **fixed** cut is only as trustworthy as
+the gap it lands in. On the g-function the top-5 cut was 100% correct from
+r=20, while the top-3 cut never resolved at *any* budget because it fell inside
+a 1% tie. A share-based cut at least lands where the mass runs out.
+
+Two warnings fire on stderr when the cut is not trustworthy:
+
+- the gap at the boundary is under 5% — *"not resolvable at any trajectory
+  count; keep both, or separate them with `sobol`"*
+- the confidence intervals of the last kept and first dropped factor **overlap**,
+  so their order is not established at this trajectory count
+
+stdout is unchanged either way, so pipelines are unaffected.

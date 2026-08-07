@@ -156,6 +156,15 @@ int morris_analyze(const doe_space_t *space, const double *responses, size_t nre
     }
 
     if (rc == 0) {
+        /* Bootstrap over trajectories: one factor's r elementary effects come
+         * from r independent trajectories, so those are the unit to resample.
+         * Seeded off the space seed so the interval is reproducible from the
+         * .space alone, like every other number this tool reports. */
+        enum { NBOOT = 1000 };
+        doe_rng_t brng;
+        doe_rng_seed(&brng, space->seed ^ 0xB007D0E5ULL);
+        double *boot = malloc(NBOOT * sizeof *boot);
+
         for (size_t j = 0; j < k; j++) {
             const double *e = &ee[j * r];
             size_t n = cnt[j];
@@ -166,7 +175,24 @@ int morris_analyze(const doe_space_t *space, const double *responses, size_t nre
             eff[j].mu      = doe_mean(e, n);
             eff[j].mu_star = (n > 0) ? sum_abs / (double)n : 0.0;
             eff[j].sigma   = doe_std(e, n);
+            eff[j].mu_star_lo = eff[j].mu_star;
+            eff[j].mu_star_hi = eff[j].mu_star;
+
+            if (boot && n > 1) {
+                for (int b = 0; b < NBOOT; b++) {
+                    double acc = 0.0;
+                    for (size_t i = 0; i < n; i++)
+                        acc += fabs(e[rng_below(&brng, n)]);
+                    boot[b] = acc / (double)n;
+                }
+                for (int a = 0; a < NBOOT; a++)          /* insertion sort */
+                    for (int b = a + 1; b < NBOOT; b++)
+                        if (boot[b] < boot[a]) { double t = boot[a]; boot[a] = boot[b]; boot[b] = t; }
+                eff[j].mu_star_lo = boot[(int)(0.025 * NBOOT)];
+                eff[j].mu_star_hi = boot[(int)(0.975 * NBOOT)];
+            }
         }
+        free(boot);
         *out = eff;
         *count = k;
     } else {
