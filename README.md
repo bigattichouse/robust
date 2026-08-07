@@ -26,6 +26,8 @@ deterministic simulator to find what matters; Taguchi runs on the bench to optim
 | `sobol`   | variance attribution — Sᵢ (first-order), S_Tᵢ (total) |
 | `robust`  | funnel orchestrator + unified report |
 | `pareto`  | multi-objective frontier — filter + accumulating `.front` store |
+| `regress` | SRC/SRRC + R² — the *direction* of each effect |
+| `uq`      | output distribution — percentiles, histogram, skew |
 | `ofat`    | one-factor-at-a-time confirmation runs |
 | `grid`    | small full-factorial interaction grids |
 | `report`  | unified HTML/SVG dashboard |

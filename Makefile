@@ -45,6 +45,16 @@ ROBUST_TEST_SRC = $(wildcard orchestrate/robust/tests/*.c)
 ROBUST_TEST_BIN = $(BUILD)/test_robust
 ROBUST_DEPS     = $(ROBUST_LIB_OBJ) $(MORRIS_LIB_OBJ) $(SOBOL_LIB_OBJ) $(COMMON_OBJ)
 
+# regress tool (E1) — SRC/SRRC + R^2
+REGRESS_CLI_SRC = $(wildcard analyze/regress/src/cli/*.c)
+REGRESS_CLI_OBJ = $(REGRESS_CLI_SRC:analyze/regress/src/cli/%.c=$(BUILD)/regress/cli/%.o)
+REGRESS_BIN     = $(BIN)/regress
+
+# uq tool (E1) — output distribution summary
+UQ_CLI_SRC = $(wildcard analyze/uq/src/cli/*.c)
+UQ_CLI_OBJ = $(UQ_CLI_SRC:analyze/uq/src/cli/%.c=$(BUILD)/uq/cli/%.o)
+UQ_BIN     = $(BIN)/uq
+
 # pareto tool (E1) — frontier filter + .front store
 PARETO_INC      = -Ianalyze/pareto/include
 PARETO_LIB_SRC  = $(wildcard analyze/pareto/src/lib/*.c)
@@ -113,9 +123,9 @@ VALIDATION_BIN = $(BUILD)/validate
 DEPFILES = $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 -include $(DEPFILES)
 
-.PHONY: all common morris sobol robust taguchi pareto install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all validate clean
+.PHONY: all common morris sobol robust taguchi pareto regress uq install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all validate clean
 
-all: common morris sobol robust pareto taguchi
+all: common morris sobol robust pareto regress uq taguchi
 
 # ---- common core --------------------------------------------------------
 common: $(COMMON_LIB)
@@ -257,6 +267,24 @@ $(PARETO_TEST_BIN): $(PARETO_TEST_SRC) $(PARETO_LIB_OBJ) $(COMMON_OBJ) | $(BUILD
 	$(CC) $(CFLAGS) $(COMMON_INC) $(PARETO_INC) -I$(COMMON_DIR)/tests \
 	      $(PARETO_TEST_SRC) $(PARETO_LIB_OBJ) $(COMMON_OBJ) -o $@ $(LDFLAGS)
 
+# ---- regress ------------------------------------------------------------
+regress: $(REGRESS_BIN)
+
+$(REGRESS_BIN): $(REGRESS_CLI_OBJ) $(COMMON_OBJ) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD)/regress/cli/%.o: analyze/regress/src/cli/%.c | $(BUILD)/regress/cli
+	$(CC) $(CFLAGS) $(COMMON_INC) -c $< -o $@
+
+# ---- uq -----------------------------------------------------------------
+uq: $(UQ_BIN)
+
+$(UQ_BIN): $(UQ_CLI_OBJ) $(COMMON_OBJ) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD)/uq/cli/%.o: analyze/uq/src/cli/%.c | $(BUILD)/uq/cli
+	$(CC) $(CFLAGS) $(COMMON_INC) -c $< -o $@
+
 # ---- validation ---------------------------------------------------------
 # `make validate` reproduces the published screening results the roadmap
 # cites, against closed-form ground truth. Not part of `test`: it is slower
@@ -372,7 +400,7 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 test-all: test
 
 # ---- housekeeping -------------------------------------------------------
-$(BUILD) $(BIN) $(BUILD)/common $(BUILD)/morris/lib $(BUILD)/morris/cli $(BUILD)/sobol/lib $(BUILD)/sobol/cli $(BUILD)/robust/lib $(BUILD)/robust/cli $(BUILD)/pareto/lib $(BUILD)/pareto/cli $(BUILD)/taguchi/lib $(BUILD)/taguchi/cli:
+$(BUILD) $(BIN) $(BUILD)/common $(BUILD)/morris/lib $(BUILD)/morris/cli $(BUILD)/sobol/lib $(BUILD)/sobol/cli $(BUILD)/robust/lib $(BUILD)/robust/cli $(BUILD)/pareto/lib $(BUILD)/pareto/cli $(BUILD)/taguchi/lib $(BUILD)/taguchi/cli $(BUILD)/regress/cli $(BUILD)/uq/cli:
 	mkdir -p $@
 
 clean:

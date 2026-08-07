@@ -9,8 +9,8 @@ new sampling; every item consumes the existing Morris/Sobol responses."*
 | Tool | Purpose | Status |
 |---|---|---|
 | [`pareto`](pareto/) | Non-dominated frontier over several metric columns — a stateless filter *and* a `.front` store that accumulates across experiment batches. | **Built** (E1) |
-| `regress` | SRC/SRRC + R² — the *direction* of each effect, which variance shares cannot give. | E1 |
-| `uq` | Output distribution summary: mean, variance, P5/P50/P95, histogram + empirical CDF. | E1 |
+| [`regress`](regress/) | **Built.** SRC/SRRC + R² — the *direction* of each effect, which variance shares cannot give. `--ranks` for a monotone-but-curved relationship. | E1 ✓ |
+| [`uq`](uq/) | **Built.** Output distribution: mean, sd, P05/P25/P50/P75/P95, histogram with cumulative CDF, and a skew note when the mean misleads. | E1 ✓ |
 | `report` | Standalone unified HTML/SVG: Morris μ\*–σ scatter, Sobol Sᵢ/S_Tᵢ tornado bars, Taguchi main-effects + S/N. Also callable as `robust report`. | M4 |
 
 Filters emit the same results-CSV dialect they consume, so they compose in

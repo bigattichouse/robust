@@ -126,8 +126,146 @@ static int test_json_escape(void) {
     return 1;
 }
 
+/* ---- doe_ols_src: standardized regression -------------------------------- */
+
+/*
+ * EXPANSION.md E1's validation clause: exact on a known linear model. With
+ * y = 10*x0 + 5*x1 + 0*x2 the standardized coefficients must be proportional
+ * to (10, 5, 0) and R^2 must be exactly 1 -- there is nothing for a linear
+ * model to miss.
+ */
+static int test_ols_exact_on_linear(void) {
+    enum { N = 60, K = 3 };
+    double X[N * K], y[N];
+    doe_rng_t rng; doe_rng_seed(&rng, 11);
+    /*
+     * Each column is an independent PERMUTATION of the same values, so every
+     * column has identical mean and standard deviation by construction. That
+     * matters: SRC_j = beta_j * sd_j / sd_y, so unequal column spread shifts
+     * the ratio away from beta_0/beta_1 for reasons that have nothing to do
+     * with the regression. With plain random draws the sd's differ by a few
+     * percent and the ratio lands near 1.6 rather than 2 -- noise, not error.
+     */
+    for (size_t j = 0; j < K; j++) {
+        double v[N];
+        for (size_t i = 0; i < N; i++) v[i] = (double)i / (double)N;
+        for (size_t i = N; i > 1; i--) {          /* Fisher-Yates */
+            size_t r = (size_t)(doe_rng_uniform(&rng) * (double)i);
+            if (r >= i) r = i - 1;
+            double t = v[i-1]; v[i-1] = v[r]; v[r] = t;
+        }
+        for (size_t i = 0; i < N; i++) X[i * K + j] = v[i];
+    }
+    for (size_t i = 0; i < N; i++)
+        y[i] = 10.0 * X[i*K+0] + 5.0 * X[i*K+1] + 0.0 * X[i*K+2];
+    double coef[K], r2 = 0.0; char err[DOE_ERR_SIZE];
+    CHECK(doe_ols_src(X, y, N, K, coef, &r2, err) == 0);
+
+    CHECK_DBL(r2, 1.0, 1e-9);
+    CHECK(coef[0] > 0.0 && coef[1] > 0.0);
+    CHECK(fabs(coef[2]) < 1e-9);              /* inert factor is exactly flat */
+    /* SRC is proportional to the coefficients when the factors share a
+     * distribution, so the ratio must recover 10/5. */
+    CHECK_DBL(coef[0] / coef[1], 2.0, 1e-6);
+    return 1;
+}
+
+/* The sign is the point: SRC reports direction, which variance shares cannot. */
+static int test_ols_reports_direction(void) {
+    enum { N = 50, K = 2 };
+    double X[N * K], y[N];
+    doe_rng_t rng; doe_rng_seed(&rng, 3);
+    for (size_t i = 0; i < N; i++) {
+        for (size_t j = 0; j < K; j++) X[i * K + j] = doe_rng_uniform(&rng);
+        y[i] = 4.0 * X[i*K+0] - 9.0 * X[i*K+1];
+    }
+    double coef[K], r2 = 0.0; char err[DOE_ERR_SIZE];
+    CHECK(doe_ols_src(X, y, N, K, coef, &r2, err) == 0);
+    CHECK(coef[0] > 0.0);                     /* raises  */
+    CHECK(coef[1] < 0.0);                     /* lowers  */
+    CHECK(fabs(coef[1]) > fabs(coef[0]));     /* and matters more */
+    return 1;
+}
+
+/* A curved but monotone response: SRC is imperfect, ranks recover it. */
+static int test_ols_ranks_beat_values_on_curvature(void) {
+    enum { N = 80, K = 1 };
+    double X[N * K], y[N], Xr[N * K], yr[N];
+    doe_rng_t rng; doe_rng_seed(&rng, 21);
+    for (size_t i = 0; i < N; i++) {
+        double x = doe_rng_uniform(&rng);
+        X[i] = x;
+        y[i] = x * x * x * x * x;             /* strictly increasing, very curved */
+    }
+    memcpy(Xr, X, sizeof X); memcpy(yr, y, sizeof y);
+
+    double c1[K], r2v = 0.0, c2[K], r2r = 0.0; char err[DOE_ERR_SIZE];
+    CHECK(doe_ols_src(X, y, N, K, c1, &r2v, err) == 0);
+    doe_rank_transform(Xr, yr, N, K);
+    CHECK(doe_ols_src(Xr, yr, N, K, c2, &r2r, err) == 0);
+
+    CHECK(r2r > r2v);                          /* ranks explain more */
+    CHECK(r2r > 0.99);                         /* monotone: nearly perfect */
+    return 1;
+}
+
+static int test_ols_rejects_degenerate(void) {
+    enum { N = 20, K = 2 };
+    double X[N * K], y[N]; char err[DOE_ERR_SIZE];
+    doe_rng_t rng; doe_rng_seed(&rng, 7);
+
+    /* constant response */
+    for (size_t i = 0; i < N; i++) {
+        X[i*K+0] = doe_rng_uniform(&rng); X[i*K+1] = doe_rng_uniform(&rng);
+        y[i] = 3.0;
+    }
+    double coef[K], r2;
+    memset(err, 'A', sizeof err);
+    CHECK(doe_ols_src(X, y, N, K, coef, &r2, err) != 0);
+    CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);
+    CHECK(strstr(err, "constant") != NULL);
+
+    /* constant factor column */
+    for (size_t i = 0; i < N; i++) { X[i*K+0] = 0.5; y[i] = doe_rng_uniform(&rng); }
+    memset(err, 'A', sizeof err);
+    CHECK(doe_ols_src(X, y, N, K, coef, &r2, err) != 0);
+    CHECK(strstr(err, "constant") != NULL);
+
+    /* two factors that move together: effects cannot be separated */
+    for (size_t i = 0; i < N; i++) {
+        double v = doe_rng_uniform(&rng);
+        X[i*K+0] = v; X[i*K+1] = 2.0 * v;
+        y[i] = v;
+    }
+    memset(err, 'A', sizeof err);
+    CHECK(doe_ols_src(X, y, N, K, coef, &r2, err) != 0);
+    CHECK(strstr(err, "rank-deficient") != NULL);
+
+    /* fewer runs than factors */
+    memset(err, 'A', sizeof err);
+    CHECK(doe_ols_src(X, y, 2, K, coef, &r2, err) != 0);
+    CHECK(strstr(err, "more runs than factors") != NULL);
+    return 1;
+}
+
+static int test_quantiles(void) {
+    double v[9] = {9, 1, 8, 2, 7, 3, 6, 4, 5};
+    CHECK_DBL(doe_median(v, 9), 5.0, 1e-12);
+    double w[5] = {10, 20, 30, 40, 50};
+    CHECK_DBL(doe_quantile(w, 5, 0.0), 10.0, 1e-12);
+    CHECK_DBL(doe_quantile(w, 5, 1.0), 50.0, 1e-12);
+    CHECK_DBL(doe_quantile(w, 5, 0.5), 30.0, 1e-12);
+    CHECK_DBL(doe_quantile(w, 5, 0.25), 20.0, 1e-12);
+    return 1;
+}
+
 int main(void) {
     printf("libdoe core tests\n");
+    RUN_TEST(test_ols_exact_on_linear);
+    RUN_TEST(test_ols_reports_direction);
+    RUN_TEST(test_ols_ranks_beat_values_on_curvature);
+    RUN_TEST(test_ols_rejects_degenerate);
+    RUN_TEST(test_quantiles);
     RUN_TEST(test_prng_determinism);
     RUN_TEST(test_prng_uniform_range);
     RUN_TEST(test_space_linear_and_log);

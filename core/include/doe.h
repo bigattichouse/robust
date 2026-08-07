@@ -142,6 +142,32 @@ const char *doe_factor_value(const doe_space_t *space, size_t idx,
  * ============================================================================ */
 
 double doe_mean(const double *x, size_t n);
+double doe_median(double *x, size_t n);            /* reorders x in place */
+double doe_quantile(double *x, size_t n, double q); /* reorders x in place */
+
+/*
+ * Ordinary least squares on a standardized design.
+ *
+ * X is n*k row-major and y is n long; both are standardized internally
+ * (each column and y centred and scaled to unit standard deviation), so the
+ * returned coefficients are the STANDARDIZED regression coefficients -- the
+ * SRC of sensitivity analysis, directly comparable across factors regardless
+ * of their units.
+ *
+ * Solves the normal equations by Gaussian elimination with partial pivoting.
+ * r2_out receives the coefficient of determination, which doubles as a trust
+ * diagnostic: near 1 means the linear story suffices and the ranking is
+ * reliable; low means it does not, and variance-based indices were needed.
+ *
+ * Returns 0, or -1 with err filled (rank-deficient, constant column,
+ * constant response, n <= k).
+ */
+int doe_ols_src(const double *X, const double *y, size_t n, size_t k,
+                double *coef_out, double *r2_out, char *err);
+
+/* Replace each column of X and the vector y with their ranks (1..n, ties
+ * averaged). Feeding the result to doe_ols_src gives SRRC. */
+void doe_rank_transform(double *X, double *y, size_t n, size_t k);
 double doe_variance(const double *x, size_t n);   /* sample variance (n-1) */
 double doe_std(const double *x, size_t n);
 
