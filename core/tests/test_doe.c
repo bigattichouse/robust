@@ -259,8 +259,41 @@ static int test_quantiles(void) {
     return 1;
 }
 
+/*
+ * The JSON escaper allocates len*6+1, which is EXACTLY the worst case: every
+ * character escaping to \u00XX. A string entirely of control characters sits
+ * on that boundary, so it is the input that would expose an off-by-one.
+ */
+static int test_json_escape_worst_case(void) {
+    char in[64];
+    for (size_t i = 0; i < sizeof in - 1; i++) in[i] = 0x01;   /* all escape */
+    in[sizeof in - 1] = '\0';
+
+    char *e = doe_json_escape(in);
+    CHECK(e != NULL);
+    CHECK(strlen(e) == (sizeof in - 1) * 6);
+    for (size_t i = 0; i < strlen(e); i += 6)
+        CHECK(strncmp(e + i, "\\u0001", 6) == 0);
+    doe_free(e);
+
+    /* The named escapes, and a plain string passing through untouched. */
+    e = doe_json_escape("a\"b\\c\nd\re\tf");
+    CHECK(e != NULL);
+    CHECK(strstr(e, "\\\"") && strstr(e, "\\\\") && strstr(e, "\\n")
+          && strstr(e, "\\r") && strstr(e, "\\t"));
+    doe_free(e);
+
+    e = doe_json_escape("plain");
+    CHECK(e != NULL && strcmp(e, "plain") == 0);
+    doe_free(e);
+
+    CHECK(doe_json_escape(NULL) == NULL);
+    return 1;
+}
+
 int main(void) {
     printf("libdoe core tests\n");
+    RUN_TEST(test_json_escape_worst_case);
     RUN_TEST(test_ols_exact_on_linear);
     RUN_TEST(test_ols_reports_direction);
     RUN_TEST(test_ols_ranks_beat_values_on_curvature);

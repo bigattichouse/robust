@@ -11,7 +11,11 @@
 char *doe_json_escape(const char *s) {
     if (!s) return NULL;
     size_t len = strlen(s);
-    char *out = malloc(len * 6 + 1);   /* worst case: every char -> \u00XX */
+    /* Worst case is every character escaping to \u00XX, six bytes each, plus
+     * the terminator. That is exact, not generous -- so the writes below are
+     * bounded explicitly rather than trusted to arithmetic. */
+    size_t cap = len * 6 + 1;
+    char *out = malloc(cap);
     if (!out) return NULL;
 
     char *o = out;
@@ -25,7 +29,12 @@ char *doe_json_escape(const char *s) {
             case '\t': *o++ = '\\'; *o++ = 't';  break;
             default:
                 if (c < 0x20) {
-                    o += sprintf(o, "\\u%04x", c);
+                    /* snprintf, not sprintf: the bound is provable here, but a
+                     * bounded call stays correct if the format ever changes. */
+                    size_t left = cap - (size_t)(o - out);
+                    int w = snprintf(o, left, "\\u%04x", c);
+                    if (w < 0 || (size_t)w >= left) break;
+                    o += w;
                 } else {
                     *o++ = (char)c;
                 }

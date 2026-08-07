@@ -51,8 +51,9 @@ unaccounted allocation. Enforced by:
   `pareto_read_csv` and `pareto_front_load`
   (`analyze/pareto/tests/fuzz_pareto.c`). **Every new parser gets a target here.**
 - `make coverage` — line/branch coverage over the suites (gcovr, or raw gcov
-  as a fallback). Baseline at 2026-08-06: **85.3% lines, 96.4% functions,
-  72.2% branches**. Use it before claiming something is tested.
+  as a fallback). Baseline at 2026-08-06: **84.2% lines, 95.5% functions** over a
+  denominator that now includes every CLI binary (it previously counted only
+  libraries, which flattered it). Use it before claiming something is tested.
 - CI (`.github/workflows/ci.yml`) runs build → test-all → test-asan → fuzz →
   validate on every push/PR.
 
@@ -79,6 +80,31 @@ Two paths returned confident nonsense instead of an error:
 The general rule these share: **when the answer is undefined, say so.** A tool
 that prints `-nan` and exits 0 is worse than one that fails, because the number
 gets copied into a decision.
+
+### Security sweep, 2026-08-06
+
+After the E1/M5/M6 build-out, a sweep over the shipped code (tests excluded):
+
+- **No `strcpy`, `strcat`, `sprintf` or `gets` remain.** The last one was
+  `doe_json_escape`, whose `sprintf` was provably in bounds — `len*6+1` is
+  exactly the worst case of every character escaping to `\u00XX` — but proof
+  by arithmetic stops holding the moment someone edits the format string. It
+  is now a bounded `snprintf`, and a test drives a string made entirely of
+  control characters, which sits exactly on that boundary.
+- **No unclamped `off += snprintf(...)` accumulation.** That defect appeared
+  three separate times this session (pareto's error builder, the serializer's
+  growth path, a test buffer), so it is worth naming: `snprintf` returns the
+  length it *would* have written, and adding that to an offset walks past the
+  end of the buffer, after which the remaining-size argument goes negative and
+  converts to an enormous `size_t`.
+- **Every parser that reads untrusted input has a fuzz target** — `.space`,
+  results CSV, and pareto's `.front`. The four tools added this session
+  (`regress`, `uq`, `ofat`, `grid`) parse only their own CLI arguments and the
+  shared CSV reader, which is already covered.
+- **Every binary is exercised by a suite.** Five shell suites now drive the
+  CLIs (`morris`, `pareto`, `taguchi` x2, and the analyze/resolve four), which
+  is what turned up that the `morris` CLI had been at 20% with `groups:` and
+  `bifurcate` never run end to end.
 
 ### The run loop is now tested (2026-08-06)
 
