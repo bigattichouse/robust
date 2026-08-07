@@ -34,7 +34,8 @@ deterministic simulator to find what matters; Taguchi runs on the bench to optim
 
 All of them share one `.space` factor-definition format and a common C core
 (`core/libdoe`) holding the PRNG, sampling, factor scaling, the fork/env run-loop,
-CSV/JSON, and stats. See **[DESIGN.md](DESIGN.md)** for the full plan and
+CSV/JSON, and stats. See **[STATUS.md](STATUS.md)** for where things stand and what is next,
+**[DESIGN.md](DESIGN.md)** for the full plan, and
 **[EXPANSION.md](EXPANSION.md)** for the methods roadmap beyond it.
 
 ## Building
@@ -93,25 +94,25 @@ is free to evolve without breaking anything downstream.
 
 ## Status
 
-**`morris`, `sobol`, and the `robust` funnel are built and tested** (M0–M4), and
-**`taguchi` is folded in** as a peer tool: the `common/` core (seedable PRNG, `.space`
-parsing + scaling, fork/env runner, results CSV, stats), `morris` (μ\*/σ screening),
-`sobol` (Saltelli Sᵢ/S_Tᵢ with bootstrap CIs), and `robust` (Morris → Sobol funnel with
-HTML/JSON reports and `.tgu` hand-off). **`pareto`** (E1) is built: the non-dominated
-frontier over multi-metric results, as both a stateless filter and a `.front` store
-that accumulates across experiment batches.
+**Eleven binaries ship**, covering screen → attribute → resolve → optimize with
+an analyze stage alongside: `morris` (μ\*/σ, group screening, recursive
+splitting), `sobol` (Sᵢ/S_Tᵢ with bootstrap CIs and second-order pairs),
+`ofat` and `grid` (confirmation and interaction resolution), `taguchi`,
+`pareto`, `regress`, `uq`, and the `robust` funnel.
 
-All suites pass under `-Werror`, valgrind, and ASan/UBSan, with adversarial-input
-coverage and parser fuzzing per [SECURITY.md](SECURITY.md).
+All suites pass under `-Werror`, valgrind and ASan/UBSan, with adversarial-input
+coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 85.1%
+lines / 95.5% functions.
 
 **Claims are validated too, not just code.** [`validation/`](validation/README.md)
-reproduces the published screening results this project relies on against
-closed-form ground truth — which confirmed `sobol` implements the estimators its
-source recommends, established where μ\* stops being a usable proxy for the total
-Sobol index, and turned up an erratum in a 2007 paper's published table
+reproduces the published results this project relies on against closed-form
+ground truth — which confirmed `sobol` implements the estimators its source
+recommends, established where μ\* stops being a usable proxy for the total Sobol
+index, and turned up an erratum in a 2007 paper's published table
 ([standalone reproduction](sources/campolongo-2007-morris-screening_erratum/)).
 
-See [DESIGN.md](DESIGN.md) and [EXPANSION.md](EXPANSION.md).
+Still to build: the Joe-Kuo low-discrepancy sequence, RSM and noise factors,
+and the smaller items listed in [STATUS.md](STATUS.md).
 
 ## License
 
