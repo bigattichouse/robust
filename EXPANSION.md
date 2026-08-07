@@ -211,7 +211,7 @@ optimum matches closed form; a dominated point never appears in the front.
 
 | Milestone | Deliverable | Depends on | |
 |---|---|---|---|
-| **E0** | `second_order` rejected until implemented; M5–M7 closed out. | — | |
+| **E0** | ✓ `second_order` **implemented**, not merely rejected. M6 built (`ofat`, `grid`); M5 half built (second-order ✓, Joe-Kuo pending); M7 pending. | — | |
 | **E1** | ✓ **COMPLETE** — `pareto`, `regress`, `uq`, μ\* CIs, `--keep-share`, cut-gap; Pareto chart in `report`, `--keep-share`, cut-gap diagnostic, Morris μ\* CIs. | E0 | |
 | **E2** | `--target-ci` sequential convergence for morris + sobol. | E1 (CIs) | |
 | **E3** | ~~`morris --groups` + recursive splitting~~ ✓ both built; `pawn` tool; `morris analyze --dgsm`; (optional) eFAST cross-check. | E1 | |
