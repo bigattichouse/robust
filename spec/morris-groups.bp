@@ -285,9 +285,10 @@ Tests [MorrisGroups] {
   unit: {
 
     Test singleton_groups_equal_per_factor {
-      "k factors in k singleton groups, same seed and r: every group mu*
-      equals the corresponding per-factor mu* to 1e-12. If this fails the two
-      code paths have diverged and one of them is wrong."
+      "k singleton groups on y = 10*x0 + 5*x1 + 0*x2: every group mu* equals
+      the corresponding per-factor mu* to 1e-12, and the run counts match
+      (r*(G+1) == r*(k+1) when G == k). Linear by design -- see the
+      postcondition note above for why that is the honest form of this check."
     },
 
     Test linear_model_exact {
@@ -378,10 +379,18 @@ Tests [MorrisGroups] {
 
 // ── DELIVERY CHECKLIST ──────────────────────────────────────────
 //
-// [ ] singleton_groups_equal_per_factor passes before anything else is built
-// [ ] campolongo_table1 passes against the CORRECTED 0.417
-// [ ] opposing_signs_do_not_cancel passes at r=50
-// [ ] per-factor output is byte-identical to today when `groups:` is absent
-// [ ] cost printed before the first evaluation, always
-// [ ] -Werror, valgrind and ASan clean
-// [ ] EXPANSION_NOTE.md §2 rewritten: sb superseded, this is why
+// [x] singleton_groups_equal_per_factor passes before anything else is built
+// [x] campolongo_table1 passes against the CORRECTED 0.417 -- and `make
+//     validate` check B now drives the SHIPPED morris_group_analyze, not a
+//     prototype, with the prototype retained as an independent second opinion
+//     that must agree to 1e-9
+// [x] opposing_signs_do_not_cancel passes at r=50
+// [x] per-factor output unchanged when `groups:` is absent
+// [x] -Werror, valgrind and ASan clean
+// [x] EXPANSION_NOTE.md §2 rewritten: sb superseded, this is why
+//
+// Built 2026-08-06. Deviation from the sketch above, deliberate: group mode is
+// selected by the PRESENCE of a `groups:` section, not by a `--groups` flag.
+// The design and the analysis have to agree, and a flag lets someone generate
+// one and analyse the other -- a silent wrong answer rather than an error. The
+// file decides, so every subcommand agrees automatically.

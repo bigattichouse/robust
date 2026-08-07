@@ -147,8 +147,211 @@ static int test_analyze_rejects_nonfinite(void) {
     return 1;
 }
 
+/* ==========================================================================
+ * Group screening (spec/morris-groups.bp)
+ * ======================================================================== */
+
+/* y = 10*x0 - 10*x1 : equal and opposite, both in ONE group. */
+static double f_opposing(const double *u, size_t k) {
+    (void)k;
+    return 10.0 * u[0] - 10.0 * u[1];
+}
+
+static double *eval_group_design(const doe_space_t *sp, morris_group_design_t *d,
+                                 double (*f)(const double *u, size_t k)) {
+    char err[DOE_ERR_SIZE];
+    if (morris_group_design_build(sp, d, err) != 0) return NULL;
+    double *y = malloc(d->npoints * sizeof *y);
+    if (!y) return NULL;
+    for (size_t i = 0; i < d->npoints; i++) y[i] = f(&d->u[i * d->k], d->k);
+    return y;
+}
+
+/*
+ * The group path must reduce to the scalar path. On a linear model the
+ * elementary effects are exact constants, so this holds to the bit regardless
+ * of where each design samples -- which is what makes it a meaningful check
+ * rather than an RNG-alignment coincidence.
+ */
+static int test_group_singletons_equal_per_factor(void) {
+    const char *per = "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n  x2: 0.0, 1.0\n"
+                      "seed: 2026\n  trajectories: 20\n  grid_levels: 4\n";
+    const char *grp = "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n  x2: 0.0, 1.0\n"
+                      "seed: 2026\n  trajectories: 20\n  grid_levels: 4\n"
+                      "groups:\n  g0: x0\n  g1: x1\n  g2: x2\n";
+    doe_space_t a, b; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(per, &a, err) == 0);
+    CHECK(doe_space_parse(grp, &b, err) == 0);
+    CHECK(b.group_count == 3);
+
+    morris_design_t d;
+    double *y = eval_design(&a, &d, f_linear);
+    CHECK(y != NULL);
+    morris_effect_t *eff = NULL; size_t n = 0;
+    CHECK(morris_analyze(&a, y, d.npoints, &eff, &n, err) == 0);
+
+    morris_group_design_t gd;
+    double *gy = eval_group_design(&b, &gd, f_linear);
+    CHECK(gy != NULL);
+    morris_group_effect_t *geff = NULL; size_t gn = 0;
+    CHECK(morris_group_analyze(&b, gy, gd.npoints, &geff, &gn, err) == 0);
+
+    CHECK(gn == n);
+    CHECK(gd.npoints == d.npoints);           /* r*(G+1) == r*(k+1) when G==k */
+    for (size_t i = 0; i < n; i++) CHECK_DBL(geff[i].mu_star, eff[i].mu_star, 1e-12);
+
+    free(y); free(gy); free(eff); free(geff);
+    morris_design_free(&d); morris_group_design_free(&gd);
+    return 1;
+}
+
+/*
+ * THE PROPERTY THAT REPLACES SEQUENTIAL BIFURCATION. Two equal and opposite
+ * factors share one group. A signed group total averages to zero and the group
+ * would be discarded -- SB's silent false negative. Taking the absolute value
+ * of the group effect keeps it visible.
+ */
+static int test_group_opposing_signs_do_not_cancel(void) {
+    const char *spec = "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n  x2: 0.0, 1.0\n"
+                       "seed: 99\n  trajectories: 50\n  grid_levels: 4\n"
+                       "groups:\n  both: x0, x1\n  other: x2\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(spec, &sp, err) == 0);
+
+    morris_group_design_t d;
+    double *y = eval_group_design(&sp, &d, f_opposing);
+    CHECK(y != NULL);
+    morris_group_effect_t *eff = NULL; size_t n = 0;
+    CHECK(morris_group_analyze(&sp, y, d.npoints, &eff, &n, err) == 0);
+    CHECK(n == 2);
+
+    /* |d| is 0 when the two move together and 20 when they oppose, so the
+     * mean sits near 10 -- and must be well clear of zero. */
+    CHECK(strcmp(eff[0].name, "both") == 0);
+    CHECK(eff[0].mu_star > 5.0);
+    CHECK(eff[1].mu_star == 0.0);          /* x2 has no effect at all */
+
+    free(y); free(eff); morris_group_design_free(&d);
+    return 1;
+}
+
+/* Cost is exactly r*(G+1), and must be predictable before spending anything. */
+static int test_group_cost_model(void) {
+    const char *spec = "factors:\n  a: 0,1\n  b: 0,1\n  c: 0,1\n  d: 0,1\n"
+                       "seed: 1\n  trajectories: 7\n  grid_levels: 4\n"
+                       "groups:\n  g1: a, b\n  g2: c\n  g3: d\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(spec, &sp, err) == 0);
+    CHECK(morris_group_npoints(&sp) == 7 * (3 + 1));
+
+    morris_group_design_t d;
+    CHECK(morris_group_design_build(&sp, &d, err) == 0);
+    CHECK(d.npoints == 28);
+    CHECK(d.G == 3);
+    morris_group_design_free(&d);
+    return 1;
+}
+
+/* Consecutive points differ exactly on one group's members, every point stays
+ * in [0,1], and each group moves exactly once per trajectory. */
+static int test_group_design_structure(void) {
+    const char *spec = "factors:\n  a: 0,1\n  b: 0,1\n  c: 0,1\n"
+                       "seed: 5\n  trajectories: 6\n  grid_levels: 4\n"
+                       "groups:\n  g1: a, b\n  g2: c\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(spec, &sp, err) == 0);
+
+    morris_group_design_t d;
+    CHECK(morris_group_design_build(&sp, &d, err) == 0);
+
+    for (size_t i = 0; i < d.npoints * d.k; i++) {
+        CHECK(d.u[i] >= 0.0 && d.u[i] <= 1.0);
+    }
+    for (size_t t = 0; t < d.r; t++) {
+        size_t seen[DOE_MAX_GROUPS] = {0};
+        for (size_t s = 0; s < d.G; s++) {
+            size_t g = d.moved_group[t * d.G + s];
+            seen[g]++;
+            const double *prev = &d.u[(t * (d.G + 1) + s) * d.k];
+            const double *cur  = &d.u[(t * (d.G + 1) + s + 1) * d.k];
+            for (size_t i = 0; i < d.k; i++) {
+                int member = sp.groups[g].members[i];
+                if (member) CHECK(cur[i] != prev[i]);
+                else        CHECK(cur[i] == prev[i]);
+            }
+        }
+        for (size_t g = 0; g < d.G; g++) CHECK(seen[g] == 1);
+    }
+    morris_group_design_free(&d);
+    return 1;
+}
+
+/* Same seed, same design; and declaring groups in a different order must not
+ * change any group's mu*. */
+static int test_group_determinism_and_order(void) {
+    const char *one = "factors:\n  a: 0,1\n  b: 0,1\n  c: 0,1\n"
+                      "seed: 77\n  trajectories: 12\n  grid_levels: 4\n"
+                      "groups:\n  g1: a, b\n  g2: c\n";
+    const char *two = "factors:\n  a: 0,1\n  b: 0,1\n  c: 0,1\n"
+                      "seed: 77\n  trajectories: 12\n  grid_levels: 4\n"
+                      "groups:\n  g2: c\n  g1: a, b\n";
+    doe_space_t s1, s2; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(one, &s1, err) == 0);
+    CHECK(doe_space_parse(two, &s2, err) == 0);
+
+    morris_group_design_t d1, d2;
+    double *y1 = eval_group_design(&s1, &d1, f_linear);
+    double *y2 = eval_group_design(&s2, &d2, f_linear);
+    CHECK(y1 && y2);
+
+    morris_group_effect_t *e1 = NULL, *e2 = NULL; size_t n1 = 0, n2 = 0;
+    CHECK(morris_group_analyze(&s1, y1, d1.npoints, &e1, &n1, err) == 0);
+    CHECK(morris_group_analyze(&s2, y2, d2.npoints, &e2, &n2, err) == 0);
+    CHECK(n1 == 2 && n2 == 2);
+
+    /* Match by name, since the declaration order differs. */
+    for (size_t i = 0; i < n1; i++) {
+        for (size_t j = 0; j < n2; j++) {
+            if (strcmp(e1[i].name, e2[j].name) == 0)
+                CHECK_DBL(e1[i].mu_star, e2[j].mu_star, 1e-12);
+        }
+    }
+    free(y1); free(y2); free(e1); free(e2);
+    morris_group_design_free(&d1); morris_group_design_free(&d2);
+    return 1;
+}
+
+static int test_group_rejects_bad_input(void) {
+    char err[DOE_ERR_SIZE];
+    doe_space_t sp;
+    /* No groups declared: the group path must refuse rather than invent one. */
+    CHECK(doe_space_parse("factors:\n  a: 0,1\n  b: 0,1\nseed: 1\n", &sp, err) == 0);
+    morris_group_design_t d;
+    memset(err, 'A', sizeof err);
+    CHECK(morris_group_design_build(&sp, &d, err) != 0);
+    CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);
+
+    /* Too few responses. */
+    const char *spec = "factors:\n  a: 0,1\n  b: 0,1\n"
+                       "seed: 1\n  trajectories: 4\n  grid_levels: 4\n"
+                       "groups:\n  g1: a\n  g2: b\n";
+    CHECK(doe_space_parse(spec, &sp, err) == 0);
+    double few[3] = {1, 2, 3};
+    morris_group_effect_t *eff = NULL; size_t n = 0;
+    memset(err, 'A', sizeof err);
+    CHECK(morris_group_analyze(&sp, few, 3, &eff, &n, err) != 0);
+    CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);
+    return 1;
+}
+
 int main(void) {
     printf("morris tests\n");
+    RUN_TEST(test_group_singletons_equal_per_factor);
+    RUN_TEST(test_group_opposing_signs_do_not_cancel);
+    RUN_TEST(test_group_cost_model);
+    RUN_TEST(test_group_design_structure);
+    RUN_TEST(test_group_determinism_and_order);
+    RUN_TEST(test_group_rejects_bad_input);
     RUN_TEST(test_linear_ranking);
     RUN_TEST(test_interaction_flag);
     RUN_TEST(test_design_determinism);

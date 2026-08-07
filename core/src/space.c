@@ -157,6 +157,84 @@ static int parse_factor(const char *name, char *value, doe_factor_t *f, char *er
     return 0;
 }
 
+/*
+ * Parse one `groups:` entry -- `name: f1, f2, f3` -- resolving each member to
+ * a factor index. Members must already be declared: groups reference factors,
+ * so requiring them first keeps the space struct small (a mask per group
+ * rather than stored name lists) and gives a clearer error than a forward
+ * reference would.
+ */
+static int parse_group(const char *name, char *val, doe_space_t *space, char *err) {
+    if (space->group_count >= DOE_MAX_GROUPS) {
+        snprintf(err, DOE_ERR_SIZE, "too many groups (max %d)", DOE_MAX_GROUPS);
+        return -1;
+    }
+    if (strlen(name) == 0 || strlen(name) >= DOE_MAX_NAME) {
+        snprintf(err, DOE_ERR_SIZE, "group name missing or too long");
+        return -1;
+    }
+    for (size_t g = 0; g < space->group_count; g++) {
+        if (strcmp(space->groups[g].name, name) == 0) {
+            snprintf(err, DOE_ERR_SIZE, "duplicate group name '%s'", name);
+            return -1;
+        }
+    }
+
+    doe_group_t *grp = &space->groups[space->group_count];
+    memset(grp, 0, sizeof *grp);
+    strncpy(grp->name, name, DOE_MAX_NAME - 1);
+
+    /* Comma-split the member list, same idiom as parse_factor. */
+    char *toks[DOE_MAX_FACTORS];
+    size_t n = 0;
+    {
+        char *p = val;
+        for (;;) {
+            if (n >= DOE_MAX_FACTORS) {
+                snprintf(err, DOE_ERR_SIZE, "group '%s': too many members (max %d)",
+                         name, DOE_MAX_FACTORS);
+                return -1;
+            }
+            char *c = strchr(p, ',');
+            if (c) *c = '\0';
+            toks[n++] = trim(p);
+            if (!c) break;
+            p = c + 1;
+        }
+    }
+    if (n == 0 || toks[0][0] == '\0') {
+        snprintf(err, DOE_ERR_SIZE, "group '%s' has no members", name);
+        return -1;
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        char *m = toks[i];
+        if (*m == '\0') {
+            snprintf(err, DOE_ERR_SIZE, "group '%s' has an empty member name", name);
+            return -1;
+        }
+        size_t idx = space->factor_count;
+        for (size_t f = 0; f < space->factor_count; f++) {
+            if (strcmp(space->factors[f].name, m) == 0) { idx = f; break; }
+        }
+        if (idx == space->factor_count) {
+            snprintf(err, DOE_ERR_SIZE,
+                     "group '%s': '%s' is not a declared factor "
+                     "(groups must come after the factors they name)", name, m);
+            return -1;
+        }
+        if (grp->members[idx]) {
+            snprintf(err, DOE_ERR_SIZE,
+                     "group '%s' names factor '%s' twice", name, m);
+            return -1;
+        }
+        grp->members[idx] = true;
+        grp->member_count++;
+    }
+    space->group_count++;
+    return 0;
+}
+
 int doe_space_parse(const char *content, doe_space_t *space, char *err) {
     if (!content || !space) {
         if (err) snprintf(err, DOE_ERR_SIZE, "null input to doe_space_parse");
@@ -178,6 +256,9 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
 
     char *line = buf;
     int rc = 0;
+    /* Which section trailing `key: value` lines belong to. A group member line
+     * is syntactically identical to a factor line, so the header decides. */
+    int in_groups = 0;
     while (line && *line) {
         char *nl = strchr(line, '\n');
         if (nl) *nl = '\0';
@@ -198,7 +279,8 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
         char *key = trim(t);
         char *val = trim(colon + 1);
 
-        if (strcmp(key, "factors") == 0) { line = next; continue; }   /* header */
+        if (strcmp(key, "factors") == 0) { in_groups = 0; line = next; continue; }
+        if (strcmp(key, "groups") == 0)  { in_groups = 1; line = next; continue; }
 
         if (strcmp(key, "seed") == 0) {
             space->seed = strtoull(val, NULL, 10);
@@ -212,6 +294,12 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
             space->second_order = (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
         } else if (strcmp(key, "method") == 0 || strcmp(key, "array") == 0) {
             /* accepted but not used by the core */
+        } else if (in_groups) {
+            if (*val == '\0') {
+                snprintf(err, DOE_ERR_SIZE, "group '%s' has no members", key);
+                rc = -1; break;
+            }
+            if (parse_group(key, val, space, err) != 0) { rc = -1; break; }
         } else {
             if (space->factor_count >= DOE_MAX_FACTORS) {
                 snprintf(err, DOE_ERR_SIZE, "too many factors (max %d)", DOE_MAX_FACTORS);
@@ -235,6 +323,47 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
     if (space->factor_count == 0) {
         snprintf(err, DOE_ERR_SIZE, "no factors defined");
         return -1;
+    }
+
+    /*
+     * Groups must PARTITION the factors. Validated here, after every line is
+     * read, so the diagnosis names the actual problem rather than whichever
+     * line happened to reveal it. Both failures are errors, not warnings:
+     * an overlapping factor would move twice in one step, making the group
+     * effect ill-defined, and an uncovered factor would silently never be
+     * screened -- the worst outcome for a screening tool.
+     * See spec/morris-groups.bp.
+     */
+    if (space->group_count > 0) {
+        if (space->group_count < 2) {
+            snprintf(err, DOE_ERR_SIZE,
+                     "only 1 group defined; one group screens nothing "
+                     "(remove the groups: section for per-factor screening)");
+            return -1;
+        }
+        for (size_t f = 0; f < space->factor_count; f++) {
+            size_t owners = 0;
+            size_t first = 0, second = 0;
+            for (size_t g = 0; g < space->group_count; g++) {
+                if (space->groups[g].members[f]) {
+                    if (owners == 0) first = g; else if (owners == 1) second = g;
+                    owners++;
+                }
+            }
+            if (owners == 0) {
+                snprintf(err, DOE_ERR_SIZE,
+                         "groups must partition the factors: '%s' is in no group",
+                         space->factors[f].name);
+                return -1;
+            }
+            if (owners > 1) {
+                snprintf(err, DOE_ERR_SIZE,
+                         "groups must partition the factors: '%s' is in both "
+                         "'%s' and '%s'", space->factors[f].name,
+                         space->groups[first].name, space->groups[second].name);
+                return -1;
+            }
+        }
     }
     if (space->samples > DOE_MAX_SAMPLES) {
         snprintf(err, DOE_ERR_SIZE, "samples %zu exceeds limit %u",

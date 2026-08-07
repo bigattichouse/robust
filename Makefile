@@ -3,7 +3,7 @@
 # the funnel: screen -> attribute -> resolve -> optimize, with analyze/ consuming
 # results and orchestrate/ driving the whole thing. See README.md.
 CC      = gcc
-CFLAGS  = -Wall -Wextra -Werror -std=c99 -pedantic -O2 -g -fPIC
+CFLAGS  = -Wall -Wextra -Werror -std=c99 -pedantic -O2 -g -fPIC -MMD -MP
 LDFLAGS = -lm
 
 BUILD       = build
@@ -100,6 +100,18 @@ SEC_TEST_BIN  = $(BUILD)/test_security
 # the roadmap rests on. See validation/README.md.
 VALIDATION_SRC = $(wildcard validation/*.c)
 VALIDATION_BIN = $(BUILD)/validate
+
+# Header dependency tracking. -MMD -MP makes every compile emit a .d file
+# listing the headers it included; including those here means editing a header
+# rebuilds exactly what depends on it.
+#
+# This was missing until 2026-08-06, and the consequence was not theoretical:
+# adding a field to doe_space_t in core/include/doe.h rebuilt some objects but
+# not others, so the linked binary had two different ideas of the struct
+# layout. sobol read `samples` from the wrong offset and reported 0. Nothing
+# warned; only a `make clean` made it go away. Do not remove this.
+DEPFILES = $(shell find $(BUILD) -name '*.d' 2>/dev/null)
+-include $(DEPFILES)
 
 .PHONY: all common morris sobol robust taguchi pareto install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all validate clean
 

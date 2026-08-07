@@ -26,6 +26,7 @@ extern "C" {
 
 #define DOE_ERR_SIZE    256
 #define DOE_MAX_FACTORS  64
+#define DOE_MAX_GROUPS   64
 #define DOE_MAX_LEVELS   32
 #define DOE_MAX_NAME     64
 #define DOE_MAX_VALUE    64
@@ -74,9 +75,26 @@ typedef struct {
     size_t      level_count;                           /* CATEGORICAL  */
 } doe_factor_t;
 
+/*
+ * A named set of factors moved together, for group screening
+ * (`morris --groups`). Groups must PARTITION the factors: every factor in
+ * exactly one group. Overlap would move a factor twice in a single step,
+ * making the group effect ill-defined; an uncovered factor would silently
+ * never be screened. See spec/morris-groups.bp.
+ */
+typedef struct {
+    char   name[DOE_MAX_NAME];
+    bool   members[DOE_MAX_FACTORS];   /* mask over doe_space_t.factors */
+    size_t member_count;
+} doe_group_t;
+
 typedef struct {
     doe_factor_t factors[DOE_MAX_FACTORS];
     size_t       factor_count;
+    /* Optional `groups:` section. group_count == 0 means per-factor
+     * screening, which is the default and leaves every tool unchanged. */
+    doe_group_t  groups[DOE_MAX_GROUPS];
+    size_t       group_count;
     uint64_t     seed;
     /* method parameters — each tool reads the ones it needs */
     size_t       trajectories;   /* Morris r  (default 10) */

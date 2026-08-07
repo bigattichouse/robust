@@ -162,8 +162,11 @@ static void mustar_per_factor(const double *a, size_t k, size_t r, size_t p,
  *
  * Cost is r*(G+1) evaluations for G groups, against r*(k+1) for k factors.
  *
- * This is the reference implementation for the planned `morris --groups`;
- * see spec/morris-groups.bp.
+ * SUPERSEDED as a prototype: `morris --groups` now ships, so this check drives
+ * the REAL implementation (morris_group_analyze) rather than a local copy.
+ * A validation suite that tests its own reimplementation proves nothing about
+ * the code users run. The local group_mustar() below is kept only as an
+ * independent second opinion -- if the two ever disagree, that is the finding.
  */
 typedef struct {
     const char *name;
@@ -332,11 +335,53 @@ static void one_group_case(const char *label, const double *a, size_t k,
                            const double *published_mu,
                            const double *published_st,
                            const double *expected_st) {
+    double proto[8];
     double V_i[MAXK], V_tot;
     gf_partial_var(a, k, V_i, &V_tot);
 
+    /* Drive the shipped implementation: build a .space with a groups: section,
+     * evaluate the g-function over the design it produces, and analyse it. */
+    char spec[4096];
+    int off = snprintf(spec, sizeof spec, "factors:\n");
+    for (size_t i = 0; i < k; i++)
+        off += snprintf(spec + off, sizeof spec - (size_t)off,
+                        "  X%zu: 0.0, 1.0\n", i + 1);
+    off += snprintf(spec + off, sizeof spec - (size_t)off,
+                    "seed: 2026\ntrajectories: 10\ngrid_levels: 4\ngroups:\n");
+    for (size_t g = 0; g < G; g++) {
+        off += snprintf(spec + off, sizeof spec - (size_t)off, "  %s:", groups[g].name);
+        int first = 1;
+        for (size_t i = 0; i < k; i++) {
+            if (!groups[g].members[i]) continue;
+            off += snprintf(spec + off, sizeof spec - (size_t)off,
+                            "%s X%zu", first ? "" : ",", i + 1);
+            first = 0;
+        }
+        off += snprintf(spec + off, sizeof spec - (size_t)off, "\n");
+    }
+
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    if (doe_space_parse(spec, &sp, err) != 0) {
+        printf("   parse failed: %s\n", err); failures++; return;
+    }
+    morris_group_design_t gd;
+    if (morris_group_design_build(&sp, &gd, err) != 0) {
+        printf("   design failed: %s\n", err); failures++; return;
+    }
+    double *gy = malloc(gd.npoints * sizeof *gy);
+    for (size_t i = 0; i < gd.npoints; i++) gy[i] = gf_eval(&gd.u[i * gd.k], a, k);
+    morris_group_effect_t *geff = NULL; size_t gn = 0;
+    if (morris_group_analyze(&sp, gy, gd.npoints, &geff, &gn, err) != 0) {
+        printf("   analyze failed: %s\n", err); failures++; free(gy); return;
+    }
+
     double mustar[8], st[8];
-    size_t runs = group_mustar(a, k, groups, G, 10, 4, 2026, mustar);
+    for (size_t i = 0; i < G && i < gn; i++) mustar[i] = geff[i].mu_star;
+    size_t runs = gd.npoints;
+
+    /* Independent second opinion from the local prototype. */
+    group_mustar(a, k, groups, G, 10, 4, 2026, proto);
+    free(gy); free(geff); morris_group_design_free(&gd);
 
     printf("   %s — %zu runs (per-factor would need %zu)\n",
            label, runs, 10 * (k + 1));
@@ -387,6 +432,19 @@ static void one_group_case(const char *label, const double *a, size_t k,
              pairs_tested, pairs_tested == 1 ? "" : "s",
              pairs_tied, pairs_tied == 1 ? "" : "s");
     report("group mu* orders every well-separated pair", order_ok, buf);
+
+    /* The shipped implementation and this file's independent prototype must
+     * agree. If they ever diverge, one of them changed and the other did not,
+     * which is exactly what a second opinion is for. */
+    int agree = 1; double worst = 0.0;
+    for (size_t i = 0; i < G; i++) {
+        double d = fabs(mustar[i] - proto[i]);
+        if (d > worst) worst = d;
+        if (d > 1e-9) agree = 0;
+    }
+    snprintf(buf, sizeof buf, "worst difference %.3g", worst);
+    report("shipped morris_group_analyze agrees with the independent prototype",
+           agree, buf);
     printf("\n");
 }
 

@@ -178,3 +178,174 @@ int morris_analyze(const doe_space_t *space, const double *responses, size_t nre
     morris_design_free(&d);
     return rc;
 }
+
+/* ============================================================================
+ * Group screening. See morris.h and spec/morris-groups.bp.
+ * ============================================================================ */
+
+size_t morris_group_npoints(const doe_space_t *space) {
+    return space->trajectories * (space->group_count + 1);
+}
+
+int morris_group_design_build(const doe_space_t *space,
+                              morris_group_design_t *d, char *err) {
+    size_t k = space->factor_count;
+    size_t G = space->group_count;
+    size_t r = space->trajectories;
+    size_t p = space->grid_levels;
+
+    memset(d, 0, sizeof *d);
+    if (k == 0) { snprintf(err, DOE_ERR_SIZE, "no factors"); return -1; }
+    if (G < 2) {
+        snprintf(err, DOE_ERR_SIZE, "group screening needs >= 2 groups (got %zu)", G);
+        return -1;
+    }
+    if (r < 1) { snprintf(err, DOE_ERR_SIZE, "trajectories must be >= 1"); return -1; }
+    if (p < 2 || p % 2 != 0) {
+        snprintf(err, DOE_ERR_SIZE, "grid_levels must be an even number >= 2 (got %zu)", p);
+        return -1;
+    }
+
+    const double step  = 1.0 / (double)(p - 1);
+    const double Delta = (double)p / (2.0 * (double)(p - 1));
+    const size_t nbase = p / 2;
+    size_t npoints, ucount, rgcount;
+    if (!doe_size_mul_ok(r, G + 1, &npoints) ||
+        !doe_size_mul_ok(npoints, k, &ucount) ||
+        !doe_size_mul_ok(r, G, &rgcount)) {
+        snprintf(err, DOE_ERR_SIZE, "design too large (size overflow)");
+        return -1;
+    }
+
+    double *u           = malloc(ucount * sizeof *u);
+    size_t *moved_group = malloc(rgcount * sizeof *moved_group);
+    if (!u || !moved_group) {
+        free(u); free(moved_group);
+        snprintf(err, DOE_ERR_SIZE, "out of memory");
+        return -1;
+    }
+
+    doe_rng_t rng;
+    doe_rng_seed(&rng, space->seed);
+
+    size_t perm[DOE_MAX_GROUPS];
+    double base[DOE_MAX_FACTORS];
+    int    dir[DOE_MAX_FACTORS];
+
+    for (size_t t = 0; t < r; t++) {
+        /* random permutation of GROUPS (Fisher-Yates) */
+        for (size_t i = 0; i < G; i++) perm[i] = i;
+        for (size_t i = G; i > 1; i--) {
+            size_t j = rng_below(&rng, i);
+            size_t tmp = perm[i - 1]; perm[i - 1] = perm[j]; perm[j] = tmp;
+        }
+        /*
+         * Base value and direction are drawn PER FACTOR, not per group. That
+         * is what puts opposing movements inside a single group, exercising
+         * the case that breaks sequential bifurcation. One direction per group
+         * would make the design quietly easier than reality.
+         */
+        for (size_t i = 0; i < k; i++) {
+            base[i] = (double)rng_below(&rng, nbase) * step;
+            dir[i]  = (doe_rng_uniform(&rng) < 0.5) ? -1 : +1;
+        }
+
+        /* point 0 */
+        double *p0 = &u[(t * (G + 1) + 0) * k];
+        for (size_t i = 0; i < k; i++)
+            p0[i] = (dir[i] > 0) ? base[i] : base[i] + Delta;
+
+        /* points 1..G: copy previous, move every member of one group */
+        for (size_t s = 0; s < G; s++) {
+            double *prev = &u[(t * (G + 1) + s) * k];
+            double *cur  = &u[(t * (G + 1) + s + 1) * k];
+            memcpy(cur, prev, k * sizeof *cur);
+
+            const doe_group_t *grp = &space->groups[perm[s]];
+            for (size_t i = 0; i < k; i++)
+                if (grp->members[i]) cur[i] = prev[i] + (double)dir[i] * Delta;
+
+            moved_group[t * G + s] = perm[s];
+        }
+    }
+
+    d->k = k; d->G = G; d->r = r;
+    d->npoints = npoints;
+    d->u = u;
+    d->moved_group = moved_group;
+    d->delta = Delta;
+    return 0;
+}
+
+void morris_group_design_free(morris_group_design_t *d) {
+    if (!d) return;
+    free(d->u);
+    free(d->moved_group);
+    memset(d, 0, sizeof *d);
+}
+
+int morris_group_analyze(const doe_space_t *space, const double *responses,
+                         size_t nresp, morris_group_effect_t **out,
+                         size_t *count, char *err) {
+    morris_group_design_t d;
+    if (morris_group_design_build(space, &d, err) != 0) return -1;
+
+    if (nresp < d.npoints) {
+        snprintf(err, DOE_ERR_SIZE, "need %zu responses, got %zu", d.npoints, nresp);
+        morris_group_design_free(&d);
+        return -1;
+    }
+
+    size_t G = d.G, r = d.r;
+    double *ee = malloc(G * r * sizeof *ee);     /* |d_u| per group per traj */
+    size_t *cnt = calloc(G, sizeof *cnt);
+    morris_group_effect_t *eff = calloc(G, sizeof *eff);
+    if (!ee || !cnt || !eff) {
+        free(ee); free(cnt); free(eff);
+        morris_group_design_free(&d);
+        snprintf(err, DOE_ERR_SIZE, "out of memory");
+        return -1;
+    }
+
+    int rc = 0;
+    for (size_t t = 0; t < r && rc == 0; t++) {
+        for (size_t s = 0; s < G; s++) {
+            size_t i0 = t * (G + 1) + s;
+            size_t i1 = i0 + 1;
+            double y0 = responses[i0], y1 = responses[i1];
+            if (!isfinite(y0) || !isfinite(y1)) {
+                snprintf(err, DOE_ERR_SIZE,
+                         "missing or non-finite response for run %zu or %zu", i0 + 1, i1 + 1);
+                rc = -1;
+                break;
+            }
+            /* Campolongo 2007 Sec. 3.3: the ABSOLUTE group effect. */
+            size_t g = d.moved_group[t * G + s];
+            ee[g * r + cnt[g]] = fabs(y1 - y0) / d.delta;
+            cnt[g]++;
+        }
+    }
+
+    if (rc == 0) {
+        for (size_t g = 0; g < G; g++) {
+            const double *e = &ee[g * r];
+            size_t n = cnt[g];
+            double sum = 0.0;
+            for (size_t i = 0; i < n; i++) sum += e[i];
+
+            strncpy(eff[g].name, space->groups[g].name, DOE_MAX_NAME - 1);
+            eff[g].mu_star      = (n > 0) ? sum / (double)n : 0.0;
+            eff[g].sigma        = doe_std(e, n);
+            eff[g].member_count = space->groups[g].member_count;
+        }
+        *out = eff;
+        *count = G;
+    } else {
+        free(eff);
+    }
+
+    free(ee);
+    free(cnt);
+    morris_group_design_free(&d);
+    return rc;
+}
