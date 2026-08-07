@@ -160,44 +160,44 @@ static int test_analyze_rejects_nonfinite(void) {
 }
 
 /*
- * EXPANSION.md E0: `second_order:` parses but no estimator implements it, so a
- * space that sets it must be REFUSED rather than quietly analysed first-order
- * only. Answering a different question than the one asked is worse than
- * failing. Asserted at the choke point every entry path shares.
+ * `second_order:` was once a silent no-op, then an explicit rejection, and is
+ * now implemented (M5). This pins the contract that replaced the rejection:
+ * the flag changes the DESIGN SIZE, and asking for pairs without it is an
+ * error rather than a guess.
  */
-static int test_second_order_is_rejected(void) {
+static int test_second_order_design_and_guard(void) {
     const char *with =
-        "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n"
+        "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n  x2: 0.0, 1.0\n"
         "seed: 7\n  samples: 16\n  second_order: true\n";
-    doe_space_t sp; char err[DOE_ERR_SIZE];
-    CHECK(doe_space_parse(with, &sp, err) == 0);
-    CHECK(sp.second_order == true);          /* the parser still accepts it */
+    const char *without =
+        "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n  x2: 0.0, 1.0\n"
+        "seed: 7\n  samples: 16\n";
 
-    memset(err, 'A', sizeof err);
+    doe_space_t a, b; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(with, &a, err) == 0);
+    CHECK(doe_space_parse(without, &b, err) == 0);
+    CHECK(a.second_order == true && b.second_order == false);
+
+    /* N(k+2) without, N(k+2+k(k-1)/2) with: 3 extra blocks for 3 factors. */
+    CHECK(sobol_npoints(&b) == 16 * (3 + 2));
+    CHECK(sobol_npoints(&a) == 16 * (3 + 2 + 3));
+
     sobol_design_t d;
-    CHECK(sobol_design_build(&sp, &d, err) != 0);
+    CHECK(sobol_design_build(&a, &d, err) == 0);
+    CHECK(d.npoints == sobol_npoints(&a));   /* the size it reports is the size
+                                              * it builds -- getting this wrong
+                                              * made every caller read past its
+                                              * own responses buffer */
+    sobol_design_free(&d);
+
+    /* Pairs without the flag must error: the extra blocks were never sampled,
+     * so an answer would have to be invented. */
+    double dummy[256] = {0};
+    sobol_pair_t *pairs = NULL; size_t np = 0;
+    memset(err, 'A', sizeof err);
+    CHECK(sobol_analyze_pairs(&b, dummy, 256, &pairs, &np, err) != 0);
     CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);
     CHECK(strstr(err, "second_order") != NULL);
-    CHECK(strstr(err, "not implemented") != NULL);
-
-    /* sobol_analyze builds the design internally, so it must refuse too --
-     * this is what stops the robust funnel from slipping past the guard. */
-    double dummy[64] = {0};
-    sobol_index_t *out = NULL; size_t cnt = 0;
-    memset(err, 'A', sizeof err);
-    CHECK(sobol_analyze(&sp, dummy, 64, &out, &cnt, err) != 0);
-    CHECK(strstr(err, "second_order") != NULL);
-
-    /* And the identical space without the flag still works. */
-    const char *without =
-        "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n"
-        "seed: 7\n  samples: 16\n";
-    doe_space_t sp2;
-    CHECK(doe_space_parse(without, &sp2, err) == 0);
-    CHECK(sp2.second_order == false);
-    sobol_design_t d2;
-    CHECK(sobol_design_build(&sp2, &d2, err) == 0);
-    sobol_design_free(&d2);
     return 1;
 }
 
@@ -244,7 +244,7 @@ static int test_zero_variance_is_rejected(void) {
 
 int main(void) {
     printf("sobol tests\n");
-    RUN_TEST(test_second_order_is_rejected);
+    RUN_TEST(test_second_order_design_and_guard);
     RUN_TEST(test_zero_variance_is_rejected);
     RUN_TEST(test_additive);
     RUN_TEST(test_ishigami);

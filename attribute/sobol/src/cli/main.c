@@ -150,7 +150,6 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric) {
         free(responses);
         return 1;
     }
-    free(responses);
 
     printf("Sobol indices (metric: %s) — N=%zu, %zu runs\n\n", metric, sp.samples, np);
     printf("%-18s %18s %18s   %s\n", "Factor", "S1 [95% CI]", "ST [95% CI]", "interaction");
@@ -167,6 +166,36 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric) {
     if (sum_s1 > 0.9) printf("  (~1 => additive; OA/Taguchi ranking trustworthy)\n");
     else              printf("  (<1 => interactions present)\n");
     printf("ST ~ 0 => freeze the factor; ST - S1 large => acts through interactions.\n");
+
+    if (sp.second_order) {
+        sobol_pair_t *pairs = NULL; size_t np2 = 0;
+        if (sobol_analyze_pairs(&sp, responses, np, &pairs, &np2, err) != 0) {
+            fprintf(stderr, "Error: %s\n", err);
+        } else {
+            /* Rank by interaction magnitude: the pairs worth resolving first. */
+            for (size_t i = 0; i < np2; i++)
+                for (size_t j = i + 1; j < np2; j++)
+                    if (pairs[j].s2 > pairs[i].s2) {
+                        sobol_pair_t t = pairs[i]; pairs[i] = pairs[j]; pairs[j] = t;
+                    }
+            printf("\nSecond-order interactions (%zu pairs)\n\n", np2);
+            printf("%-30s %10s %10s\n", "pair", "S2", "closed");
+            printf("%-30s %10s %10s\n", "----", "--", "------");
+            for (size_t i = 0; i < np2 && i < 10; i++) {
+                char lbl[2 * DOE_MAX_NAME + 8];
+                snprintf(lbl, sizeof lbl, "%s x %s", pairs[i].a, pairs[i].b);
+                printf("%-30s %10.4f %10.4f\n", lbl, pairs[i].s2, pairs[i].closed);
+            }
+            if (np2 > 10) printf("... %zu more, smaller\n", np2 - 10);
+            printf("\nS2 is the interaction ALONE: what the pair explains beyond each\n"
+                   "factor acting separately. It answers the question ST - S1 can only\n"
+                   "raise -- which two. Resolve the top pair exactly with:\n"
+                   "  grid <space> <script> --factors %s,%s\n",
+                   np2 ? pairs[0].a : "A", np2 ? pairs[0].b : "B");
+            free(pairs);
+        }
+    }
+    free(responses);
 
     free(idx);
     return 0;

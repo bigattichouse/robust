@@ -43,11 +43,12 @@ inseparable from that tool's design (e.g. DGSM needs the Morris trajectories).
 
 ## E0. Prerequisites (do first, small)
 
-- ~~**`second_order:` honesty.**~~ ✓ **DONE 2026-08-06.** `sobol` now refuses a
-  space that sets it, with a message naming M5. The check sits in
-  `sobol_design_build`, the one choke point every entry path reaches —
-  including `sobol_analyze` and the `robust` funnel — so no path can drift back
-  to silently answering the first-order question instead.
+- ~~**`second_order:` honesty.**~~ ✓ **RESOLVED 2026-08-06 by implementing it.**
+  It first became an explicit rejection (better than a silent no-op), and is
+  now real: `sobol` computes second-order indices when the flag is set, at
+  `N(k+2+k(k-1)/2)` runs. Validated against the g-function's exact
+  decomposition — `V_ij = V_i·V_j` for a product function — in `make validate`
+  check F, worst error 0.005 across all pairs.
 - **M5's Joe-Kuo sequence has a trap, now documented.** Saltelli et al. (2010)
   §5.1 p.263 requires that `A` and `B` be the **left and right halves of a
   single 2k-dimensional** quasi-random sequence — not two k-dimensional draws

@@ -37,8 +37,24 @@ static size_t rng_below(doe_rng_t *rng, size_t n) {
     return x >= n ? n - 1 : x;
 }
 
+/* Number of A_B^(ij) blocks: one per unordered pair. */
+static size_t pair_count(size_t k) { return k * (k - 1) / 2; }
+
+/* Map a pair block number to its (i, j), i < j. */
+static void pair_of(size_t k, size_t p, size_t *ia, size_t *ib) {
+    size_t i = 0, seen = 0;
+    while (i < k) {
+        size_t here = k - 1 - i;
+        if (p < seen + here) { *ia = i; *ib = i + 1 + (p - seen); return; }
+        seen += here; i++;
+    }
+    *ia = 0; *ib = 1;
+}
+
 size_t sobol_npoints(const doe_space_t *space) {
-    return space->samples * (space->factor_count + 2);
+    size_t base = space->samples * (space->factor_count + 2);
+    if (space->second_order) base += space->samples * pair_count(space->factor_count);
+    return base;
 }
 
 int sobol_design_build(const doe_space_t *space, sobol_design_t *d, char *err) {
@@ -50,25 +66,27 @@ int sobol_design_build(const doe_space_t *space, sobol_design_t *d, char *err) {
     if (n < 2) { snprintf(err, DOE_ERR_SIZE, "samples must be >= 2 (got %zu)", n); return -1; }
 
     /*
-     * `second_order:` parses and is carried through the .space struct, but no
-     * estimator computes second-order indices yet (M5). Until then, refuse the
-     * run rather than quietly returning first-order results to someone who
-     * asked for interactions -- silently answering a different question is
-     * worse than not answering. EXPANSION.md E0.
-     *
-     * This is the single choke point: every sobol entry path reaches here,
-     * including sobol_analyze and the robust funnel, so one check covers them
-     * all and none can drift.
+     * `second_order:` used to be rejected here because nothing implemented it.
+     * It now costs N per factor pair on top of the N(k+2) base, so guard the
+     * size rather than the feature: at large k the pair count dominates and a
+     * user should learn the price before spending it, not after.
      */
     if (space->second_order) {
-        snprintf(err, DOE_ERR_SIZE,
-                 "second_order is not implemented yet (planned for M5); "
-                 "remove it from the .space to run first-order and total indices");
-        return -1;
+        size_t pairs = pair_count(k);
+        size_t total;
+        if (!doe_size_mul_ok(n, k + 2 + pairs, &total)) {
+            snprintf(err, DOE_ERR_SIZE, "second-order design too large (size overflow)");
+            return -1;
+        }
     }
 
-    size_t nk, npoints;
-    if (!doe_size_mul_ok(n, k, &nk) || !doe_size_mul_ok(n, k + 2, &npoints)) {
+    /* npoints must count the second-order blocks too, or the design silently
+     * under-reports its own size and every caller reads past the responses it
+     * was given. */
+    size_t nk, blocks = k + 2;
+    if (space->second_order) blocks += pair_count(k);
+    size_t npoints;
+    if (!doe_size_mul_ok(n, k, &nk) || !doe_size_mul_ok(n, blocks, &npoints)) {
         snprintf(err, DOE_ERR_SIZE, "design too large (size overflow)");
         return -1;
     }
@@ -129,11 +147,19 @@ void sobol_point(const sobol_design_t *d, size_t idx, double *u_out) {
         memcpy(u_out, &d->A[idx * k], k * sizeof *u_out);
     } else if (idx < 2 * n) {               /* block B */
         memcpy(u_out, &d->B[(idx - n) * k], k * sizeof *u_out);
-    } else {                                /* block A_B^(i) */
+    } else if (idx < (k + 2) * n) {         /* block A_B^(i) */
         size_t i = idx / n - 2;
         size_t row = idx % n;
         memcpy(u_out, &d->A[row * k], k * sizeof *u_out);
         u_out[i] = d->B[row * k + i];       /* swap in column i from B */
+    } else {                                /* block A_B^(ij), second order */
+        size_t p = idx / n - (k + 2);
+        size_t row = idx % n;
+        size_t ia, ib;
+        pair_of(k, p, &ia, &ib);
+        memcpy(u_out, &d->A[row * k], k * sizeof *u_out);
+        u_out[ia] = d->B[row * k + ia];
+        u_out[ib] = d->B[row * k + ib];     /* both columns from B */
     }
 }
 
@@ -269,5 +295,89 @@ int sobol_analyze(const doe_space_t *space, const double *responses, size_t nres
     sobol_design_free(&d);
     *out = res;
     *count = k;
+    return 0;
+}
+
+int sobol_analyze_pairs(const doe_space_t *space, const double *responses, size_t nresp,
+                        sobol_pair_t **out, size_t *count, char *err) {
+    if (!space->second_order) {
+        snprintf(err, DOE_ERR_SIZE,
+                 "second-order indices need `second_order: true` in the .space "
+                 "(the extra N per factor pair must be sampled, not inferred)");
+        return -1;
+    }
+
+    sobol_design_t d;
+    if (sobol_design_build(space, &d, err) != 0) return -1;
+
+    size_t N = d.n, k = d.k, M = d.npoints;
+    if (nresp < M) {
+        snprintf(err, DOE_ERR_SIZE, "need %zu responses, got %zu", M, nresp);
+        sobol_design_free(&d);
+        return -1;
+    }
+    if (k < 2) {
+        snprintf(err, DOE_ERR_SIZE, "second-order indices need at least 2 factors");
+        sobol_design_free(&d);
+        return -1;
+    }
+
+    const double *yA = responses;
+    const double *yB = responses + N;
+
+    /* Same zero-variance guard as the first-order path: shares of a variance
+     * that does not exist are undefined, not zero. */
+    double mean = 0.0;
+    for (size_t i = 0; i < N; i++) mean += yA[i] + yB[i];
+    mean /= (2.0 * (double)N);
+    double var = 0.0;
+    for (size_t i = 0; i < N; i++) {
+        double da = yA[i] - mean, db = yB[i] - mean;
+        var += da * da + db * db;
+    }
+    var /= (2.0 * (double)N - 1.0);
+    if (!(var > 0.0) || !isfinite(var)) {
+        snprintf(err, DOE_ERR_SIZE,
+                 "output variance is zero over %zu samples: sensitivity indices "
+                 "are shares of variance and are undefined", N);
+        sobol_design_free(&d);
+        return -1;
+    }
+
+    /* First-order indices, needed to subtract from the closed pair effect. */
+    double *s1 = calloc(k, sizeof *s1);
+    if (!s1) { sobol_design_free(&d); snprintf(err, DOE_ERR_SIZE, "out of memory"); return -1; }
+    for (size_t i = 0; i < k; i++) {
+        const double *yABi = responses + (2 + i) * N;
+        double acc = 0.0;
+        for (size_t m = 0; m < N; m++) acc += yB[m] * (yABi[m] - yA[m]);
+        s1[i] = (acc / (double)N) / var;
+    }
+
+    size_t np = pair_count(k);
+    sobol_pair_t *res = calloc(np, sizeof *res);
+    if (!res) { free(s1); sobol_design_free(&d);
+                snprintf(err, DOE_ERR_SIZE, "out of memory"); return -1; }
+
+    for (size_t p = 0; p < np; p++) {
+        size_t ia, ib;
+        pair_of(k, p, &ia, &ib);
+        const double *yABij = responses + (k + 2 + p) * N;
+
+        double acc = 0.0;
+        for (size_t m = 0; m < N; m++) acc += yB[m] * (yABij[m] - yA[m]);
+        double closed = (acc / (double)N) / var;
+
+        strncpy(res[p].a, space->factors[ia].name, DOE_MAX_NAME - 1);
+        strncpy(res[p].b, space->factors[ib].name, DOE_MAX_NAME - 1);
+        res[p].ia = ia; res[p].ib = ib;
+        res[p].closed = closed;
+        res[p].s2 = closed - s1[ia] - s1[ib];
+    }
+
+    free(s1);
+    sobol_design_free(&d);
+    *out = res;
+    *count = np;
     return 0;
 }

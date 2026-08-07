@@ -707,6 +707,73 @@ static void claim_e(void) {
     printf("\n");
 }
 
+/* ===================================================================== F
+ *
+ * Second-order indices (M5) against the g-function's exact decomposition.
+ * Because g is a product of one-dimensional terms, V_ij = V_i * V_j exactly,
+ * so every pair has a closed-form answer -- this is a reference, not a
+ * benchmark.
+ *
+ * Estimator: the Saltelli triplet form extended to move both columns at once,
+ *   closed_ij = 1/N sum f(B)_m ( f(A_B^(ij))_m - f(A)_m ) / V
+ *   S_ij      = closed_ij - S_i - S_j
+ */
+static void claim_f(void) {
+    static const double a[4] = {0.0, 0.5, 3.0, 9.0};
+    const size_t k = 4, N = 16384;
+
+    printf("F. second-order indices vs the exact decomposition   (M5)\n");
+    printf("   g-function, k=4: V_ij = V_i * V_j exactly, so each pair has a\n");
+    printf("   closed form. N=%zu.\n\n", N);
+
+    char spec[2048];
+    int off = snprintf(spec, sizeof spec, "factors:\n");
+    for (size_t i = 0; i < k; i++)
+        off += snprintf(spec + off, sizeof spec - (size_t)off, "  x%zu: 0.0, 1.0\n", i + 1);
+    snprintf(spec + off, sizeof spec - (size_t)off,
+             "seed: 7\nsamples: %zu\nsecond_order: true\n", N);
+
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    if (doe_space_parse(spec, &sp, err) != 0) { printf("  parse: %s\n", err); failures++; return; }
+
+    sobol_design_t d;
+    if (sobol_design_build(&sp, &d, err) != 0) { printf("  design: %s\n", err); failures++; return; }
+    double *y = malloc(d.npoints * sizeof *y);
+    double u[MAXK];
+    for (size_t i = 0; i < d.npoints; i++) { sobol_point(&d, i, u); y[i] = gf_eval(u, a, k); }
+
+    sobol_pair_t *pr = NULL; size_t np = 0;
+    if (sobol_analyze_pairs(&sp, y, d.npoints, &pr, &np, err) != 0) {
+        printf("  pairs: %s\n", err); failures++; free(y); sobol_design_free(&d); return;
+    }
+
+    double V_i[4], V_tot;
+    gf_partial_var(a, k, V_i, &V_tot);
+
+    printf("   %-12s %12s %12s %10s\n", "pair", "S2 measured", "S2 exact", "error");
+    double worst = 0.0;
+    for (size_t p = 0; p < np; p++) {
+        double exact = gf_second_index(V_i, k, V_tot, pr[p].ia, pr[p].ib);
+        double e = fabs(pr[p].s2 - exact);
+        if (e > worst) worst = e;
+        char lbl[2 * DOE_MAX_NAME + 4];
+        snprintf(lbl, sizeof lbl, "%s,%s", pr[p].a, pr[p].b);
+        printf("   %-12s %12.5f %12.5f %10.5f\n", lbl, pr[p].s2, exact, e);
+    }
+
+    char buf[160];
+    snprintf(buf, sizeof buf, "worst error %.5f over %zu pairs", worst, np);
+    report("second-order indices match the exact decomposition", worst < 0.02, buf);
+
+    /* Cost must be exactly N(k + 2 + k(k-1)/2), and predictable in advance. */
+    size_t expect = N * (k + 2 + k * (k - 1) / 2);
+    snprintf(buf, sizeof buf, "%zu runs, expected %zu", d.npoints, expect);
+    report("second-order design costs N(k+2+k(k-1)/2)", d.npoints == expect, buf);
+
+    free(pr); free(y); sobol_design_free(&d);
+    printf("\n");
+}
+
 int main(void) {
     printf("=======================================================================\n");
     printf(" validation — published screening results vs closed-form ground truth\n");
@@ -717,6 +784,7 @@ int main(void) {
     claim_c();
     claim_d();
     claim_e();
+    claim_f();
     printf("=======================================================================\n");
     printf(" %s (%d failure%s)\n", failures ? "FAILURES" : "all checks passed",
            failures, failures == 1 ? "" : "s");

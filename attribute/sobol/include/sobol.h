@@ -31,6 +31,30 @@ typedef struct {
     double st, st_lo, st_hi;   /* total-order index + bootstrap CI */
 } sobol_index_t;
 
+/*
+ * A second-order index: the share of variance owned by the PAIR (i, j)
+ * together, over and above what each contributes alone.
+ *
+ *   closed  = Var(E[Y | Xi, Xj]) / V      -- everything the pair explains
+ *   s2      = closed - S_i - S_j          -- the interaction alone
+ *
+ * s2 is the number that answers "which two factors interact", which
+ * S_T - S_i can only ask. Estimated with the same triplet form as the
+ * first-order index, moving both columns at once:
+ *
+ *   closed_ij = 1/N sum f(B)_m ( f(A_B^(ij))_m - f(A)_m ) / V
+ *
+ * Source: Saltelli (2002), Comput. Phys. Comm. 145, 280-297, extended in
+ * Saltelli et al. (2010) Sec. 3. Costs N per pair on top of the N(k+2) base,
+ * so k(k-1)/2 extra blocks -- which is why it is opt-in via `second_order:`.
+ */
+typedef struct {
+    char   a[DOE_MAX_NAME], b[DOE_MAX_NAME];
+    size_t ia, ib;
+    double closed;   /* Var(E[Y|Xi,Xj]) / V */
+    double s2;       /* closed - S_i - S_j : the interaction itself */
+} sobol_pair_t;
+
 int    sobol_design_build(const doe_space_t *space, sobol_design_t *d, char *err);
 void   sobol_design_free(sobol_design_t *d);
 size_t sobol_npoints(const doe_space_t *space);
@@ -45,5 +69,11 @@ void sobol_point(const sobol_design_t *d, size_t idx, double *u_out);
  * must be >= npoints). Returns indices in factor order; caller frees. */
 int sobol_analyze(const doe_space_t *space, const double *responses, size_t nresp,
                   sobol_index_t **out, size_t *count, char *err);
+
+/* Second-order indices, when the .space sets `second_order: true`. Returns
+ * k(k-1)/2 pairs in (i<j) order; caller frees with free(). Returns 0, or -1
+ * with err filled (including when second_order is not set). */
+int sobol_analyze_pairs(const doe_space_t *space, const double *responses, size_t nresp,
+                        sobol_pair_t **out, size_t *count, char *err);
 
 #endif /* SOBOL_H */

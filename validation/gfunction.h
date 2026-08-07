@@ -57,4 +57,14 @@ double gf_group_first_index(const double *V_i, size_t k, double V_tot,
 double gf_group_total_index(const double *V_i, size_t k, double V_tot,
                             const int *members);
 
+/*
+ * Second-order index for the pair (i, j). The g-function is a PRODUCT of
+ * one-dimensional terms, so its variance decomposition factorises exactly:
+ *     V_ij = V_i * V_j      and      S_ij = V_i * V_j / V
+ * which makes it an exact reference for a second-order estimator, not just a
+ * benchmark. Source: Saltelli & Sobol' (1995).
+ */
+double gf_second_index(const double *V_i, size_t k, double V_tot,
+                       size_t i, size_t j);
+
 #endif /* VALIDATION_GFUNCTION_H */
