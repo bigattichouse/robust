@@ -365,7 +365,7 @@ fuzz: | $(BUILD)
 # a normal build. Reports with gcovr if available, else raw gcov totals.
 #   make coverage            summary to stdout
 #   make coverage COVHTML=1  also writes build/coverage/index.html (needs gcovr)
-COVFLAGS = --coverage -O0 -g
+COVFLAGS = --coverage -O0 -g -DDOE_COVERAGE
 
 coverage:
 	$(MAKE) BUILD=build/cov CFLAGS="-Wall -Wextra -std=c99 -pedantic $(COVFLAGS)" \

@@ -12,15 +12,13 @@
  * setenv, and are never spliced into the command string. A value containing
  * `; rm -rf`, `$(...)` or backticks must arrive as inert data.
  *
- * A NOTE ON THE COVERAGE NUMBER. `make coverage` reports runner.c at roughly
- * 50%, and most of the shortfall is a measurement artifact, not untested code.
- * child_set_env(), the execl() call and the child's dup2() all run in the
- * forked child, which then either execs (replacing the process image) or
- * _exit()s -- and in both cases gcov's counters are never flushed, so those
- * lines can never be attributed however thoroughly they are exercised.
- * test_run_exports_env only passes if child_set_env ran. Do not chase that
- * number; the remaining genuinely-uncovered paths are fork() and pipe()
- * failure, which need resource exhaustion to reach.
+ * A NOTE ON THE COVERAGE NUMBER. This file's coverage used to read ~52%
+ * because the forked child execs or _exit()s before gcov flushes, so its work
+ * could not be attributed. That is fixed: runner.c calls __gcov_dump() in the
+ * child before exec and before each _exit, under -DDOE_COVERAGE only, and the
+ * figure is now 77%. What is still uncovered are the fork(), pipe() and exec
+ * failure paths -- reachable only by exhausting process or descriptor limits --
+ * and the final _exit statements, which run after the counters are written.
  */
 
 #define _POSIX_C_SOURCE 200809L

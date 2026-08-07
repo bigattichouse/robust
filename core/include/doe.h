@@ -57,6 +57,28 @@ static inline int doe_size_mul_ok(size_t a, size_t b, size_t *out) {
     return 1;
 }
 
+/*
+ * Coverage in forked children.
+ *
+ * runner.c forks and then either execs (replacing the process image) or
+ * _exit()s (which skips the atexit handler gcov installs). Either way the
+ * child's counters are never written, so every line it executed reads as
+ * uncovered no matter how thoroughly it ran -- runner.c sat at 52% for exactly
+ * this reason, with the child-side code showing zero despite tests that could
+ * only pass if it had run.
+ *
+ * __gcov_dump() writes the counters explicitly. Calling it in the child right
+ * before exec or _exit attributes that work correctly; gcov merges the child's
+ * .gcda into the parent's. Compiled in only for `make coverage`, so ordinary
+ * and sanitizer builds are byte-for-byte unaffected.
+ */
+#ifdef DOE_COVERAGE
+extern void __gcov_dump(void);
+#  define DOE_GCOV_DUMP() __gcov_dump()
+#else
+#  define DOE_GCOV_DUMP() ((void)0)
+#endif
+
 /* ============================================================================
  * PRNG — xoshiro256** seeded by splitmix64.
  * Deterministic and platform-independent: the same seed yields the same stream

@@ -128,13 +128,21 @@ even when a valid number was already printed, non-numeric and empty output are
 rejected, and 100 KB of child output neither overflows the 256-byte read buffer
 nor deadlocks on a full pipe.
 
-**Do not chase runner.c's coverage percentage.** It reads ~50% because
-`child_set_env`, `execl` and the child's `dup2` execute in the forked child,
-which then execs or `_exit`s — gcov's counters are never flushed either way, so
-those lines cannot be attributed no matter how well exercised they are.
-`test_run_exports_env` passes only if `child_set_env` ran. The genuinely
-uncovered paths that remain are `fork()` and `pipe()` failure, which need
-resource exhaustion to reach.
+**runner.c's coverage was a measurement artifact, and it is now fixed.** It
+read ~52% because `child_set_env`, `execl` and the child's `dup2` run in the
+forked child, which then execs or `_exit`s — gcov's counters are never flushed
+either way, so those lines could not be attributed however well they ran.
+
+`__gcov_dump()` writes the counters explicitly. Calling it in the child
+immediately before `exec` and before each `_exit` attributes that work
+correctly; gcov merges the child's `.gcda` into the parent's. It is compiled in
+only under `make coverage` (`-DDOE_COVERAGE`), so ordinary and sanitizer builds
+are byte-for-byte unaffected. **runner.c: 52% → 77%.**
+
+What remains uncovered there is genuinely near-irreducible: `fork()`, `pipe()`
+and `exec` failure paths, which need resource exhaustion to reach, and the
+final `_exit` statements themselves, which by definition execute after the
+counters have been written.
 
 ### Two assurance defects found and fixed, 2026-08-06
 

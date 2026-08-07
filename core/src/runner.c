@@ -37,11 +37,13 @@ static void child_set_env(const doe_space_t *space, const char *prefix, size_t r
         const char *name = space->factors[col].name;
         if (strchr(name, '=') != NULL) {
             fprintf(stderr, "Error: factor name '%s' contains '='\n", name);
+            DOE_GCOV_DUMP();
             _exit(1);
         }
         int nw = snprintf(envname, sizeof envname, "%s_%s", prefix, name);
         if (nw < 0 || nw >= (int)sizeof envname) {
             fprintf(stderr, "Error: factor name '%s' too long for env var\n", name);
+            DOE_GCOV_DUMP();
             _exit(1);
         }
         const char *val = get_value(ctx, row, col);
@@ -56,8 +58,10 @@ int doe_run(const doe_space_t *space, const char *prefix, const char *script,
 
         if (pid == 0) {
             child_set_env(space, prefix, row, get_value, ctx);
+            DOE_GCOV_DUMP();      /* exec replaces us; write counters first */
             execl("/bin/sh", "sh", "-c", script, (char *)NULL);
             perror("exec failed");
+            DOE_GCOV_DUMP();
             _exit(127);
         } else if (pid > 0) {
             int status;
@@ -88,10 +92,12 @@ int doe_run_capture(const doe_space_t *space, const char *prefix, const char *sc
         pid_t pid = fork();
         if (pid == 0) {
             close(fds[0]);
-            if (dup2(fds[1], STDOUT_FILENO) < 0) _exit(126);
+            if (dup2(fds[1], STDOUT_FILENO) < 0) { DOE_GCOV_DUMP(); _exit(126); }
             close(fds[1]);
             child_set_env(space, prefix, row, get_value, ctx);
+            DOE_GCOV_DUMP();
             execl("/bin/sh", "sh", "-c", script, (char *)NULL);
+            DOE_GCOV_DUMP();
             _exit(127);
         } else if (pid > 0) {
             close(fds[1]);
