@@ -104,7 +104,7 @@ int robust_write_tgu(const robust_result_t *r, const char *path, char *err) {
         if (fac->scale == DOE_CATEGORICAL) {
             fprintf(f, "  %s: ", fac->name);
             for (size_t l = 0; l < fac->level_count; l++) {
-                fprintf(f, "%s%s", (l ? ", " : ""), fac->levels[l]);
+                fprintf(f, "%s%s", (l ? ", " : ""), s->levels[fac->level_slot][l]);
             }
             fprintf(f, "\n");
         } else {

@@ -25,8 +25,20 @@ extern "C" {
 #define DOE_VERSION_PATCH 0
 
 #define DOE_ERR_SIZE    256
-#define DOE_MAX_FACTORS  64
-#define DOE_MAX_GROUPS   64
+#define DOE_MAX_FACTORS       1024
+#define DOE_MAX_GROUPS          64
+/*
+ * How many factors may carry a categorical level list. Level strings are 95%
+ * of a factor's storage (DOE_MAX_LEVELS * DOE_MAX_VALUE = 2 KB each) and only
+ * categorical factors use them, so they live in a separate pool rather than
+ * inline in every factor. That is what makes DOE_MAX_FACTORS = 1024 fit in a
+ * ~300 KB struct instead of 2.1 MB, while keeping doe_space_t trivially
+ * copyable -- no pointers, no ownership, no way to leak one.
+ *
+ * A design with more than this many *categorical* factors is a different kind
+ * of problem than high-dimensional screening, which is continuous.
+ */
+#define DOE_MAX_CATEGORICAL     64
 #define DOE_MAX_LEVELS   32
 #define DOE_MAX_NAME     64
 #define DOE_MAX_VALUE    64
@@ -70,9 +82,10 @@ typedef enum {
 typedef struct {
     char        name[DOE_MAX_NAME];
     doe_scale_t scale;
-    double      lo, hi;                                /* LINEAR / LOG */
-    char        levels[DOE_MAX_LEVELS][DOE_MAX_VALUE]; /* CATEGORICAL  */
-    size_t      level_count;                           /* CATEGORICAL  */
+    double      lo, hi;         /* LINEAR / LOG                              */
+    int         level_slot;     /* CATEGORICAL: index into doe_space_t.levels,
+                                 * -1 for continuous factors                 */
+    size_t      level_count;    /* CATEGORICAL                               */
 } doe_factor_t;
 
 /*
@@ -91,6 +104,9 @@ typedef struct {
 typedef struct {
     doe_factor_t factors[DOE_MAX_FACTORS];
     size_t       factor_count;
+    /* Level strings for categorical factors only; see DOE_MAX_CATEGORICAL. */
+    char         levels[DOE_MAX_CATEGORICAL][DOE_MAX_LEVELS][DOE_MAX_VALUE];
+    size_t       categorical_count;
     /* Optional `groups:` section. group_count == 0 means per-factor
      * screening, which is the default and leaves every tool unchanged. */
     doe_group_t  groups[DOE_MAX_GROUPS];
@@ -110,9 +126,16 @@ int doe_space_parse_file(const char *path, doe_space_t *space, char *err);
 /* Map u in [0,1) to a factor's real value (LINEAR/LOG). */
 double doe_factor_scale(const doe_factor_t *f, double u);
 
-/* Map u in [0,1) to a factor's value as a string (numeric for LINEAR/LOG,
- * level label for CATEGORICAL). Writes into buf and returns buf. */
-const char *doe_factor_value(const doe_factor_t *f, double u, char *buf, size_t buf_size);
+/*
+ * Map u in [0,1) to factor `idx`'s value as a string (numeric for LINEAR/LOG,
+ * level label for CATEGORICAL). Writes into buf and returns buf.
+ *
+ * Takes the space rather than the factor because level strings live in the
+ * space's pool. That also means no factor holds a pointer, so a doe_space_t
+ * can still be copied by assignment without aliasing anything.
+ */
+const char *doe_factor_value(const doe_space_t *space, size_t idx,
+                             double u, char *buf, size_t buf_size);
 
 /* ============================================================================
  * Stats

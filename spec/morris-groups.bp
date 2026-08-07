@@ -395,11 +395,18 @@ Tests [MorrisGroups] {
 //
 // TWO HONEST LIMITS, both worth stating plainly:
 //
-//   1. The reach is 64 factors, not thousands. DOE_MAX_FACTORS is 64 and
-//      doe_space_t is already ~132 KB by value; at 1024 factors it would be
-//      2.1 MB, too large for the stack it currently lives on. The k=3072 case
-//      that motivated EXPANSION_NOTE.md is NOT reachable without moving factor
-//      storage to the heap first. That is a prerequisite, not a detail.
+//   1. RESOLVED 2026-08-06: the reach is now 1024 factors, not 64. Level
+//      strings moved into a per-space pool (they are 95% of a factor's size
+//      and only categorical factors use them), so doe_space_t is ~296 KB at
+//      k=1024 rather than 2.1 MB, and is still trivially copyable -- no
+//      pointers, no ownership. Measured: 12.8x cheaper than per-factor
+//      screening at k=1024, 4.1x at 256, 1.4x at 64. The advantage grows with
+//      k, which is the whole premise.
+//
+//   1b. NEW LIMIT, measured: below 20 trajectories group screening can drop an
+//      important factor when equal-and-opposite factors share a group -- 2 of
+//      8 missed at r=10, none at r>=20. Cancellation is prevented from biasing
+//      the mean, not from happening per-trajectory. morris bifurcate warns.
 //
 //   2. The worst-case budget can EXCEED per-factor screening -- 1240 vs 650 in
 //      the run above -- because the bound assumes every group survives and

@@ -135,7 +135,26 @@ typedef struct {
     morris_bifurcate_step_t *trace;     /* caller frees with free()          */
     size_t trace_count;
     int    stopped_on_tie;              /* the cut fell inside a near-tie    */
+    int    low_trajectories;            /* r below MIN_TRAJECTORIES while a
+                                         * group held >1 factor: measurable
+                                         * false-negative risk, see morris.c */
 } morris_bifurcate_result_t;
+
+/*
+ * Below this many trajectories, group screening can DROP AN IMPORTANT FACTOR.
+ * Measured on 1024 factors with 8 important ones at alternating signs, 20
+ * seeds per row, false negatives out of 8:
+ *
+ *   r=10 : 2 missed when opposing pairs share a group, 0 when spread apart
+ *   r=20 : 0        r=40 : 0        r=80 : 0
+ *
+ * Taking the absolute value of the group effect stops cancellation from
+ * biasing the MEAN to zero, but it does not stop it happening in individual
+ * trajectories. With too few of them the estimate is noisy enough for a group
+ * holding equal-and-opposite factors to fall below the keep cut. r >= 20 was
+ * clean in every configuration tried.
+ */
+#define MORRIS_BIFURCATE_MIN_TRAJECTORIES 20
 
 /* Worst-case evaluation count: every group survives every round. Computable
  * without running anything, which is the point -- a screening method whose

@@ -87,10 +87,10 @@ static int test_space_categorical(void) {
     CHECK(sp.factors[0].scale == DOE_CATEGORICAL);
     CHECK(sp.factors[0].level_count == 3);
     char buf[DOE_MAX_VALUE];
-    CHECK(strcmp(doe_factor_value(&sp.factors[0], 0.0,  buf, sizeof buf), "random") == 0);
-    CHECK(strcmp(doe_factor_value(&sp.factors[0], 0.5,  buf, sizeof buf), "structured") == 0);
-    CHECK(strcmp(doe_factor_value(&sp.factors[0], 0.99, buf, sizeof buf), "gauze") == 0);
-    CHECK(strcmp(doe_factor_value(&sp.factors[0], 1.0,  buf, sizeof buf), "gauze") == 0);  /* u==1 guard */
+    CHECK(strcmp(doe_factor_value(&sp, 0, 0.0,  buf, sizeof buf), "random") == 0);
+    CHECK(strcmp(doe_factor_value(&sp, 0, 0.5,  buf, sizeof buf), "structured") == 0);
+    CHECK(strcmp(doe_factor_value(&sp, 0, 0.99, buf, sizeof buf), "gauze") == 0);
+    CHECK(strcmp(doe_factor_value(&sp, 0, 1.0,  buf, sizeof buf), "gauze") == 0);  /* u==1 guard */
 
     CHECK(sp.factors[1].scale == DOE_CATEGORICAL);
     CHECK(sp.factors[1].level_count == 2);

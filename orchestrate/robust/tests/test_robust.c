@@ -233,9 +233,11 @@ static int test_tgu_roundtrip_taguchi_validate(void) {
     s->factors[1].scale = DOE_LOG; s->factors[1].lo = 1e-6; s->factors[1].hi = 1;
     strcpy(s->factors[2].name, "mode");
     s->factors[2].scale = DOE_CATEGORICAL; s->factors[2].level_count = 3;
-    strcpy(s->factors[2].levels[0], "fast");
-    strcpy(s->factors[2].levels[1], "slow");
-    strcpy(s->factors[2].levels[2], "turbo_v2");
+    /* Level strings live in the space's pool now, addressed by level_slot. */
+    s->factors[2].level_slot = (int)s->categorical_count++;
+    strcpy(s->levels[s->factors[2].level_slot][0], "fast");
+    strcpy(s->levels[s->factors[2].level_slot][1], "slow");
+    strcpy(s->levels[s->factors[2].level_slot][2], "turbo_v2");
 
     const char *tgu = "build/robust_h8_roundtrip.tgu";
     char err[DOE_ERR_SIZE];

@@ -91,9 +91,6 @@ is the whole reason to screen.
 
 **Two limits worth knowing before you reach for it:**
 
-- **The reach is 64 factors**, not thousands — `DOE_MAX_FACTORS` is 64, and
-  `doe_space_t` is already ~132 KB by value. Going further needs factor
-  storage moved off the stack first.
 - **The worst-case budget can exceed per-factor screening** (186 vs 102
   above), because the bound assumes every group survives and splits every
   round. Bifurcation is a bet that importance is *concentrated*. It paid there
@@ -104,6 +101,19 @@ Measured on 64 factors with 8 important ones at alternating signs: 64 → 8
 survivors, 4 rounds, 460 evaluations against 650, **zero false negatives**.
 The alternating signs matter — that is the case that defeats sequential
 bifurcation, and it is why this uses the absolute group effect.
+
+**Use at least 20 trajectories.** Taking the absolute value of the group effect
+stops cancellation from biasing the *mean* to zero, but not from happening in
+individual trajectories. With too few, a group holding equal-and-opposite
+factors can fall below the keep cut — and a dropped factor is silent. Measured
+on 1024 factors with 8 important ones at alternating signs, 20 seeds per row:
+
+| trajectories | opposing pairs sharing a group | spread apart |
+|---|---|---|
+| 10 | **2 of 8 missed** | 0 |
+| 20 / 40 / 80 | 0 | 0 |
+
+`morris bifurcate` warns on stderr below 20.
 
 Stopping: all groups singletons, nothing survives, `max_rounds`, or the
 keep/drop cut falls inside a near-tie. That last one matters — `make validate`

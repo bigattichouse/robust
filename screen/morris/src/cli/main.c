@@ -101,7 +101,7 @@ static void free_view(design_view_t *v) {
 static const char *run_value(void *vctx, size_t row, size_t col) {
     run_ctx_t *c = (run_ctx_t *)vctx;
     double u = c->view->u[row * c->view->k + col];
-    return doe_factor_value(&c->space->factors[col], u, c->buf, sizeof c->buf);
+    return doe_factor_value(c->space, col, u, c->buf, sizeof c->buf);
 }
 
 /* ---- commands ---- */
@@ -121,7 +121,7 @@ static int cmd_sample(const char *path) {
     for (size_t i = 0; i < d.npoints; i++) {
         printf("%zu", i + 1);
         for (size_t c = 0; c < sp.factor_count; c++) {
-            printf(",%s", doe_factor_value(&sp.factors[c], d.u[i * d.k + c], buf, sizeof buf));
+            printf(",%s", doe_factor_value(&sp, c, d.u[i * d.k + c], buf, sizeof buf));
         }
         printf("\n");
     }
@@ -148,7 +148,7 @@ static int cmd_generate(const char *path) {
         for (size_t c = 0; c < sp.factor_count; c++) {
             if (c) printf(", ");
             printf("%s=%s", sp.factors[c].name,
-                   doe_factor_value(&sp.factors[c], d.u[i * d.k + c], buf, sizeof buf));
+                   doe_factor_value(&sp, c, d.u[i * d.k + c], buf, sizeof buf));
         }
         printf("\n");
     }
@@ -190,7 +190,7 @@ typedef struct {
 
 static const char *bif_value(void *vctx, size_t row, size_t col) {
     bif_ctx_t *c = (bif_ctx_t *)vctx;
-    return doe_factor_value(&c->sp->factors[col], c->u[row * c->k + col],
+    return doe_factor_value(c->sp, col, c->u[row * c->k + col],
                             c->buf, sizeof c->buf);
 }
 
@@ -255,6 +255,16 @@ static int cmd_bifurcate(const char *path, const char *script, double keep_share
            res.evaluations, res.predicted_max);
     for (size_t f = 0; f < sp.factor_count; f++)
         if (res.survivors[f]) printf("  %s\n", sp.factors[f].name);
+
+    if (res.low_trajectories) {
+        fprintf(stderr,
+            "\nWARNING: trajectories = %zu, below the %d that group screening\n"
+            "needs to be reliable. Measured on 1024 factors with 8 important ones\n"
+            "at alternating signs: at r=10, 2 of 8 were MISSED when equal-and-\n"
+            "opposite factors shared a group; at r=20 and above, none were.\n"
+            "A dropped factor is silent -- raise trajectories and re-run.\n",
+            sp.trajectories, MORRIS_BIFURCATE_MIN_TRAJECTORIES);
+    }
 
     if (res.stopped_on_tie) {
         fprintf(stderr,

@@ -68,7 +68,7 @@ typedef struct {
 
 static const char *shell_value(void *v, size_t row, size_t col) {
     val_ctx_t *c = (val_ctx_t *)v;
-    return doe_factor_value(&c->space->factors[col], c->u[row * c->k + col], c->buf, sizeof c->buf);
+    return doe_factor_value(c->space, col, c->u[row * c->k + col], c->buf, sizeof c->buf);
 }
 
 typedef struct { const char *script; } shell_ctx_t;

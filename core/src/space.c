@@ -52,7 +52,8 @@ static int has_ctrl(const char *s) {
     return 0;
 }
 
-static int parse_factor(const char *name, char *value, doe_factor_t *f, char *err) {
+static int parse_factor(const char *name, char *value, doe_space_t *space, char *err) {
+    doe_factor_t *f = &space->factors[space->factor_count];
     doe_scale_t scale = DOE_LINEAR;
     int have_marker = 0;
 
@@ -136,11 +137,22 @@ static int parse_factor(const char *name, char *value, doe_factor_t *f, char *er
         f->lo = a;
         f->hi = b;
         f->level_count = 0;
+        f->level_slot  = -1;              /* continuous: no level storage */
     } else {
         if (ntok < 2) {
             snprintf(err, DOE_ERR_SIZE, "factor '%s': categorical needs >= 2 levels", name);
             return -1;
         }
+        /* Take a slot from the space's level pool. Only categorical factors
+         * consume one, which is what keeps DOE_MAX_FACTORS large. */
+        if (space->categorical_count >= DOE_MAX_CATEGORICAL) {
+            snprintf(err, DOE_ERR_SIZE,
+                     "factor '%s': too many categorical factors (max %d); "
+                     "continuous factors are not limited this way",
+                     name, DOE_MAX_CATEGORICAL);
+            return -1;
+        }
+        f->level_slot = (int)space->categorical_count++;
         f->level_count = ntok;
         for (size_t i = 0; i < ntok; i++) {
             if (strlen(toks[i]) >= DOE_MAX_VALUE) {
@@ -151,7 +163,7 @@ static int parse_factor(const char *name, char *value, doe_factor_t *f, char *er
                 snprintf(err, DOE_ERR_SIZE, "factor '%s': level has control characters", name);
                 return -1;
             }
-            strncpy(f->levels[i], toks[i], DOE_MAX_VALUE - 1);
+            strncpy(space->levels[f->level_slot][i], toks[i], DOE_MAX_VALUE - 1);
         }
     }
     return 0;
@@ -309,7 +321,7 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
                 snprintf(err, DOE_ERR_SIZE, "factor '%s' has no values", key);
                 rc = -1; break;
             }
-            if (parse_factor(key, val, &space->factors[space->factor_count], err) != 0) {
+            if (parse_factor(key, val, space, err) != 0) {
                 rc = -1; break;
             }
             space->factor_count++;
@@ -429,11 +441,13 @@ double doe_factor_scale(const doe_factor_t *f, double u) {
     return f->lo + u * (f->hi - f->lo);   /* LINEAR */
 }
 
-const char *doe_factor_value(const doe_factor_t *f, double u, char *buf, size_t buf_size) {
+const char *doe_factor_value(const doe_space_t *space, size_t idx,
+                             double u, char *buf, size_t buf_size) {
+    const doe_factor_t *f = &space->factors[idx];
     if (f->scale == DOE_CATEGORICAL) {
-        size_t idx = (size_t)(u * (double)f->level_count);
-        if (idx >= f->level_count) idx = f->level_count - 1;   /* u == 1.0 guard */
-        snprintf(buf, buf_size, "%s", f->levels[idx]);
+        size_t lv = (size_t)(u * (double)f->level_count);
+        if (lv >= f->level_count) lv = f->level_count - 1;   /* u == 1.0 guard */
+        snprintf(buf, buf_size, "%s", space->levels[f->level_slot][lv]);
     } else {
         snprintf(buf, buf_size, "%.10g", doe_factor_scale(f, u));
     }

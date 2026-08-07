@@ -416,6 +416,17 @@ int morris_bifurcate(const doe_space_t *space,
     memset(out, 0, sizeof *out);
     out->predicted_max = morris_bifurcate_budget(space, opts);
 
+    /*
+     * Flag the low-trajectory false-negative risk. Not an error: with factors
+     * spread across groups, r=10 was clean in every seed tried. It only bites
+     * when equal-and-opposite factors share a group, which the caller cannot
+     * know in advance -- which is exactly why it is worth saying out loud.
+     */
+    if (space->trajectories < MORRIS_BIFURCATE_MIN_TRAJECTORIES &&
+        space->factor_count > 1) {
+        out->low_trajectories = 1;
+    }
+
     doe_space_t *work = malloc(sizeof *work);
     doe_group_t *part = malloc(DOE_MAX_GROUPS * sizeof *part);
     doe_group_t *next = malloc(DOE_MAX_GROUPS * sizeof *next);

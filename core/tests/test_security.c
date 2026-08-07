@@ -108,13 +108,28 @@ static int test_parser_boundaries(void) {
     CHECK(doe_space_parse(buf, &sp, err) != 0);
     CHECK(strlen(err) < DOE_ERR_SIZE);   /* error is bounded + terminated */
 
-    /* one factor over the limit */
-    char big[4096];
-    int pos = snprintf(big, sizeof big, "factors:\n");
-    for (int i = 0; i <= DOE_MAX_FACTORS; i++) {
-        pos += snprintf(big + pos, sizeof big - (size_t)pos, "  f%03d: 0,1\n", i);
+    /*
+     * One factor over the limit. Sized from DOE_MAX_FACTORS rather than a
+     * fixed 4096: when that cap went from 64 to 1024 this buffer overflowed
+     * and aborted the suite. The offset is also clamped -- `pos += snprintf`
+     * accumulates the length snprintf WOULD have written, the same defect
+     * already fixed in pareto's error builder and checked for in the
+     * serializer.
+     */
+    size_t bigsz = (size_t)(DOE_MAX_FACTORS + 2) * 32 + 64;
+    char *big = malloc(bigsz);
+    CHECK(big != NULL);
+    size_t pos = 0;
+    int n = snprintf(big, bigsz, "factors:\n");
+    pos = (n > 0 && (size_t)n < bigsz) ? (size_t)n : 0;
+    for (int i = 0; i <= DOE_MAX_FACTORS && pos + 1 < bigsz; i++) {
+        n = snprintf(big + pos, bigsz - pos, "  f%04d: 0,1\n", i);
+        if (n < 0) break;
+        pos += (size_t)n;
+        if (pos >= bigsz) { pos = bigsz - 1; break; }
     }
     CHECK(doe_space_parse(big, &sp, err) != 0);
+    free(big);
 
     /* malformed definitions */
     CHECK(doe_space_parse("factors:\n  x: 5, 1\n", &sp, err) != 0);       /* lo >= hi  */
@@ -191,7 +206,7 @@ static int test_space_allows_utf8(void) {
     CHECK(strcmp(sp.factors[0].name, "café") == 0);
     /* ...and in level values */
     CHECK(doe_space_parse("factors:\n  mode: rápido, lento\n", &sp, err) == 0);
-    CHECK(strcmp(sp.factors[0].levels[0], "rápido") == 0);
+    CHECK(strcmp(sp.levels[sp.factors[0].level_slot][0], "rápido") == 0);
     return 1;
 }
 

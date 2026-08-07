@@ -63,7 +63,7 @@ static const char *run_value(void *vctx, size_t row, size_t col) {
         sobol_point(c->d, row, c->u);
         c->last_row = (long)row;
     }
-    return doe_factor_value(&c->space->factors[col], c->u[col], c->buf, sizeof c->buf);
+    return doe_factor_value(c->space, col, c->u[col], c->buf, sizeof c->buf);
 }
 
 static int cmd_sample(const char *path) {
@@ -83,7 +83,7 @@ static int cmd_sample(const char *path) {
         sobol_point(&d, i, u);
         printf("%zu", i + 1);
         for (size_t c = 0; c < sp.factor_count; c++) {
-            printf(",%s", doe_factor_value(&sp.factors[c], u[c], buf, sizeof buf));
+            printf(",%s", doe_factor_value(&sp, c, u[c], buf, sizeof buf));
         }
         printf("\n");
     }
