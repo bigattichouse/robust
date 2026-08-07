@@ -6,8 +6,8 @@ tools here **spend new runs**, which is what separates them from
 
 | Tool | Purpose | Status |
 |---|---|---|
-| `ofat` | One-factor-at-a-time confirmation around a base point. *"Any OA effect you act on costs exactly two more runs to verify"* — targets the aliasing / "16 dB artifact" failure mode. | M6 |
-| `grid` | Small full-factorial (2–3 factors, 3×3) to **resolve** the interactions Sobol's `S_Tᵢ − Sᵢ` flags — exact, no aliasing. | M6 |
+| [`ofat`](ofat/) | **Built.** One-factor-at-a-time confirmation around a base point. *"Any OA effect you act on costs exactly two more runs to verify"* — targets the aliasing / "16 dB artifact" failure mode. Reports curvature too, which a two-level design would miss. | M6 ✓ |
+| [`grid`](grid/) | **Built.** Small full-factorial (2–3 factors) to **resolve** the interactions Sobol's `S_Tᵢ − Sᵢ` flags — every combination actually run, so the interaction is measured exactly rather than estimated. | M6 ✓ |
 
 Why this stage exists, from `spec/screening-methods.md` §4: on a deterministic
 model an orthogonal array can report whole decibels for a factor whose true
@@ -18,3 +18,21 @@ the true main effect was +0.03%. Hence the rule of thumb this stage encodes:
 spend them.**
 
 Both build on `core/libdoe`. See [../DESIGN.md](../DESIGN.md) M6.
+
+## Using them
+
+```sh
+# A screen says `temp` matters. Confirm it before acting — 3 runs.
+ofat model.space ./run.sh --factor temp --levels 3
+
+# Sobol flagged temp and ph as interacting but not with whom. Resolve it — 9 runs.
+grid model.space ./run.sh --factors temp,ph --levels 3
+```
+
+`grid` judges the interaction **against the main effects**, not against total
+variation. The question you are really asking is *"if I optimise these two
+independently, how wrong will I be?"* — which is the departure from additivity
+measured against the effects you would act on. A share-of-variance threshold
+answers a different question and gets it wrong: for `y = a + b + 0.2ab` the
+interaction is a quarter of each main effect, plainly worth knowing, yet only
+7.7% of total variation.

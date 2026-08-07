@@ -50,6 +50,14 @@ REGRESS_CLI_SRC = $(wildcard analyze/regress/src/cli/*.c)
 REGRESS_CLI_OBJ = $(REGRESS_CLI_SRC:analyze/regress/src/cli/%.c=$(BUILD)/regress/cli/%.o)
 REGRESS_BIN     = $(BIN)/regress
 
+# ofat + grid (M6) — the resolve stage: spend a few runs to confirm an effect
+OFAT_CLI_SRC = $(wildcard resolve/ofat/src/cli/*.c)
+OFAT_CLI_OBJ = $(OFAT_CLI_SRC:resolve/ofat/src/cli/%.c=$(BUILD)/ofat/cli/%.o)
+OFAT_BIN     = $(BIN)/ofat
+GRID_CLI_SRC = $(wildcard resolve/grid/src/cli/*.c)
+GRID_CLI_OBJ = $(GRID_CLI_SRC:resolve/grid/src/cli/%.c=$(BUILD)/grid/cli/%.o)
+GRID_BIN     = $(BIN)/grid
+
 # uq tool (E1) — output distribution summary
 UQ_CLI_SRC = $(wildcard analyze/uq/src/cli/*.c)
 UQ_CLI_OBJ = $(UQ_CLI_SRC:analyze/uq/src/cli/%.c=$(BUILD)/uq/cli/%.o)
@@ -123,9 +131,9 @@ VALIDATION_BIN = $(BUILD)/validate
 DEPFILES = $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 -include $(DEPFILES)
 
-.PHONY: all common morris sobol robust taguchi pareto regress uq install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all validate clean
+.PHONY: all common morris sobol robust taguchi pareto regress uq ofat grid install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all validate clean
 
-all: common morris sobol robust pareto regress uq taguchi
+all: common morris sobol robust pareto regress uq ofat grid taguchi
 
 # ---- common core --------------------------------------------------------
 common: $(COMMON_LIB)
@@ -285,6 +293,20 @@ $(UQ_BIN): $(UQ_CLI_OBJ) $(COMMON_OBJ) | $(BIN)
 $(BUILD)/uq/cli/%.o: analyze/uq/src/cli/%.c | $(BUILD)/uq/cli
 	$(CC) $(CFLAGS) $(COMMON_INC) -c $< -o $@
 
+# ---- ofat + grid --------------------------------------------------------
+ofat: $(OFAT_BIN)
+grid: $(GRID_BIN)
+
+$(OFAT_BIN): $(OFAT_CLI_OBJ) $(COMMON_OBJ) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+$(GRID_BIN): $(GRID_CLI_OBJ) $(COMMON_OBJ) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD)/ofat/cli/%.o: resolve/ofat/src/cli/%.c | $(BUILD)/ofat/cli
+	$(CC) $(CFLAGS) $(COMMON_INC) -c $< -o $@
+$(BUILD)/grid/cli/%.o: resolve/grid/src/cli/%.c | $(BUILD)/grid/cli
+	$(CC) $(CFLAGS) $(COMMON_INC) -c $< -o $@
+
 # ---- validation ---------------------------------------------------------
 # `make validate` reproduces the published screening results the roadmap
 # cites, against closed-form ground truth. Not part of `test`: it is slower
@@ -400,7 +422,7 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 test-all: test
 
 # ---- housekeeping -------------------------------------------------------
-$(BUILD) $(BIN) $(BUILD)/common $(BUILD)/morris/lib $(BUILD)/morris/cli $(BUILD)/sobol/lib $(BUILD)/sobol/cli $(BUILD)/robust/lib $(BUILD)/robust/cli $(BUILD)/pareto/lib $(BUILD)/pareto/cli $(BUILD)/taguchi/lib $(BUILD)/taguchi/cli $(BUILD)/regress/cli $(BUILD)/uq/cli:
+$(BUILD) $(BIN) $(BUILD)/common $(BUILD)/morris/lib $(BUILD)/morris/cli $(BUILD)/sobol/lib $(BUILD)/sobol/cli $(BUILD)/robust/lib $(BUILD)/robust/cli $(BUILD)/pareto/lib $(BUILD)/pareto/cli $(BUILD)/taguchi/lib $(BUILD)/taguchi/cli $(BUILD)/regress/cli $(BUILD)/uq/cli $(BUILD)/ofat/cli $(BUILD)/grid/cli:
 	mkdir -p $@
 
 clean:

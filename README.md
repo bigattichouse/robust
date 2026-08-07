@@ -28,8 +28,8 @@ deterministic simulator to find what matters; Taguchi runs on the bench to optim
 | `pareto`  | multi-objective frontier — filter + accumulating `.front` store |
 | `regress` | SRC/SRRC + R² — the *direction* of each effect |
 | `uq`      | output distribution — percentiles, histogram, skew |
-| `ofat`    | one-factor-at-a-time confirmation runs |
-| `grid`    | small full-factorial interaction grids |
+| `ofat`    | one-factor-at-a-time confirmation — verify an effect before acting |
+| `grid`    | small full-factorial — resolve an interaction exactly |
 | `report`  | unified HTML/SVG dashboard |
 
 All of them share one `.space` factor-definition format and a common C core
