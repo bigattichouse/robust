@@ -176,7 +176,6 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
     strcpy(content_copy, content);
 
     char *line = strtok(content_copy, "\n");
-    int line_num = 1;
     int in_factors_section = 0;  // 0 = not in factors section, 1 = in factors section
 
     while (line != NULL) {
@@ -189,7 +188,6 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
         // Skip empty lines and comments
         if (strlen(trimmed_line) == 0 || trimmed_line[0] == '#') {
             line = strtok(NULL, "\n");
-            line_num++;
             continue;
         }
 
@@ -240,7 +238,6 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
         }
 
         line = strtok(NULL, "\n");
-        line_num++;
     }
 
     free(content_copy);
