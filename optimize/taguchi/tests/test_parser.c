@@ -208,3 +208,55 @@ TEST(parse_survives_blank_lines_and_crlf) {
     ASSERT_EQ(result, 0);
     ASSERT_EQ(def.factor_count, 1);
 }
+
+
+/*
+ * A line inside `factors:` that is not a valid factor is an ERROR, not a
+ * silent drop.
+ *
+ * The old parser only treated an indented line containing ':' as a factor and
+ * ignored everything else without comment. A single mistyped line therefore
+ * removed a factor from the design while the tool still succeeded -- the array
+ * was built and run over the wrong space, with nothing in the output to say
+ * so. Wrong answers that look right are the failure mode this suite exists to
+ * prevent.
+ */
+TEST(parse_rejects_silently_dropped_factor_lines) {
+    ExperimentDef def;
+    char error[TAGUCHI_ERROR_SIZE];
+
+    /* missing colon: the likely typo, and the original silent drop */
+    const char *no_colon =
+        "factors:\n"
+        "  a: 1, 2\n"
+        "  cache_size 64M, 128M\n"   /* line 3 */
+        "  b: 3, 4\n";
+    ASSERT_EQ(parse_experiment_def_from_string(no_colon, &def, error), -1);
+    ASSERT_TRUE(strstr(error, "line 3:") != NULL);
+
+    /* not indented, so it was never going to be read as a factor */
+    const char *unindented =
+        "factors:\n"
+        "  a: 1, 2\n"
+        "b: 3, 4\n";                 /* line 3 */
+    ASSERT_EQ(parse_experiment_def_from_string(unindented, &def, error), -1);
+    ASSERT_TRUE(strstr(error, "line 3:") != NULL);
+
+    /* a mistyped top-level key used to leave array_type empty, so
+     * auto-selection quietly chose a different array than the one asked for */
+    const char *typo_key = "arry: L9\nfactors:\n  a: 1, 2\n";
+    ASSERT_EQ(parse_experiment_def_from_string(typo_key, &def, error), -1);
+    ASSERT_TRUE(strstr(error, "line 1:") != NULL);
+
+    /* and the shape that must keep working: comments, blanks, both keys */
+    const char *good =
+        "# heading\n"
+        "\n"
+        "array: L4\n"
+        "\n"
+        "factors:\n"
+        "  a: 1, 2\n"
+        "  b: 3, 4\n";
+    ASSERT_EQ(parse_experiment_def_from_string(good, &def, error), 0);
+    ASSERT_EQ(def.factor_count, 2u);
+}

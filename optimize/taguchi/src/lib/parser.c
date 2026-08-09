@@ -275,6 +275,41 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
 
                 def->factor_count++;
             }
+            /*
+             * Anything else inside `factors:` used to be dropped in silence,
+             * which is the worst outcome available: a mistyped factor line
+             * removed a factor from the design and the tool still succeeded,
+             * so the array was built and run over the wrong space with nothing
+             * to indicate it. A missing colon is the likely typo, and it is
+             * exactly what the old code could not tell you about.
+             */
+            else if (first_char_original == ' ' || first_char_original == '\t') {
+                set_error(error_buf,
+                          "line %d: factor line needs 'name: value1, value2, ...' "
+                          "(no ':' found in '%s')", line_num, trimmed_line);
+                free(content_copy);
+                return -1;
+            }
+            else {
+                set_error(error_buf,
+                          "line %d: '%s' is not indented, so it is not a factor; "
+                          "factor lines are indented under 'factors:'",
+                          line_num, trimmed_line);
+                free(content_copy);
+                return -1;
+            }
+        }
+        /*
+         * And outside it. An unrecognised key here is how `arry: L9` silently
+         * became "no array specified" and auto-selection quietly picked a
+         * different array than the one asked for.
+         */
+        else {
+            set_error(error_buf,
+                      "line %d: unknown key in '%s' (expected 'factors:' or 'array:')",
+                      line_num, trimmed_line);
+            free(content_copy);
+            return -1;
         }
 
         line = next;

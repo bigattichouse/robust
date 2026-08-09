@@ -60,10 +60,28 @@ Enforced by:
 - `make coverage` — line/branch coverage over the suites (gcovr, or raw gcov
   as a fallback). Baseline at 2026-08-06: **84.2% lines, 95.5% functions** over a
   denominator that now includes every CLI binary (it previously counted only
-  libraries, which flattered it). **85.5% / 98.2% at 2026-08-09.** Use it
+  libraries, which flattered it). **85.6% / 98.2% at 2026-08-09.** Use it
   before claiming something is tested.
 - CI (`.github/workflows/ci.yml`) runs build → test-all → test-asan → fuzz →
-  validate on every push/PR.
+  validate on every push/PR, **and a second job that builds and tests with
+  clang**. With `-Werror`, one compiler's silence is not evidence: GCC 16
+  rejects an increment-only variable that GCC 13 accepts (PR #1), so CI was
+  green while a future toolchain was already broken. clang diagnoses that
+  class today.
+
+### The .tgu parser no longer drops lines in silence (2026-08-09)
+
+Inside `factors:`, only an indented line containing `:` was read as a factor;
+every other line was skipped without comment. One mistyped factor line
+therefore removed a factor from the design **while the tool still succeeded** —
+the orthogonal array was built and executed over the wrong space, and nothing
+in the output indicated it. A mistyped top-level key (`arry:` for `array:`) was
+dropped the same way, leaving auto-selection to choose a different array than
+the one requested.
+
+Both are now errors naming the line and what was expected. This is the same
+rule as the 2026-08-06 entry below: when the answer is undefined, say so — and
+a design missing a factor the user asked for is undefined, not a design.
 
 ### Degenerate input now fails loudly (2026-08-06)
 

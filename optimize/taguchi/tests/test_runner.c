@@ -99,6 +99,7 @@ extern void test_validate_correct_definition(void);
 extern void test_validate_empty_factor_name(void);
 extern void test_parse_error_reports_the_file_line(void);
 extern void test_parse_survives_blank_lines_and_crlf(void);
+extern void test_parse_rejects_silently_dropped_factor_lines(void);
 
 /* Declare test functions from test_auto_select.c */
 extern void test_suggest_optimal_array_basic_2level(void);
@@ -238,6 +239,7 @@ int main(void) {
     RUN_TEST(validate_empty_factor_name);
     RUN_TEST(parse_error_reports_the_file_line);
     RUN_TEST(parse_survives_blank_lines_and_crlf);
+    RUN_TEST(parse_rejects_silently_dropped_factor_lines);
 
     printf("\nAuto-Selection Tests:\n");
     RUN_TEST(suggest_optimal_array_basic_2level);

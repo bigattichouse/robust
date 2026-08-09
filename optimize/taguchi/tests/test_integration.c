@@ -2,7 +2,7 @@
 #include <string.h>
 #include "include/taguchi.h"
 
-int main() {
+int main(void) {
     printf("Testing Taguchi Library Initialization...\n");
     
     // Test array listing functionality

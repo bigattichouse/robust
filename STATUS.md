@@ -26,7 +26,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 **Green across every mode.** Zero build warnings under
 `-Wall -Wextra -Werror -std=c99 -pedantic`; nine test binaries plus five shell
 suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
-`make validate` 8/8. Coverage **85.5% lines / 98.2% functions**.
+`make validate` 8/8. Coverage **85.6% lines / 98.2% functions**.
 
 **No known defects.**
 
@@ -152,6 +152,23 @@ group-partition checks and the resource caps are properties of the file; a line
 number would point at something that is not wrong. Both parsers raise these
 after the loop, below the prefix site, and tests assert the *absence* of a line
 number — that half is the easy thing to break by prefixing everything.
+
+**One compiler is one opinion.** `-Werror` plus a single compiler means a
+future toolchain can already be broken while CI is green — which is how PR #1
+arrived, from GCC 16 rejecting an increment-only variable that GCC 13 accepts.
+CI now builds and tests with clang as well, which flags that same pattern
+today. Adding it immediately turned up ten files with no trailing newline and a
+`main()` with no prototype, all latent `-Werror` failures. Run
+`make all CC=clang-18` before believing a clean build.
+
+**Silently ignoring input is worse than rejecting it.** The `.tgu` parser
+treated only an indented line containing `:` as a factor and dropped every
+other line in `factors:` without comment, so one mistyped line removed a factor
+while the tool still *succeeded* — the array was built and run over the wrong
+space with nothing in the output to say so. A mistyped top-level key
+(`arry: L9`) did the same to `array:`, leaving auto-selection to pick something
+else. Both are errors now. When adding a parser branch, ask what happens to
+input that matches none of them.
 
 **A validation suite must drive the shipped code.** Check B originally tested
 its own reimplementation of group μ\*, which proves nothing about what users

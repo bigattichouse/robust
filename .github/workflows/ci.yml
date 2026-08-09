@@ -41,3 +41,28 @@ jobs:
       # erratum we assert against.
       - name: Validate against published results
         run: make validate
+
+  # A second compiler, for the class of defect one compiler cannot see.
+  #
+  # PR #1 arrived because GCC 16 rejects a variable that is only ever
+  # incremented, and this project builds with -Werror. GCC 13/14 on
+  # ubuntu-latest does not diagnose that, so CI was green while a future
+  # compiler was already broken. clang flags the same pattern today
+  # (-Wunused-but-set-variable), which makes it a usable early warning
+  # without waiting for GCC 16 to reach the runners.
+  #
+  # Adding it found ten files with no trailing newline and a main() with no
+  # prototype -- all latent -Werror failures on a stricter compiler.
+  build-test-clang:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with clang -Werror
+        run: make all CC=clang
+
+      - name: Run the suites built by clang
+        run: make run-tests CC=clang
+
+      - name: Validate against published results
+        run: make validate CC=clang
