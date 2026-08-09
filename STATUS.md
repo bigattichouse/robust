@@ -26,7 +26,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 **Green across every mode.** Zero build warnings under
 `-Wall -Wextra -Werror -std=c99 -pedantic`; nine test binaries plus five shell
 suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
-`make validate` 8/8. Coverage **85.2% lines / 98.2% functions**.
+`make validate` 8/8. Coverage **85.5% lines / 98.2% functions**.
 
 **No known defects.**
 
@@ -130,6 +130,28 @@ is the origin, and row 1 is the centre of the cube in every dimension, because
 — 0.2% of a default N=1024 design. That is a property of the unscrambled
 sequence the paper prescribes, not a defect, and it is now pinned so any change
 in the cost is visible.
+
+**`strtok` cannot support line numbers, and quietly pretends it can.** It
+collapses runs of its delimiter, so blank lines never become tokens and a
+counter driven by it under-reports — the taguchi parser would have called a
+factor on line 7 "line 4". That is why the `line_num` an external PR removed
+had never been wired to anything: it *could not* have been right. Both parsers
+now walk with `strchr(line, '\n')`, which preserves blank lines. If a third
+parser appears, use that scan.
+
+**Locate errors at one site, not at every `snprintf`.** Both parsers attach
+"line N:" by rewriting the finished message once — in `space.c` at the single
+post-loop exit, in the taguchi parser where `parse_factor_line` returns.
+Threading a line number through every helper is how one of them ends up
+reporting the wrong line. Increment the counter at the *top* of the loop body,
+before anything can fail, or the `continue` paths each need their own and one
+eventually gets missed.
+
+**Whole-file errors must not get a line number.** "No factors defined", the
+group-partition checks and the resource caps are properties of the file; a line
+number would point at something that is not wrong. Both parsers raise these
+after the loop, below the prefix site, and tests assert the *absence* of a line
+number — that half is the easy thing to break by prefixing everything.
 
 **A validation suite must drive the shipped code.** Check B originally tested
 its own reimplementation of group μ\*, which proves nothing about what users

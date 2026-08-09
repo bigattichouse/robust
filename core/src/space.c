@@ -24,6 +24,25 @@
 #include <string.h>
 #include <math.h>
 
+/*
+ * Prefix an already-formatted parse error with the line it came from, matching
+ * the "line N: ..." shape doe_csv_read_metric already uses.
+ *
+ * Done by rewriting the finished message rather than by passing line_num into
+ * every snprintf, so there is exactly one place that can get it wrong.
+ *
+ * The copy back is bounded by the formatted length, which snprintf has already
+ * clamped below DOE_ERR_SIZE -- this file must not reacquire the `off +=
+ * snprintf(...)` habit that produced three separate overflows in this repo.
+ */
+static void err_prefix_line(char *err, size_t line_num) {
+    if (!err) return;
+    char tmp[DOE_ERR_SIZE];
+    int n = snprintf(tmp, sizeof tmp, "line %zu: %s", line_num, err);
+    if (n < 0) return;
+    memcpy(err, tmp, strlen(tmp) + 1);
+}
+
 static char *trim(char *s) {
     while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
     if (*s == '\0') return s;
@@ -273,10 +292,19 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
     /* Which section trailing `key: value` lines belong to. A group member line
      * is syntactically identical to a factor line, so the header decides. */
     int in_groups = 0;
+    /*
+     * Incremented at the TOP of the body, before anything can fail, so that
+     * inside the loop `line_num` always names the line being parsed -- including
+     * on the `continue` paths, which would otherwise each need their own
+     * increment and would eventually miss one. Every in-loop failure does
+     * `rc = -1; break;`, so after the loop it still names the offending line.
+     */
+    size_t line_num = 0;
     while (line && *line) {
         char *nl = strchr(line, '\n');
         if (nl) *nl = '\0';
         char *next = nl ? nl + 1 : NULL;
+        line_num++;
 
         char *hash = strchr(line, '#');     /* strip trailing comment */
         if (hash) *hash = '\0';
@@ -286,7 +314,7 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
 
         char *colon = strchr(t, ':');
         if (!colon) {
-            snprintf(err, DOE_ERR_SIZE, "line without ':' -> '%s'", t);
+            snprintf(err, DOE_ERR_SIZE, "expected 'key: value', got '%s'", t);
             rc = -1; break;
         }
         *colon = '\0';
@@ -343,7 +371,17 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
     }
 
     free(buf);
-    if (rc != 0) return rc;
+    /*
+     * One prefix site for every per-line diagnosis, rather than a line number
+     * threaded through parse_factor, parse_group and each snprintf -- which is
+     * how one of them ends up quietly reporting the wrong line.
+     *
+     * Errors raised BELOW this point deliberately get no line number: "no
+     * factors defined", the group partition checks and the resource caps are
+     * properties of the whole file, and pinning them to a line would point at
+     * something that is not wrong.
+     */
+    if (rc != 0) { err_prefix_line(err, line_num); return rc; }
 
     if (space->factor_count == 0) {
         snprintf(err, DOE_ERR_SIZE, "no factors defined");

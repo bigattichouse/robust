@@ -107,6 +107,93 @@ static int test_space_errors(void) {
     return 1;
 }
 
+/*
+ * Per-line errors name their line, and the number is the FILE's, not the
+ * count of lines the parser bothered to look at. Blank lines and comments are
+ * the whole difficulty: a scanner that skips them (strtok does) reports a
+ * number that is confidently wrong, which is worse than reporting none.
+ */
+static int test_space_errors_report_the_line(void) {
+    doe_space_t sp;
+    char err[DOE_ERR_SIZE];
+
+    /* the bad factor is on line 6, after two blanks and a comment */
+    CHECK(doe_space_parse("factors:\n"          /* 1 */
+                          "  a: 0, 1\n"         /* 2 */
+                          "\n"                  /* 3 */
+                          "# a comment\n"       /* 4 */
+                          "\n"                  /* 5 */
+                          "  b: 5.0, 1.0\n",    /* 6 <- lo >= hi */
+                          &sp, err) != 0);
+    CHECK(strstr(err, "line 6:") != NULL);
+
+    /* line 1, and the message should not stutter "line 1: line without..." */
+    CHECK(doe_space_parse("not a key value\n", &sp, err) != 0);
+    CHECK(strstr(err, "line 1:") != NULL);
+    CHECK(strstr(err, "line without") == NULL);
+
+    /* a bad value on the very last line, with no trailing newline */
+    CHECK(doe_space_parse("factors:\n  a: 0,1\n  b: 1,0", &sp, err) != 0);
+    CHECK(strstr(err, "line 3:") != NULL);
+
+    /* errors from the group parser get located too */
+    CHECK(doe_space_parse("factors:\n  a: 0,1\n  b: 0,1\n"
+                          "groups:\n"
+                          "  g1: a, nosuchfactor\n", &sp, err) != 0);
+    CHECK(strstr(err, "line 5:") != NULL);
+
+    /*
+     * Whole-file problems deliberately carry NO line number: they are not
+     * about a line, and pointing at one would point at something that is not
+     * wrong. This is the half of the feature that is easy to get wrong by
+     * prefixing everything.
+     */
+    CHECK(doe_space_parse("seed: 1\n", &sp, err) != 0);          /* no factors   */
+    CHECK(strstr(err, "line ") == NULL);
+    CHECK(doe_space_parse("factors:\n  a: 0,1\nsamples: 99999999999\n", &sp, err) != 0);
+    CHECK(strstr(err, "line ") == NULL);                          /* resource cap */
+    CHECK(doe_space_parse("factors:\n  a: 0,1\n  b: 0,1\n"
+                          "groups:\n  g1: a\n  g2: a\n", &sp, err) != 0);
+    CHECK(strstr(err, "line ") == NULL);                          /* partition    */
+    return 1;
+}
+
+/*
+ * The line prefix rewrites a finished error message in place. That is a new
+ * string-building site in a codebase whose most repeated defect is exactly
+ * that, so it is bracketed by sentinels and checked in EVERY build mode
+ * rather than left to `make test-asan`.
+ */
+static int test_space_error_prefix_never_overflows(void) {
+    /* err sits in the middle of a larger block; the guard bytes either side
+     * must be untouched no matter how long the message wanted to be. */
+    enum { GUARD = 64 };
+    char block[GUARD + DOE_ERR_SIZE + GUARD];
+    memset(block, 0xAB, sizeof block);
+    char *err = block + GUARD;
+
+    /* A factor name far longer than the buffer, on a high line number, so the
+     * message is truncated AND the prefix still has to fit. */
+    char spec[4096];
+    size_t off = 0;
+    off += (size_t)snprintf(spec + off, sizeof spec - off, "factors:\n");
+    for (int i = 0; i < 20; i++)
+        off += (size_t)snprintf(spec + off, sizeof spec - off, "  f%d: 0, 1\n", i);
+    off += (size_t)snprintf(spec + off, sizeof spec - off, "  ");
+    for (int i = 0; i < 900 && off < sizeof spec - 16; i++) spec[off++] = 'x';
+    snprintf(spec + off, sizeof spec - off, ": 5.0, 1.0\n");
+
+    doe_space_t sp;
+    CHECK(doe_space_parse(spec, &sp, err) != 0);
+    CHECK(strlen(err) < DOE_ERR_SIZE);
+
+    for (size_t i = 0; i < GUARD; i++) {
+        CHECK((unsigned char)block[i] == 0xAB);                       /* before */
+        CHECK((unsigned char)block[GUARD + DOE_ERR_SIZE + i] == 0xAB); /* after */
+    }
+    return 1;
+}
+
 /* ---- stats ------------------------------------------------------------- */
 
 static int test_stats(void) {
@@ -461,6 +548,8 @@ int main(void) {
     RUN_TEST(test_space_linear_and_log);
     RUN_TEST(test_space_categorical);
     RUN_TEST(test_space_errors);
+    RUN_TEST(test_space_errors_report_the_line);
+    RUN_TEST(test_space_error_prefix_never_overflows);
     RUN_TEST(test_stats);
     RUN_TEST(test_json_escape);
     return TEST_SUMMARY();

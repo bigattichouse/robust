@@ -41,7 +41,14 @@ The `.tgu` parser's equivalent discipline lives in taguchi itself
 ## Invariant and verification
 
 Every offending input returns `-1` with a bounded, NUL-terminated `err` and no
-unaccounted allocation. Enforced by:
+unaccounted allocation. **Parse errors also carry `line N:`**, added by
+rewriting the finished message in place — a string-building site of exactly the
+kind that produced this repo's three `off += snprintf(...)` overflows, so it is
+bounded by the already-clamped formatted length and pinned by
+`test_space_error_prefix_never_overflows`, which brackets `err` in sentinel
+regions and therefore fails in *every* build mode rather than only under ASan.
+
+Enforced by:
 
 - `core/tests/test_security.c` + per-tool adversarial tests, wired into
   `make test` (valgrind) and `make test-asan` (ASan/UBSan);
@@ -53,7 +60,8 @@ unaccounted allocation. Enforced by:
 - `make coverage` — line/branch coverage over the suites (gcovr, or raw gcov
   as a fallback). Baseline at 2026-08-06: **84.2% lines, 95.5% functions** over a
   denominator that now includes every CLI binary (it previously counted only
-  libraries, which flattered it). Use it before claiming something is tested.
+  libraries, which flattered it). **85.5% / 98.2% at 2026-08-09.** Use it
+  before claiming something is tested.
 - CI (`.github/workflows/ci.yml`) runs build → test-all → test-asan → fuzz →
   validate on every push/PR.
 

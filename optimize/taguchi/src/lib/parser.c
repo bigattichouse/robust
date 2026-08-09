@@ -1,10 +1,29 @@
 #include "parser.h"
 #include "utils.h"
+#include "include/taguchi.h"   /* TAGUCHI_ERROR_SIZE, as utils.c does */
 #include "arrays.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
+/*
+ * Prefix an already-formatted parse error with the line it came from.
+ *
+ * Used where the message is built by a helper that never learns which line it
+ * was handed (parse_factor_line). Rewriting the finished string keeps the line
+ * number in one place instead of threading it through every helper, which is
+ * how one of them ends up reporting the wrong line.
+ *
+ * The copy back is bounded by the formatted length, which snprintf has already
+ * clamped below TAGUCHI_ERROR_SIZE.
+ */
+static void err_prefix_line(char *error_buf, int line_num) {
+    if (!error_buf) return;
+    char tmp[TAGUCHI_ERROR_SIZE];
+    if (snprintf(tmp, sizeof tmp, "line %d: %s", line_num, error_buf) < 0) return;
+    memcpy(error_buf, tmp, strlen(tmp) + 1);
+}
 
 /* Helper function to trim whitespace */
 char *trim_whitespace(char *str) {
@@ -175,10 +194,27 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
     char *content_copy = xmalloc(strlen(content) + 1);
     strcpy(content_copy, content);
 
-    char *line = strtok(content_copy, "\n");
+    /*
+     * Walked with strchr rather than strtok, so that line numbers in errors are
+     * the file's own.
+     *
+     * strtok collapses runs of its delimiter, so blank lines never become
+     * tokens and a counter driven by it silently under-reports: given
+     * "array: L4\n\n\nfactors:\n  a: 1, 2\n" it calls the factor line 3 when it
+     * is line 5. A line number that is wrong is worse than none, which is why
+     * the counter that used to sit here reported nothing -- it could not have
+     * been right. This is the same scan core/src/space.c uses.
+     */
+    char *line = content_copy;
+    int line_num = 0;
     int in_factors_section = 0;  // 0 = not in factors section, 1 = in factors section
 
-    while (line != NULL) {
+    while (line != NULL && *line != '\0') {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+        char *next = nl ? nl + 1 : NULL;
+        line_num++;                 /* incremented before anything can fail */
+
         // Check original line for leading whitespace before trimming
         char first_char_original = line[0];
 
@@ -187,7 +223,7 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
 
         // Skip empty lines and comments
         if (strlen(trimmed_line) == 0 || trimmed_line[0] == '#') {
-            line = strtok(NULL, "\n");
+            line = next;
             continue;
         }
 
@@ -206,7 +242,7 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
             }
 
             if (strlen(array_start) >= sizeof(def->array_type)) {
-                set_error(error_buf, "Array type too long");
+                set_error(error_buf, "line %d: array type too long", line_num);
                 free(content_copy);
                 return -1;
             }
@@ -222,13 +258,17 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
             if ((first_char_original == ' ' || first_char_original == '\t') && strchr(trimmed_line, ':')) {
                 // This is an indented factor line like "  cache_size: 64M, 128M, 256M"
                 if (def->factor_count >= MAX_FACTORS) {
-                    set_error(error_buf, "Too many factors (max %d)", MAX_FACTORS);
+                    set_error(error_buf, "line %d: too many factors (max %d)",
+                              line_num, MAX_FACTORS);
                     free(content_copy);
                     return -1;
                 }
 
                 Factor *current_factor = &def->factors[def->factor_count];
                 if (parse_factor_line(trimmed_line, current_factor, error_buf) != 0) {  // Use trimmed line
+                    /* parse_factor_line has no idea which line it was handed, so
+                     * the location is attached here -- the one place that knows. */
+                    err_prefix_line(error_buf, line_num);
                     free(content_copy);
                     return -1;
                 }
@@ -237,7 +277,7 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
             }
         }
 
-        line = strtok(NULL, "\n");
+        line = next;
     }
 
     free(content_copy);
