@@ -27,6 +27,12 @@
  *   C. Ranking fidelity vs trajectory budget -- where mu* can and cannot be
  *      trusted, and why that is a property of the index gap, not the budget.
  *   D. An erratum in [C07] Table 1, confirmed by two independent routes.
+ *   E. The `sobol` tool's estimators against the g-function closed form.
+ *   F. Second-order indices against the g-function's exact decomposition.
+ *   G. Quasi-random vs LHS sampling on that same estimator -- the evidence
+ *      for `sampling: sobol` being the default.
+ *   H. Property A of the vendored Joe-Kuo direction numbers, and where it
+ *      stops -- the measurement the `sobol` factor cap rests on.
  */
 
 #include "gfunction.h"
@@ -774,6 +780,320 @@ static void claim_f(void) {
     printf("\n");
 }
 
+/* ===================================================================== G
+ *
+ * Quasi-random vs Latin Hypercube sampling, on the same estimator.
+ *
+ * Source: Saltelli et al. (2010) Sec. 7, conclusion 3 -- quasi-random
+ *   sampling is one of the four best practices the paper concludes with, and
+ *   Sec. 5.1 p.263 gives the construction (A and B as the left and right
+ *   halves of one 2k-dimensional sequence).
+ *
+ * The paper asserts the advantage; it does not quantify it for our estimator
+ * on this benchmark. That is what this check does, and it is the evidence for
+ * `sampling: sobol` being the default. Everything except the sampler is held
+ * fixed: same g-function, same seed, same estimators, same N.
+ *
+ * Both arms are driven through sobol_design_build/sobol_analyze -- the shipped
+ * code, not a reimplementation.
+ */
+
+static double worst_index_error(const doe_space_t *sp, const double *a, size_t k) {
+    char err[DOE_ERR_SIZE];
+    sobol_design_t d;
+    if (sobol_design_build(sp, &d, err) != 0) { printf("  design: %s\n", err); failures++; return -1.0; }
+
+    double *y = malloc(d.npoints * sizeof *y);
+    if (!y) { sobol_design_free(&d); return -1.0; }
+    double u[MAXK];
+    for (size_t i = 0; i < d.npoints; i++) { sobol_point(&d, i, u); y[i] = gf_eval(u, a, k); }
+
+    sobol_index_t *idx = NULL; size_t n = 0;
+    if (sobol_analyze(sp, y, d.npoints, &idx, &n, err) != 0) {
+        printf("  analyze: %s\n", err); failures++; free(y); sobol_design_free(&d); return -1.0;
+    }
+
+    double V_i[MAXK], V_tot;
+    gf_partial_var(a, k, V_i, &V_tot);
+    double worst = 0.0;
+    for (size_t i = 0; i < k; i++) {
+        double es = fabs(idx[i].s1 - gf_first_index(V_i, k, V_tot, i));
+        double et = fabs(idx[i].st - gf_total_index(V_i, k, V_tot, i));
+        if (es > worst) worst = es;
+        if (et > worst) worst = et;
+    }
+    free(y); free(idx); sobol_design_free(&d);
+    return worst;
+}
+
+static void claim_g(void) {
+    static const double a[6] = {0.0, 0.5, 3.0, 9.0, 99.0, 99.0};
+    const size_t k = 6;
+    static const size_t Ns[] = {256, 1024, 4096, 16384, 65536};
+    const size_t nN = sizeof Ns / sizeof *Ns;
+
+    printf("G. quasi-random vs LHS sampling   [Saltelli 2010] Sec. 7 concl. 3\n");
+    printf("   Same g-function (k=6), same seed, same estimators. Only the\n");
+    printf("   sampler changes. Error = worst |estimate - closed form| over\n");
+    printf("   all S_i and S_T.\n\n");
+
+    printf("   %10s %14s %14s %10s\n", "N", "LHS", "Sobol QR", "ratio");
+    double qr_last = 0.0, lhs_last = 0.0;
+    int qr_wins = 0;
+    for (size_t t = 0; t < nN; t++) {
+        char spec[2048];
+        int off = snprintf(spec, sizeof spec, "factors:\n");
+        for (size_t i = 0; i < k; i++)
+            off += snprintf(spec + off, sizeof spec - (size_t)off, "  x%zu: 0.0, 1.0\n", i + 1);
+        int base = off;
+
+        doe_space_t lhs_sp, qr_sp; char err[DOE_ERR_SIZE];
+        snprintf(spec + base, sizeof spec - (size_t)base,
+                 "seed: 2026\nsamples: %zu\nsampling: lhs\n", Ns[t]);
+        if (doe_space_parse(spec, &lhs_sp, err) != 0) { printf("  parse: %s\n", err); failures++; return; }
+        snprintf(spec + base, sizeof spec - (size_t)base,
+                 "seed: 2026\nsamples: %zu\nsampling: sobol\n", Ns[t]);
+        if (doe_space_parse(spec, &qr_sp, err) != 0) { printf("  parse: %s\n", err); failures++; return; }
+
+        double e_lhs = worst_index_error(&lhs_sp, a, k);
+        double e_qr  = worst_index_error(&qr_sp,  a, k);
+        if (e_lhs < 0 || e_qr < 0) return;
+        if (e_qr < e_lhs) qr_wins++;
+        printf("   %10zu %14.5f %14.5f %9.1fx\n", Ns[t], e_lhs, e_qr,
+               e_qr > 0 ? e_lhs / e_qr : 0.0);
+        qr_last = e_qr; lhs_last = e_lhs;
+    }
+    printf("\n");
+
+    char buf[200];
+    snprintf(buf, sizeof buf, "quasi-random is more accurate at %d of %zu sample sizes",
+             qr_wins, nN);
+    report("quasi-random sampling beats LHS on the same estimator",
+           qr_wins == (int)nN, buf);
+
+    /*
+     * The paper's own framing is about convergence RATE, not a single point:
+     * QR error should fall roughly like 1/N against LHS's 1/sqrt(N), so the
+     * gap must widen with N rather than stay constant.
+     */
+    snprintf(buf, sizeof buf, "at N=%zu the gap is %.0fx (LHS %.5f vs QR %.5f)",
+             Ns[nN - 1], qr_last > 0 ? lhs_last / qr_last : 0.0, lhs_last, qr_last);
+    report("the advantage grows with N, as a rate difference must", qr_last > 0 &&
+           lhs_last / qr_last > 10.0, buf);
+
+    /*
+     * And the consequence practitioners actually trip over. Sec. 5.1
+     * consideration 1 ties the sequence's uniformity to aligned blocks of 2^m
+     * points. So with quasi-random sampling a `samples:` that is not a power
+     * of two can buy MORE runs and LESS accuracy than the power of two below
+     * it -- which is not true of LHS, where more rows always means more
+     * information. This is what the `sobol` CLI's note is based on.
+     */
+    printf("\n   Non-power-of-two N, quasi-random only:\n\n");
+    printf("   %10s %12s   %s\n", "N", "error", "vs the power of two below it");
+    static const size_t pairs[][2] = {{16384, 20000}, {32768, 40000}};
+    int inversions = 0;
+    for (size_t t = 0; t < 2; t++) {
+        double e_pow = -1.0, e_odd = -1.0;
+        for (int which = 0; which < 2; which++) {
+            size_t N = pairs[t][which];
+            char spec[2048];
+            int off = snprintf(spec, sizeof spec, "factors:\n");
+            for (size_t i = 0; i < k; i++)
+                off += snprintf(spec + off, sizeof spec - (size_t)off, "  x%zu: 0.0, 1.0\n", i + 1);
+            snprintf(spec + off, sizeof spec - (size_t)off,
+                     "seed: 2026\nsamples: %zu\nsampling: sobol\n", N);
+            doe_space_t sp; char e[DOE_ERR_SIZE];
+            if (doe_space_parse(spec, &sp, e) != 0) { printf("  parse: %s\n", e); failures++; return; }
+            double err = worst_index_error(&sp, a, k);
+            if (err < 0) return;
+            if (which == 0) { e_pow = err; printf("   %10zu %12.6f   (power of two)\n", N, err); }
+            else {
+                e_odd = err;
+                printf("   %10zu %12.6f   %+.0f%% runs, %.1fx the error\n", N, err,
+                       100.0 * ((double)N / (double)pairs[t][0] - 1.0),
+                       e_pow > 0 ? err / e_pow : 0.0);
+            }
+        }
+        if (e_odd > e_pow) inversions++;
+    }
+    printf("\n");
+    snprintf(buf, sizeof buf,
+             "%d of 2 tested sizes cost more and delivered less than the power of two below",
+             inversions);
+    report("a non-power-of-two N can be both dearer and worse", inversions == 2, buf);
+    printf("\n");
+}
+
+/* ===================================================================== H
+ *
+ * Sobol' Property A for the vendored Joe-Kuo direction numbers, and where it
+ * stops holding -- the measurement the `sampling: sobol` factor cap rests on.
+ *
+ * Source claim: the Joe-Kuo web page states, of new-joe-kuo-6.21201, that
+ *   "Property A is satisfied up to dimension 1111."
+ *   https://web.maths.unsw.edu.au/~fkuo/sobol/
+ * That is a secondary-source claim about a file we ship a slice of, and the
+ * house rule is to reproduce such claims rather than cite them. `sobol` needs
+ * 2 dimensions per factor, so this boundary is what sets DOE_SOBOL_MAX_FACTORS.
+ *
+ * Property A: every aligned block of 2^s consecutive points puts exactly one
+ * point in each of the 2^s dyadic cells of side 1/2. From the Joe-Kuo notes
+ * eq. (3), x_{i,j} = XOR_k i_k v_{k,j}, so the leading bit of x_{i,j} is a
+ * GF(2)-linear function of (i_1..i_s) with matrix M[j][k] = leading bit of
+ * v_{k,j}. Property A therefore holds exactly when M is nonsingular over
+ * GF(2) -- an s x s binary rank, not a 2^s-point simulation.
+ *
+ * V is carried in a 64-bit fixed-point word. Every term of the V recurrence
+ * shifts RIGHT, so bits truncated off the bottom can never climb back to the
+ * top: the leading bit is exact at any k, including k far beyond 64.
+ */
+
+#include "../core/src/sobol_dirnum.h"
+
+#define PROP_A_MAX 1200
+#define PROP_A_W   ((PROP_A_MAX + 63) / 64)
+
+static uint64_t (*prop_a_rows)[PROP_A_W];
+
+/* Leading bits of v_{1..PROP_A_MAX} for one dimension, from its polynomial. */
+static void prop_a_row(size_t j, unsigned s, unsigned a, const uint16_t *m) {
+    static uint64_t V[PROP_A_MAX + 1];
+    for (unsigned i = 1; i <= s; i++) V[i] = (uint64_t)m[i - 1] << (64 - i);
+    for (unsigned i = s + 1; i <= PROP_A_MAX; i++) {
+        uint64_t v = V[i - s] ^ (V[i - s] >> s);
+        for (unsigned q = 1; q <= s - 1; q++)
+            if ((a >> (s - 1 - q)) & 1u) v ^= V[i - q];
+        V[i] = v;
+    }
+    for (unsigned i = 1; i <= PROP_A_MAX; i++)
+        if (V[i] >> 63) prop_a_rows[j][(i - 1) / 64] |= 1ULL << ((i - 1) % 64);
+}
+
+static int prop_a_alloc(void) {
+    prop_a_rows = calloc(PROP_A_MAX, sizeof *prop_a_rows);
+    if (!prop_a_rows) return 0;
+    /* dimension 1 is not tabulated: every m_i = 1, so only v_1 has a leading bit */
+    prop_a_rows[0][0] = 1ULL;
+    return 1;
+}
+
+/* The dimensions we actually ship. Returns the highest dimension available. */
+static int prop_a_from_table(void) {
+    if (!prop_a_alloc()) return 0;
+    for (size_t j = 1; j < DOE_SOBOL_TABLE_DIM; j++)
+        prop_a_row(j, doe_sobol_s[j - 1], doe_sobol_a[j - 1],
+                   &doe_sobol_m[doe_sobol_m_off[j - 1]]);
+    return DOE_SOBOL_TABLE_DIM;
+}
+
+/*
+ * The full published file, when it is present. It is gitignored (1.8 MB of
+ * data we only ship a slice of), so this is a SKIP when absent, never a pass
+ * -- run sources/fetch.sh to make it available.
+ */
+static int prop_a_from_file(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    char line[4096];
+    if (!fgets(line, sizeof line, f)) { fclose(f); return 0; }   /* header */
+    if (!prop_a_alloc()) { fclose(f); return 0; }
+    for (size_t j = 1; j < PROP_A_MAX; j++) {
+        unsigned d, s, a;
+        uint16_t m[64];
+        if (fscanf(f, "%u %u %u", &d, &s, &a) != 3) { fclose(f); return (int)j; }
+        if (s > sizeof m / sizeof *m) { fclose(f); return (int)j; }
+        for (unsigned i = 0; i < s; i++) {
+            unsigned v;
+            if (fscanf(f, "%u", &v) != 1) { fclose(f); return (int)j; }
+            m[i] = (uint16_t)v;
+        }
+        prop_a_row(j, s, a, m);
+    }
+    fclose(f);
+    return PROP_A_MAX;
+}
+
+/* rank over GF(2) of the leading s x s submatrix */
+static int prop_a_rank(int s) {
+    int w = (s + 63) / 64;
+    uint64_t (*M)[PROP_A_W] = calloc((size_t)s, sizeof *M);
+    if (!M) return -1;
+    for (int j = 0; j < s; j++) {
+        memcpy(M[j], prop_a_rows[j], (size_t)w * sizeof(uint64_t));
+        for (int c = s; c < w * 64; c++) M[j][c / 64] &= ~(1ULL << (c % 64));
+    }
+    int rank = 0;
+    for (int c = 0; c < s; c++) {
+        int p = -1;
+        for (int r = rank; r < s; r++) if ((M[r][c / 64] >> (c % 64)) & 1ULL) { p = r; break; }
+        if (p < 0) continue;
+        if (p != rank) {
+            uint64_t t[PROP_A_W];
+            memcpy(t, M[p], (size_t)w * 8); memcpy(M[p], M[rank], (size_t)w * 8);
+            memcpy(M[rank], t, (size_t)w * 8);
+        }
+        for (int r = rank + 1; r < s; r++)
+            if ((M[r][c / 64] >> (c % 64)) & 1ULL)
+                for (int q = 0; q < w; q++) M[r][q] ^= M[rank][q];
+        rank++;
+    }
+    free(M);
+    return rank;
+}
+
+static void claim_h(void) {
+    printf("H. Property A of the vendored direction numbers   [Joe & Kuo 2008]\n");
+    printf("   Claim on the authors' page: \"Property A is satisfied up to\n");
+    printf("   dimension 1111\" for new-joe-kuo-6.21201. Tested as a GF(2) rank.\n\n");
+
+    /* Part 1 — the table this repo actually ships. */
+    if (!prop_a_from_table()) { printf("  out of memory\n"); failures++; return; }
+
+    static const int probe[] = {1, 2, 10, 128, 512, 1024};
+    printf("   %10s %10s   %s\n", "dimensions", "GF(2) rank", "Property A");
+    int ok_through_table = 1;
+    for (size_t i = 0; i < sizeof probe / sizeof *probe; i++) {
+        int s = probe[i], r = prop_a_rank(s);
+        if (r < 0) { printf("  out of memory\n"); failures++; free(prop_a_rows); return; }
+        printf("   %10d %10d   %s%s\n", s, r, r == s ? "holds" : "FAILS",
+               s == DOE_SOBOL_MAX_DIM ? "   <- our table ends here" : "");
+        if (r != s) ok_through_table = 0;
+    }
+    free(prop_a_rows);
+    prop_a_rows = NULL;
+
+    char buf[200];
+    snprintf(buf, sizeof buf,
+             "so `sobol` can take %d factors at 2 dimensions each",
+             DOE_SOBOL_MAX_FACTORS);
+    report("Property A holds across all 1024 vendored dimensions", ok_through_table, buf);
+
+    /*
+     * Part 2 — the published boundary itself. It lies past dimension 1024, so
+     * it cannot be checked from the slice we ship; it needs the full file.
+     */
+    const char *full = "sources/pdf/joe-kuo/new-joe-kuo-6.21201";
+    int have = prop_a_from_file(full);
+    if (have < 1112) {
+        if (prop_a_rows) { free(prop_a_rows); prop_a_rows = NULL; }
+        printf("\n   SKIPPED (not a pass): the 1111/1112 boundary needs the full\n");
+        printf("   published file, which is gitignored. Run sources/fetch.sh, then\n");
+        printf("   re-run from the repo root.\n");
+        return;
+    }
+    int r1110 = prop_a_rank(1110), r1111 = prop_a_rank(1111), r1112 = prop_a_rank(1112);
+    printf("\n   full file: rank(1110)=%d rank(1111)=%d rank(1112)=%d\n\n",
+           r1110, r1111, r1112);
+    snprintf(buf, sizeof buf,
+             "holds at 1111, fails at 1112 — the authors' figure is exact");
+    report("the published boundary reproduces",
+           r1110 == 1110 && r1111 == 1111 && r1112 != 1112, buf);
+    free(prop_a_rows);
+    prop_a_rows = NULL;
+    printf("\n");
+}
+
 int main(void) {
     printf("=======================================================================\n");
     printf(" validation — published screening results vs closed-form ground truth\n");
@@ -785,6 +1105,8 @@ int main(void) {
     claim_d();
     claim_e();
     claim_f();
+    claim_g();
+    claim_h();
     printf("=======================================================================\n");
     printf(" %s (%d failure%s)\n", failures ? "FAILURES" : "all checks passed",
            failures, failures == 1 ? "" : "s");

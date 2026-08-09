@@ -80,7 +80,19 @@ grid_levels:  4           # p  (even; Δ = p / (2(p-1)))
 # Sobol keys
 samples:      1024        # N  (power of 2, 256–2048)
 second_order: false
+sampling:     sobol       # sobol (default, Joe-Kuo QR) | lhs
 ```
+
+- **`sampling:`** picks how the Saltelli A/B matrices are drawn. `sobol` is the
+  default: a Joe-Kuo low-discrepancy sequence, which Saltelli et al. (2010) §7
+  names best practice and which `make validate` check G measures at 3× the
+  accuracy of LHS at N=256 rising to **66× at N=65536**. It is deterministic,
+  so `seed:` affects only the bootstrap CIs, not the design. `lhs` restores the
+  pre-M5 behaviour. Two consequences worth knowing before choosing `samples:`:
+  N should be a **power of two** (the sequence's uniformity is a property of
+  aligned 2^m blocks — N=20000 measured 4.5× the error of N=16384 while costing
+  22% more), and `sobol` caps at **512 factors**, erroring rather than quietly
+  switching sampler.
 
 - **Scaling** (`common/space`): map u∈[0,1] → real value.
   - linear: `lo + u·(hi−lo)`
@@ -152,7 +164,8 @@ hidden interactions?"** Cost: `N·(k+2)` runs (`N·(2k+2)` with second order).
 
 ### 5.1 Saltelli sampling + estimators
 
-Draw two independent N×k matrices **A**, **B**; build **A_B⁽ⁱ⁾** (A with column
+Draw N×k matrices **A**, **B** — the left and right halves of one
+2k-dimensional quasi-random sequence (§5.2); build **A_B⁽ⁱ⁾** (A with column
 i taken from B). Evaluate `yA=f(A)`, `yB=f(B)`, `yABᵢ=f(A_B⁽ⁱ⁾)`. With
 `V = Var(yA ∪ yB)`:
 
@@ -164,12 +177,29 @@ Diagnostics emitted: `S_Tᵢ ≈ 0` → freeze the factor; `S_Tᵢ − Sᵢ` lar
 through interactions (find the partner with a 2-factor grid); `Σ Sᵢ ≈ 1` →
 additive (the OA / Taguchi ranking was trustworthy); `Σ Sᵢ ≪ 1` → it never was.
 
-### 5.2 Sampler scope
+### 5.2 Sampler scope — **done (2026-08-07)**
 
-True Sobol indices want a **low-discrepancy sequence** (Joe & Kuo 2008 direction
-numbers — public-domain data, vendor a subset). That is the harder piece. Plan:
-ship **LHS first** (needs only the PRNG; correct; ~10× slower convergence per the
-field guide), then drop in the Sobol sequence behind the same interface.
+The plan was to ship LHS first and drop the low-discrepancy sequence in behind
+the same interface. That is what happened. Both are now selectable with
+`sampling:`, and the default is the Joe-Kuo sequence.
+
+Three things the plan got wrong or left open, recorded because they are the
+parts that cost time:
+
+- **A and B are not two draws.** Saltelli §5.1 p.263 requires them to be the
+  left and right halves of ONE 2k-dimensional sequence. The "same interface"
+  the plan assumed — call the sampler twice — is *correct for LHS and wrong for
+  a QR sequence*, which is deterministic: a second draw reproduces the first
+  exactly. `doe_sample_sobol_dims()` exists to make the halves expressible
+  without materialising an N×2k matrix.
+- **"~10× slower convergence" was a field-guide figure, and it is
+  conservative.** Measured on our own estimator (check G): 3× at N=256, 11× at
+  4096, **66× at 65536**. The gap grows because it is a rate difference.
+- **"Vendor a subset" needed a principled size.** 1024 dimensions → 512
+  factors, because that is the region where Joe & Kuo's D(6) set satisfies
+  Property A; check H reproduces the 1111/1112 boundary rather than citing it.
+  The data is BSD-licensed and ships in-repo with its notice; the *papers*
+  remain gitignored, which is why `sources/README.md` §4 summarises them.
 
 **CLI:** `sobol sample|generate|run|analyze|validate <file.space>`.
 
@@ -296,7 +326,7 @@ trap for M5's quasi-random sampling (`A` and `B` must be halves of one
 | **M2** | `morris` (sample/generate/run/analyze); validated on linear + interaction functions. | ✓ |
 | **M3** | `sobol` Saltelli + Sᵢ/S_Tᵢ with bootstrap CIs; validated against Ishigami. | ✓ |
 | **M4** | `robust funnel`/`screen` (Morris→Sobol, in-process) + self-contained HTML/JSON report + `.tgu` hand-off; orchestrated-process tests. | ✓ |
-| **M5** | Second-order indices ✓ **built** (`second_order: true`, validated against the g-function's exact decomposition in `make validate` check F). Joe-Kuo low-discrepancy sequence **still to do** — read the A/B halving warning in `attribute/sobol/src/lib/sobol.c` before starting it. | ~ |
+| **M5** | ✓ **complete.** Second-order indices (`second_order: true`, validated against the g-function's exact decomposition in check F) and the Joe-Kuo low-discrepancy sequence (`sampling: sobol`, now the default; bit-for-bit identical to the authors' reference generator, checks G and H). | ✓ |
 | **M6** | `ofat` + `grid` built; confirmation checker still to do. | ~ |
 | **MI** | **Taguchi integration** — folded in + GitHub repo renamed to robust (§12). | ✓ |
 | **M7** | Python (ctypes) bindings mirroring taguchi; CI running `make test`. | |

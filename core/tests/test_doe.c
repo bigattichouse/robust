@@ -8,6 +8,7 @@
 #include "test_framework.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 
 /* ---- PRNG -------------------------------------------------------------- */
@@ -291,8 +292,164 @@ static int test_json_escape_worst_case(void) {
     return 1;
 }
 
+/* ============================================================================
+ * Sobol sequence (M5) — pinned against Joe & Kuo's own reference generator.
+ *
+ * Every constant below came from THEIR sobol.cc compiled and run against
+ * new-joe-kuo-6.21201, not from ours. `sources/README.md` records the
+ * provenance and `sources/fetch.sh` re-downloads both, so any of this can be
+ * re-derived from scratch.
+ * ============================================================================ */
+
+/* The 10x3 sample published on the Joe-Kuo web page as the expected output of
+ * `./sobol 10 3 new-joe-kuo-6.21201`. This is the one reference vector that
+ * needs no local tooling at all to check: it is printed on the page. */
+static int test_sobol_matches_published_sample(void) {
+    static const double want[10][3] = {
+        {0.0,    0.0,    0.0   }, {0.5,    0.5,    0.5   },
+        {0.75,   0.25,   0.25  }, {0.25,   0.75,   0.75  },
+        {0.375,  0.375,  0.625 }, {0.875,  0.875,  0.125 },
+        {0.625,  0.125,  0.875 }, {0.125,  0.625,  0.375 },
+        {0.1875, 0.3125, 0.9375}, {0.6875, 0.8125, 0.4375},
+    };
+    double p[30];
+    CHECK(doe_sample_sobol(10, 3, p) == 0);
+    for (size_t i = 0; i < 10; i++)
+        for (size_t j = 0; j < 3; j++)
+            /* dyadic rationals: the match is exact, not approximate */
+            CHECK(p[i * 3 + j] == want[i][j]);
+    return 1;
+}
+
+/*
+ * Breadth, cheaply: a rolling checksum over a whole block of the sequence.
+ * h = (h*31 + round(x * 2^32)) mod 1000000007, in point-then-dimension order.
+ * Coordinates are exact multiples of 2^-32, so the scaled value is an exact
+ * integer and the checksum is reproducible on any IEEE-754 platform.
+ *
+ * The three expected values were computed from the REFERENCE generator's
+ * output, so this fails if our sequence diverges from theirs anywhere in the
+ * block -- including in dimensions and at sample counts far too large to write
+ * out by hand.
+ */
+static uint64_t sobol_checksum(size_t n, size_t dim0, size_t k) {
+    double *p = malloc(n * k * sizeof *p);
+    if (!p) return 0;
+    if (doe_sample_sobol_dims(n, dim0, k, p) != 0) { free(p); return 0; }
+    uint64_t h = 0;
+    for (size_t i = 0; i < n * k; i++)
+        h = (h * 31u + (uint64_t)(p[i] * 4294967296.0)) % 1000000007u;
+    free(p);
+    return h;
+}
+
+static int test_sobol_matches_reference_in_bulk(void) {
+    /* 4096 points x 300 dimensions */
+    CHECK(sobol_checksum(4096, 0, 300) == 965049671u);
+    /* 65536 points x 8 dimensions — the sample count `make validate` uses,
+     * which needs 16 direction numbers per dimension rather than 12 */
+    CHECK(sobol_checksum(65536, 0, 8) == 43231725u);
+    /* dimensions 513..1024 — the top of the vendored table, and the offset
+     * path that gives `sobol` its B half */
+    CHECK(sobol_checksum(512, 512, 512) == 540947946u);
+    return 1;
+}
+
+/*
+ * The A/B contract from Saltelli et al. 2010 Sec. 5.1, as a test rather than a
+ * comment: the two halves must be the left and right halves of ONE
+ * 2k-dimensional sequence. The failure this guards is a caller "helpfully"
+ * generating B as a second k-dimensional draw, which produces B == A exactly.
+ */
+static int test_sobol_halves_are_one_sequence(void) {
+    const size_t n = 256, k = 6;
+    double whole[256 * 12], a[256 * 6], b[256 * 6];
+
+    CHECK(doe_sample_sobol(n, 2 * k, whole) == 0);
+    CHECK(doe_sample_sobol_dims(n, 0, k, a) == 0);
+    CHECK(doe_sample_sobol_dims(n, k, k, b) == 0);
+
+    for (size_t i = 0; i < n; i++)
+        for (size_t j = 0; j < k; j++) {
+            CHECK(a[i * k + j] == whole[i * 2 * k + j]);          /* left half  */
+            CHECK(b[i * k + j] == whole[i * 2 * k + k + j]);      /* right half */
+        }
+
+    /* and the halves are genuinely different columns, not a repeated draw */
+    int differs = 0;
+    for (size_t i = 0; i < n * k; i++) if (a[i] != b[i]) differs = 1;
+    CHECK(differs);
+    return 1;
+}
+
+/*
+ * Balance: for the first 2^m points, each dimension must place exactly one
+ * point in each of the 2^m equal bins of [0,1). This is what a (0,1)-sequence
+ * in base 2 guarantees, and it is the property the whole method rests on --
+ * an ordinary PRNG fails it immediately. Checked at the far end of the table
+ * as well as the near end, since a table transcription error would most
+ * plausibly land there.
+ */
+static int test_sobol_is_equidistributed(void) {
+    const size_t n = 1024;
+    static const size_t dims[] = {0, 1, 2, 40, 511, 1000, 1023};
+    double *p = malloc(n * sizeof *p);
+    char *seen = malloc(n);
+    CHECK(p && seen);
+    for (size_t d = 0; d < sizeof dims / sizeof *dims; d++) {
+        if (doe_sample_sobol_dims(n, dims[d], 1, p) != 0) { free(p); free(seen); return 0; }
+        memset(seen, 0, n);
+        for (size_t i = 0; i < n; i++) {
+            size_t bin = (size_t)(p[i] * (double)n);
+            if (bin >= n || seen[bin]) { free(p); free(seen); return 0; }
+            seen[bin] = 1;
+        }
+    }
+    free(p); free(seen);
+    return 1;
+}
+
+/* The dimension cap must be an error, never a silent fallback to something
+ * else, and a failed call must leave `out` untouched (the doe.h contract). */
+static int test_sobol_rejects_out_of_range(void) {
+    double p[8];
+    for (size_t i = 0; i < 8; i++) p[i] = -12345.0;
+
+    CHECK(doe_sample_sobol(4, DOE_SOBOL_MAX_DIM + 1, p) != 0);
+    CHECK(doe_sample_sobol_dims(4, DOE_SOBOL_MAX_DIM, 1, p) != 0);
+    CHECK(doe_sample_sobol_dims(4, 1, DOE_SOBOL_MAX_DIM, p) != 0);
+    /* dim0 + k must not be allowed to wrap */
+    CHECK(doe_sample_sobol_dims(4, (size_t)-1, 2, p) != 0);
+    CHECK(doe_sample_sobol(0, 2, p) != 0);
+    CHECK(doe_sample_sobol(4, 0, p) != 0);
+    CHECK(doe_sample_sobol(4, 2, NULL) != 0);
+
+    for (size_t i = 0; i < 8; i++) CHECK(p[i] == -12345.0);
+
+    /* the largest legal request still succeeds */
+    double *big = malloc(2 * DOE_SOBOL_MAX_DIM * sizeof *big);
+    CHECK(big != NULL);
+    CHECK(doe_sample_sobol(2, DOE_SOBOL_MAX_DIM, big) == 0);
+    free(big);
+    return 1;
+}
+
+/* n = 1 yields the origin alone and must not walk off the direction vector. */
+static int test_sobol_single_point(void) {
+    double p[4] = {9, 9, 9, 9};
+    CHECK(doe_sample_sobol(1, 4, p) == 0);
+    for (size_t i = 0; i < 4; i++) CHECK(p[i] == 0.0);
+    return 1;
+}
+
 int main(void) {
     printf("libdoe core tests\n");
+    RUN_TEST(test_sobol_matches_published_sample);
+    RUN_TEST(test_sobol_matches_reference_in_bulk);
+    RUN_TEST(test_sobol_halves_are_one_sequence);
+    RUN_TEST(test_sobol_is_equidistributed);
+    RUN_TEST(test_sobol_rejects_out_of_range);
+    RUN_TEST(test_sobol_single_point);
     RUN_TEST(test_json_escape_worst_case);
     RUN_TEST(test_ols_exact_on_linear);
     RUN_TEST(test_ols_reports_direction);

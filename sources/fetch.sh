@@ -26,6 +26,31 @@ for id in "${ARXIV[@]}"; do get "arxiv-$id.pdf" "https://arxiv.org/pdf/$id"; don
 get campolongo-2007-morris-screening.pdf \
     "https://www.asc.ohio-state.edu/statistics/comp_exp/jour.club/CamCarSal_EngModellingSoftware-2007.pdf"
 
+# ---- Joe-Kuo Sobol' direction numbers -------------------------------------
+# These are DATA, not a paper, and unlike the PDFs above they are BSD-licensed
+# and redistributable -- core/src/sobol_dirnum.h is a generated slice of the
+# first file, with the copyright notice retained. They are fetched here anyway
+# because three things need the originals rather than the slice:
+#   - regenerating the table  (core/tools/gen_sobol_dirnum.sh)
+#   - `make validate` check H, whose Property A boundary at dimension 1112 is
+#     past the 1024 dimensions we ship, so it SKIPS without the full file
+#   - re-deriving the reference vectors in core/tests/test_doe.c from the
+#     authors' own sobol.cc rather than from our implementation
+JK=https://web.maths.unsw.edu.au/~fkuo/sobol
+mkdir -p pdf/joe-kuo
+jk() {
+  local out="pdf/joe-kuo/$1"
+  [ -s "$out" ] && { echo "have   joe-kuo/$1"; return; }
+  if curl -sfL --max-time 300 -A "research-refs/1.0 (personal archive)" \
+       -o "$out" "$JK/$1"
+  then echo "got    joe-kuo/$1"; else rm -f "$out"; echo "FAILED joe-kuo/$1"; fi
+  sleep 2
+}
+jk licence               # BSD-3-clause covering sobol.cc and the direction numbers
+jk sobol.cc              # the authors' reference generator — our ground truth
+jk new-joe-kuo-6.21201   # the D(6) set, their recommended choice (1.8 MB)
+get joe-kuo-notes.pdf "$JK/joe-kuo-notes.pdf"   # 3-page derivation of the algorithm
+
 echo
 echo "Paywalled, cannot be fetched here:"
 echo "  saltelli-2010-total-index-estimator.pdf  -- supplied manually; if it is"

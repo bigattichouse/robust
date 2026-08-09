@@ -11,6 +11,7 @@
  *   grid_levels:  4         # Morris p
  *   samples:      1024      # Sobol N
  *   second_order: false     # Sobol
+ *   sampling:     sobol     # Sobol sampler: sobol (default) | lhs
  *
  * Disambiguation: exactly two numeric values => LINEAR range; a trailing
  * "log"/"linear"/"cat" word forces the scale; anything else => CATEGORICAL.
@@ -257,6 +258,7 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
     space->grid_levels  = 4;
     space->samples      = 1024;
     space->second_order = false;
+    space->sampling     = DOE_SAMPLING_SOBOL;
 
     size_t len = strlen(content);
     char *buf = malloc(len + 1);
@@ -304,6 +306,17 @@ int doe_space_parse(const char *content, doe_space_t *space, char *err) {
             space->samples = (size_t)strtoul(val, NULL, 10);
         } else if (strcmp(key, "second_order") == 0) {
             space->second_order = (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
+        } else if (strcmp(key, "sampling") == 0) {
+            /* Rejected rather than defaulted: silently sampling a different
+             * way than the file asks for is exactly the kind of quiet
+             * substitution this suite refuses to make. */
+            if (strcmp(val, "sobol") == 0)    space->sampling = DOE_SAMPLING_SOBOL;
+            else if (strcmp(val, "lhs") == 0) space->sampling = DOE_SAMPLING_LHS;
+            else {
+                snprintf(err, DOE_ERR_SIZE,
+                         "sampling '%s' is not known (use 'sobol' or 'lhs')", val);
+                rc = -1; break;
+            }
         } else if (strcmp(key, "method") == 0 || strcmp(key, "array") == 0) {
             /* accepted but not used by the core */
         } else if (in_groups) {

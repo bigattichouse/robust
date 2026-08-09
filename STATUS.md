@@ -1,6 +1,6 @@
 # Status & Handoff
 
-*Working document. Current as of 2026-08-07. Read this first; it is the state
+*Working document. Current as of 2026-08-09. Read this first; it is the state
 of play plus the traps worth not rediscovering.*
 
 Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
@@ -26,7 +26,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 **Green across every mode.** Zero build warnings under
 `-Wall -Wextra -Werror -std=c99 -pedantic`; nine test binaries plus five shell
 suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
-`make validate` 6/6. Coverage **85.1% lines / 95.5% functions**.
+`make validate` 8/8. Coverage **85.2% lines / 98.2% functions**.
 
 **No known defects.**
 
@@ -34,8 +34,7 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 
 | | state |
 |---|---|
-| M0–M4, MI | ✓ complete |
-| M5 | ~ second-order ✓ built and validated exactly; **Joe-Kuo pending** |
+| M0–M5, MI | ✓ complete |
 | M6 | ~ `ofat` + `grid` ✓; confirmation checker pending |
 | M7 | pending — Python bindings |
 | E0, E1, E3 | ✓ complete |
@@ -45,57 +44,33 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 
 ## What to build next, in order
 
-### 1. Joe-Kuo low-discrepancy sequence (M5's other half)
-
-The largest single item and the one with a real trap already documented.
-
-`doe_sample_sobol()` in `core/src/sample.c` is a stub returning `-1`; `sobol`
-currently uses LHS. Saltelli et al. (2010) §7 names quasi-random sampling as
-one of its four best-practice choices, so this is the last gap between our
-`sobol` and its source.
-
-**Read the warning at the draw site in `attribute/sobol/src/lib/sobol.c`
-before starting.** §5.1 p.263 of that paper requires `A` and `B` to be the
-**left and right halves of a single 2k-dimensional sequence**, not two
-k-dimensional draws taken in sequence. The latter is correct for LHS and wrong
-for a QR sequence, which is deterministic — restarting reproduces points and
-continuing correlates them. The contract is also spelled out in `doe.h`.
-
-Needs an embedded direction-number table. `DOE_MAX_FACTORS` is 1024, so decide
-deliberately how many dimensions to ship and **error clearly above that** — do
-not silently fall back to LHS.
-
-Validation is ready: `make validate` check E already drives `sobol` against the
-g-function closed form, so a correct QR sequence should hold or improve those
-errors (currently 0.0078 on S₁, 0.0055 on S_T at N=65536).
-
-### 2. E2 — `--target-ci` sequential convergence
+### 1. E2 — `--target-ci` sequential convergence
 
 Now unblocked: Morris and Sobol both carry bootstrap CIs. Keep doubling
 `trajectories:` / `samples:` until every CI is narrower than a target or a cap
 is hit (caps per SECURITY.md H1). Must stay regenerable from the `.space` seed
 alone.
 
-### 3. M6's confirmation checker
+### 2. M6's confirmation checker
 
 `ofat` and `grid` exist. Missing: the piece that compares a *predicted*
 optimum against a *measured* confirmation run and says whether the additive
 prediction held. That is the step `spec/screening-methods.md` §1 calls the
 hypothesis test for the whole Taguchi method.
 
-### 4. E4 → E5 — RSM, then noise factors
+### 3. E4 → E5 — RSM, then noise factors
 
 `rsm` + `robust funnel --optimize` (the E1 least-squares core in
 `core/src/stats.c` is already there — `doe_ols_src`). Then `noise:` factors,
 crossed inner×outer designs and S/N ratios, which is the "robust" the project
 is named for and the largest single piece of unbuilt *method*.
 
-### 5. Smaller
+### 4. Smaller
 
 M7 Python bindings; `pareto svg`; the Pareto chart in `report`; E6 (PCE,
 Shapley); E7 (`desire`, `objectives:`).
 
-### 6. Research leads — `EXPANSION_NOTE.md` §8.4
+### 5. Research leads — `EXPANSION_NOTE.md` §8.4
 
 Unbuilt and still the most interesting direction: the reduction pattern
 (analysis → low-dimensional family → DOE) as a *named funnel stage*;
@@ -132,6 +107,30 @@ load-bearing claims from secondary sources; reading the primary paper overturned
 two and turned up an erratum in its published table. `make validate` exists for
 this and should grow whenever a decision rests on a source.
 
+**When a reference implementation exists, pin to it, not to your own output.**
+Every Sobol-sequence constant in `core/tests/test_doe.c` came from compiling
+and running Joe & Kuo's own `sobol.cc`. A checksum computed from our own
+generator would have passed identically on day one and pinned nothing. The
+sequence matches theirs bit-for-bit across 4096×300 points, 65536×8 points, and
+dimensions 513–1024; `sources/fetch.sh` re-downloads what is needed to redo it.
+
+**Mutation-test a new suite before believing it.** All eight deliberate breaks
+of the Sobol implementation were caught — but the first harness reported three
+of them as *uncaught* because the test binary **segfaulted** and the harness
+only grepped for the string `FAIL`. A mutation harness must treat a nonzero
+exit as a catch, and must assert both its anchor and its build. Two of the
+three "gaps" were harness bugs; the third was a no-op substitution.
+
+**A test's expected value can be wrong in an interesting way.** The first
+version of `test_qr_halves_coincide_only_at_rows_0_and_1` asserted one
+coinciding row (the origin) and failed. There are always exactly **two**: row 0
+is the origin, and row 1 is the centre of the cube in every dimension, because
+`m_1` must be odd and `< 2` in every dimension so `m_1 = 1` is forced and
+`v_1 = 1/2` identically. Those two rows contribute nothing to either estimator
+— 0.2% of a default N=1024 design. That is a property of the unscrambled
+sequence the paper prescribes, not a defect, and it is now pinned so any change
+in the cost is visible.
+
 **A validation suite must drive the shipped code.** Check B originally tested
 its own reimplementation of group μ\*, which proves nothing about what users
 run. It now drives `morris_group_analyze`, with the prototype retained only as
@@ -155,6 +154,19 @@ an independent second opinion that must agree to 1e-9.
   **12.8× at 1024**, zero false negatives throughout.
 - **Second-order needs far more samples than first-order** — on a model with a
   real `a×b` interaction, N=512 gave S₂ = −0.009 (noise) and N=8192 gave 0.057.
+- **Quasi-random sampling beats LHS by a widening margin** — same estimator,
+  same g-function, only the sampler changed: **3.0×** more accurate at N=256,
+  11.3× at 4096, **65.8× at 65536**. The gap grows because it is a convergence
+  *rate* difference, not an offset. This is why `sampling: sobol` is the
+  default. (check G.) It also cut check E's worst error from 0.0078 to 0.0001.
+- **A non-power-of-two `samples:` can cost more and deliver less** — N=20000
+  gave **4.5× the error of N=16384** while running 22% more points, because the
+  sequence's uniformity is a property of aligned 2^m blocks (Saltelli §5.1
+  consideration 1). The `sobol` CLI notes this when it sees one. (check G.)
+- **Joe & Kuo's Property A boundary is exactly where they say** — their page
+  claims dimension 1111 for the D(6) set; measured as a GF(2) rank, it holds
+  through 1111 and first fails at **1112**. This is what caps `sobol` at 512
+  factors (2 dimensions each), not storage. (check H.)
 
 ---
 
@@ -165,7 +177,17 @@ an independent second opinion that must agree to 1e-9.
   near-irreducible; the child-attribution problem was already fixed with
   `__gcov_dump()` under `-DDOE_COVERAGE`.
 - `sources/pdf/` is gitignored; `sources/fetch.sh` re-fetches what is public.
-  Two papers are paywalled and supplied manually — see `sources/README.md`.
+  Two papers are paywalled and supplied manually — see `sources/README.md`,
+  which summarises every source with citations and URLs precisely because the
+  files themselves cannot be redistributed.
+- **The Joe-Kuo direction numbers are the exception: BSD-licensed and
+  redistributable.** `core/src/sobol_dirnum.h` is a generated 1024-dimension
+  slice that ships in-repo with the copyright notice in full. Regenerate with
+  `core/tools/gen_sobol_dirnum.sh` after `sources/fetch.sh`; the dimension
+  count is static-asserted against `DOE_SOBOL_MAX_DIM` in `doe.h`, so a
+  regeneration at a different cap is a build error rather than a silent
+  disagreement. `make validate` check H's second half *skips*, visibly, when
+  the full data file is absent.
 - `sources/campolongo-2007-morris-screening_erratum/` is a self-contained,
   shareable reproduction of a published-table error, with a drafted summary. It
   has not been sent to the authors.

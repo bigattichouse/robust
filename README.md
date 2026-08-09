@@ -101,8 +101,8 @@ splitting), `sobol` (Sᵢ/S_Tᵢ with bootstrap CIs and second-order pairs),
 `pareto`, `regress`, `uq`, and the `robust` funnel.
 
 All suites pass under `-Werror`, valgrind and ASan/UBSan, with adversarial-input
-coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 85.1%
-lines / 95.5% functions.
+coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 85.2%
+lines / 98.2% functions.
 
 **Claims are validated too, not just code.** [`validation/`](validation/README.md)
 reproduces the published results this project relies on against closed-form
@@ -111,8 +111,15 @@ recommends, established where μ\* stops being a usable proxy for the total Sobo
 index, and turned up an erratum in a 2007 paper's published table
 ([standalone reproduction](sources/campolongo-2007-morris-screening_erratum/)).
 
-Still to build: the Joe-Kuo low-discrepancy sequence, RSM and noise factors,
-and the smaller items listed in [STATUS.md](STATUS.md).
+`sobol` samples with a **Joe-Kuo low-discrepancy sequence** by default
+(`sampling: sobol`), built as its source specifies — matrices A and B are the
+left and right halves of one 2k-dimensional sequence, not two draws. It is
+bit-for-bit identical to the authors' own reference generator, and measured
+against the same closed form it is 3× more accurate than Latin Hypercube at
+N=256 and **66× at N=65536**.
+
+Still to build: RSM and noise factors, sequential convergence targets, and the
+smaller items listed in [STATUS.md](STATUS.md).
 
 ## License
 

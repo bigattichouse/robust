@@ -18,9 +18,11 @@
  *          prefers this triplet over the older B, A, B_A^(i). Cost N(k+2).
  *
  * Sec. 7 also concludes: radial sampling, n = 1, and quasi-random numbers.
- * The first two describe this design; the third is pending (M5).
- * Numerically validated against the g-function closed form in
- * validation/validate.c check E — `make validate`.
+ * The first two describe this design; the third landed in M5 and is the
+ * default (`sampling: sobol`) — A and B are the halves of one 2k-dimensional
+ * Joe-Kuo sequence, per Sec. 5.1 p.263. `sampling: lhs` keeps the pre-M5
+ * behaviour available. Numerically validated against the g-function closed
+ * form in validation/validate.c checks E and G — `make validate`.
  */
 
 #include "sobol.h"
@@ -99,31 +101,58 @@ int sobol_design_build(const doe_space_t *space, sobol_design_t *d, char *err) {
         return -1;
     }
 
-    doe_rng_t rng;
-    doe_rng_seed(&rng, space->seed);
-    /*
-     * Two LHS draws from one stream: independent, because the stream advances.
-     *
-     * !! DO NOT carry this pattern over to M5. !! When the Joe-Kuo sequence
-     * lands, A and B must be the LEFT and RIGHT HALVES OF A SINGLE
-     * 2k-DIMENSIONAL quasi-random sequence -- Saltelli et al. 2010 Sec. 5.1
-     * p.263: "Matrices A and B of size (N,k) can be easily generated from a
-     * quasi-random sequence of size (N,2k): A is the left half of the
-     * quasi-random sequence, and B is the right part of it."
-     *
-     * Drawing a k-dimensional QR sequence twice in sequence does NOT give two
-     * independent samples the way two LHS draws do: a QR sequence is
-     * deterministic, so restarting it reproduces the same points, and
-     * continuing it yields points that are correlated by construction rather
-     * than independent. Same paper, Sec. 5.1 consideration 1: skipping rows of
-     * the quasi-random matrix is a mistake; consideration 2: uniformity
-     * degrades as the column index grows, which is why A takes the leading
-     * (better equidistributed) columns and B the trailing ones.
-     */
-    if (doe_sample_lhs(&rng, n, k, A) != 0 || doe_sample_lhs(&rng, n, k, B) != 0) {
-        free(A); free(B);
-        snprintf(err, DOE_ERR_SIZE, "sampling failed");
-        return -1;
+    if (space->sampling == DOE_SAMPLING_SOBOL) {
+        /*
+         * A and B are the LEFT and RIGHT HALVES OF A SINGLE 2k-DIMENSIONAL
+         * quasi-random sequence -- Saltelli et al. 2010 Sec. 5.1 p.263:
+         * "Matrices A and B of size (N,k) can be easily generated from a
+         * quasi-random sequence of size (N,2k): A is the left half of the
+         * quasi-random sequence, and B is the right part of it."
+         *
+         * This is not interchangeable with the two-draws pattern below.
+         * Drawing a k-dimensional QR sequence twice does NOT give two
+         * independent samples the way two LHS draws do: the sequence is
+         * deterministic, so restarting it reproduces A exactly, and continuing
+         * it past row N would violate consideration 1 of the same section
+         * (skipping rows of the quasi-random matrix is a mistake -- its
+         * uniformity is a property of aligned blocks of 2^m points).
+         *
+         * Consideration 2 -- uniformity deteriorates as the column index grows
+         * -- is why A takes dimensions 0..k-1 and B takes k..2k-1, never the
+         * reverse: it is A and A_B^(i) that carry the S_i and S_Ti estimators,
+         * so they get the better-equidistributed columns. The same argument is
+         * what Sec. 5.1 gives for preferring the A, A_B^(i), B triplet at all.
+         */
+        if (2 * k > DOE_SOBOL_MAX_DIM) {
+            /* No silent fallback to LHS: the caller asked for a quasi-random
+             * design and would otherwise get a different method under the same
+             * name, with no way to tell from the output. */
+            free(A); free(B);
+            snprintf(err, DOE_ERR_SIZE,
+                     "sampling: sobol supports at most %d factors (got %zu) -- it needs "
+                     "2 dimensions per factor and the Joe-Kuo table holds %d. Screen "
+                     "first with `morris`, or set `sampling: lhs` to accept the slower "
+                     "convergence.",
+                     DOE_SOBOL_MAX_FACTORS, k, DOE_SOBOL_MAX_DIM);
+            return -1;
+        }
+        if (doe_sample_sobol_dims(n, 0, k, A) != 0 ||
+            doe_sample_sobol_dims(n, k, k, B) != 0) {
+            free(A); free(B);
+            snprintf(err, DOE_ERR_SIZE, "quasi-random sampling failed");
+            return -1;
+        }
+    } else {
+        /* Two LHS draws from one stream: independent, because the stream
+         * advances. Correct here and only here -- see the comment above for
+         * why the same shape is wrong for a quasi-random sequence. */
+        doe_rng_t rng;
+        doe_rng_seed(&rng, space->seed);
+        if (doe_sample_lhs(&rng, n, k, A) != 0 || doe_sample_lhs(&rng, n, k, B) != 0) {
+            free(A); free(B);
+            snprintf(err, DOE_ERR_SIZE, "sampling failed");
+            return -1;
+        }
     }
 
     d->k = k;

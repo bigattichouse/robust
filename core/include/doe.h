@@ -123,6 +123,23 @@ typedef struct {
     size_t member_count;
 } doe_group_t;
 
+/*
+ * Which sampler fills the Saltelli design (`sampling:` in the .space).
+ *
+ * SOBOL is the default because Saltelli et al. (2010) §7 conclusion 3 names
+ * quasi-random sampling one of its four best practices, and `make validate`
+ * check E measures the difference on the g-function rather than taking that on
+ * trust. LHS remains selectable: it is what shipped before M5, so it keeps old
+ * designs reproducible, and it is the comparison arm for that measurement.
+ *
+ * Zero is SOBOL deliberately -- a memset-and-fill doe_space_t gets the
+ * recommended sampler, not the fallback.
+ */
+typedef enum {
+    DOE_SAMPLING_SOBOL = 0,   /* Joe-Kuo low-discrepancy sequence */
+    DOE_SAMPLING_LHS          /* Latin Hypercube, seeded from `seed:` */
+} doe_sampling_t;
+
 typedef struct {
     doe_factor_t factors[DOE_MAX_FACTORS];
     size_t       factor_count;
@@ -139,6 +156,7 @@ typedef struct {
     size_t       grid_levels;    /* Morris p  (default 4)  */
     size_t       samples;        /* Sobol  N  (default 1024) */
     bool         second_order;   /* Sobol second-order indices */
+    doe_sampling_t sampling;     /* Sobol sampler (default DOE_SAMPLING_SOBOL) */
 } doe_space_t;
 
 /* Parse a .space definition. Returns 0 on success, -1 on error (err filled). */
@@ -209,20 +227,54 @@ void  doe_free(void *p);
 
 /* Latin Hypercube: fill out[n*k] (row-major) with a sample in [0,1). */
 int doe_sample_lhs(doe_rng_t *rng, size_t n, size_t k, double *out);
+
 /*
- * Sobol low-discrepancy sequence (Joe-Kuo direction numbers).
+ * Sobol low-discrepancy sequence, Joe-Kuo direction numbers (M5).
  *
- * NOT IMPLEMENTED YET (M5). It always returns -1 and writes NOTHING to `out`,
- * so a caller that ignores the return value reads uninitialised memory --
- * deliberately, because a sanitizer will catch that immediately, whereas
- * plausible-looking zeros would sail through and quietly corrupt a design.
- * Check the return value.
+ * Fills out[n*k] (row-major) with points 0..n-1 of the k-dimensional sequence,
+ * each coordinate in [0,1). Point 0 is the origin: the sequence is not
+ * advanced past it, because its uniformity guarantee is stated over aligned
+ * blocks of 2^m points (Joe-Kuo notes §4; Saltelli et al. 2010 §5.1
+ * consideration 1).
  *
- * When implementing: `sobol` needs A and B as the left and right halves of a
- * single 2k-dimensional sequence, NOT two k-dimensional draws. See the comment
- * at the draw site in attribute/sobol/src/lib/sobol.c before starting.
+ * Takes no doe_rng_t: a quasi-random sequence is DETERMINISTIC. The same n and
+ * k always give the same points, so a design is regenerable from the .space
+ * file with or without its `seed:` -- which for `sampling: sobol` affects only
+ * the bootstrap, not the design.
+ *
+ * Returns 0, or -1 if n or k is 0, or if the dimensions requested exceed
+ * DOE_SOBOL_MAX_DIM. It writes NOTHING to `out` when it fails, so a caller
+ * that ignores the return value reads uninitialised memory -- deliberately,
+ * because a sanitizer catches that immediately whereas plausible-looking zeros
+ * would sail through and quietly corrupt a design. Check the return value.
  */
 int doe_sample_sobol(size_t n, size_t k, double *out);
+
+/*
+ * The same sequence, restricted to dimensions dim0 .. dim0+k-1.
+ *
+ * This exists for one reason. Saltelli et al. 2010 §5.1 p.263 requires the
+ * Saltelli design's A and B to be "the left half" and "the right part" of a
+ * single 2k-dimensional quasi-random sequence. Two k-dimensional draws are
+ * NOT a substitute: a QR sequence is deterministic, so a second draw either
+ * repeats the first exactly or, if continued, is correlated with it by
+ * construction. Calling this with dim0 = 0 and dim0 = k over the same n gives
+ * the two halves without materialising the n-by-2k matrix.
+ *
+ * Consideration 2 of that section also matters here: uniformity degrades as
+ * the column index grows, so A must take the LEADING dimensions and B the
+ * trailing ones, not the reverse.
+ */
+int doe_sample_sobol_dims(size_t n, size_t dim0, size_t k, double *out);
+
+/* Dimensions the vendored Joe-Kuo table covers. `sobol` needs 2k of them for
+ * k factors, hence DOE_SOBOL_MAX_FACTORS. The cap is a quality limit, not a
+ * storage one: Joe & Kuo's D(6) set satisfies Sobol' Property A only up to
+ * dimension 1111 (`make validate` check H reproduces the boundary and confirms
+ * it holds across all 1024 shipped), so every dimension here is inside that
+ * region. */
+#define DOE_SOBOL_MAX_DIM     1024
+#define DOE_SOBOL_MAX_FACTORS (DOE_SOBOL_MAX_DIM / 2)
 
 /* ============================================================================
  * Run loop — provisional signature, implemented at M2 (lifted from taguchi).

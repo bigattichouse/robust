@@ -242,6 +242,172 @@ static int test_zero_variance_is_rejected(void) {
     return 1;
 }
 
+/* ----------------------------------------------------------------- M5 ----
+ * Quasi-random sampling: the Saltelli Sec. 5.1 construction, at the tool
+ * level rather than the primitive level.
+ */
+
+/* Default is quasi-random, and `sampling:` selects between the two. */
+static int test_sampling_default_and_selection(void) {
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+
+    CHECK(doe_space_parse("factors:\n  a: 0,1\n  b: 0,1\nsamples: 64\n", &sp, err) == 0);
+    CHECK(sp.sampling == DOE_SAMPLING_SOBOL);          /* no key => quasi-random */
+
+    CHECK(doe_space_parse("factors:\n  a: 0,1\nsampling: lhs\n", &sp, err) == 0);
+    CHECK(sp.sampling == DOE_SAMPLING_LHS);
+    CHECK(doe_space_parse("factors:\n  a: 0,1\nsampling: sobol\n", &sp, err) == 0);
+    CHECK(sp.sampling == DOE_SAMPLING_SOBOL);
+
+    /* An unknown sampler is an error, never a silent default */
+    CHECK(doe_space_parse("factors:\n  a: 0,1\nsampling: halton\n", &sp, err) != 0);
+    CHECK(strstr(err, "halton") != NULL);
+    return 1;
+}
+
+/*
+ * The contract from Saltelli et al. 2010 Sec. 5.1 p.263, checked on the
+ * design the tool actually builds: A must be dimensions 0..k-1 and B
+ * dimensions k..2k-1 of ONE sequence -- not a second draw, and not the two
+ * halves swapped (consideration 2 gives A the better-equidistributed columns).
+ */
+static int test_qr_design_uses_one_sequence(void) {
+    const size_t n = 128, k = 4;
+    const char *s = "factors:\n  a: 0,1\n  b: 0,1\n  c: 0,1\n  d: 0,1\n"
+                    "samples: 128\nsampling: sobol\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(s, &sp, err) == 0);
+
+    sobol_design_t d;
+    CHECK(sobol_design_build(&sp, &d, err) == 0);
+    CHECK(d.n == n && d.k == k);
+
+    double *whole = malloc(n * 2 * k * sizeof *whole);
+    CHECK(whole != NULL);
+    CHECK(doe_sample_sobol(n, 2 * k, whole) == 0);
+
+    for (size_t i = 0; i < n; i++)
+        for (size_t j = 0; j < k; j++) {
+            CHECK(d.A[i * k + j] == whole[i * 2 * k + j]);        /* left half  */
+            CHECK(d.B[i * k + j] == whole[i * 2 * k + k + j]);    /* right half */
+        }
+
+    free(whole);
+    sobol_design_free(&d);
+    return 1;
+}
+
+/*
+ * The failure this whole design guards against. If A and B were two draws of
+ * the same deterministic k-dimensional sequence they would be IDENTICAL, and
+ * then A_B^(i) == A for every i, so every estimator collapses to zero.
+ *
+ * Exactly two rows legitimately coincide, and they are always rows 0 and 1:
+ *
+ *   row 0  the sequence's origin, all zeros in every dimension;
+ *   row 1  all 0.5, because m_1 must be odd and less than 2 in EVERY
+ *          dimension (Joe-Kuo notes, after eq. (2)), so m_1 = 1 is forced
+ *          and v_1 = 1/2 identically -- making x_1 the centre of the cube.
+ *
+ * For those two rows A_B^(i) equals A, so they contribute nothing to either
+ * estimator: 2 rows of N, which is 0.2% at the default N=1024 and 0.003% at
+ * N=65536. That is a property of the unscrambled sequence the paper
+ * prescribes, not of this implementation, and check E measures the accuracy
+ * that results. Pinned at exactly 2 so a change in that cost is visible.
+ */
+static int test_qr_halves_coincide_only_at_rows_0_and_1(void) {
+    static const size_t counts[] = {64, 256, 1024};
+    for (size_t t = 0; t < sizeof counts / sizeof *counts; t++) {
+        char s[256];
+        snprintf(s, sizeof s,
+                 "factors:\n  a: 0,1\n  b: 0,1\n  c: 0,1\nsamples: %zu\n", counts[t]);
+        doe_space_t sp; char err[DOE_ERR_SIZE];
+        CHECK(doe_space_parse(s, &sp, err) == 0);
+
+        sobol_design_t d;
+        CHECK(sobol_design_build(&sp, &d, err) == 0);
+
+        size_t identical = 0;
+        for (size_t i = 0; i < d.n; i++) {
+            int same = 1;
+            for (size_t j = 0; j < d.k; j++)
+                if (d.A[i * d.k + j] != d.B[i * d.k + j]) { same = 0; break; }
+            if (same) { identical++; CHECK(i <= 1); }
+        }
+        CHECK(identical == 2);
+
+        for (size_t j = 0; j < d.k; j++) {
+            CHECK(d.A[j] == 0.0 && d.B[j] == 0.0);                    /* row 0 */
+            CHECK(d.A[d.k + j] == 0.5 && d.B[d.k + j] == 0.5);        /* row 1 */
+        }
+        sobol_design_free(&d);
+    }
+    return 1;
+}
+
+/* The factor cap must be an error naming the limit, never a quiet swap to
+ * LHS -- a user would have no way to tell which method produced the numbers. */
+static int test_qr_factor_cap_errors_not_falls_back(void) {
+    doe_space_t sp;
+    memset(&sp, 0, sizeof sp);
+    sp.samples = 16;
+    sp.sampling = DOE_SAMPLING_SOBOL;
+    sp.factor_count = DOE_SOBOL_MAX_FACTORS + 1;
+    for (size_t i = 0; i < sp.factor_count; i++) {
+        snprintf(sp.factors[i].name, DOE_MAX_NAME, "x%zu", i);
+        sp.factors[i].scale = DOE_LINEAR; sp.factors[i].lo = 0; sp.factors[i].hi = 1;
+    }
+
+    sobol_design_t d;
+    char err[DOE_ERR_SIZE];
+    CHECK(sobol_design_build(&sp, &d, err) != 0);
+    CHECK(strstr(err, "512") != NULL);          /* says what the limit is */
+    CHECK(strstr(err, "morris") != NULL);       /* and what to do instead */
+
+    /* one fewer factor is fine, so the boundary is exactly where it claims */
+    sp.factor_count = DOE_SOBOL_MAX_FACTORS;
+    CHECK(sobol_design_build(&sp, &d, err) == 0);
+    sobol_design_free(&d);
+
+    /* and LHS is unaffected by the QR table's limit */
+    sp.factor_count = DOE_SOBOL_MAX_FACTORS + 1;
+    sp.sampling = DOE_SAMPLING_LHS;
+    CHECK(sobol_design_build(&sp, &d, err) == 0);
+    sobol_design_free(&d);
+    return 1;
+}
+
+/*
+ * The QR design ignores `seed:` -- a quasi-random sequence is deterministic.
+ * Stated in doe.h; pinned here because a future change that made the design
+ * seed-dependent would silently break reproducibility of published designs.
+ */
+static int test_qr_design_ignores_seed(void) {
+    doe_space_t a, b; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse("factors:\n  x: 0,1\n  y: 0,1\nsamples: 64\nseed: 1\n", &a, err) == 0);
+    CHECK(doe_space_parse("factors:\n  x: 0,1\n  y: 0,1\nsamples: 64\nseed: 99999\n", &b, err) == 0);
+
+    sobol_design_t da, db;
+    CHECK(sobol_design_build(&a, &da, err) == 0);
+    CHECK(sobol_design_build(&b, &db, err) == 0);
+    for (size_t i = 0; i < da.n * da.k; i++) {
+        CHECK(da.A[i] == db.A[i]);
+        CHECK(da.B[i] == db.B[i]);
+    }
+    sobol_design_free(&da); sobol_design_free(&db);
+
+    /* LHS, by contrast, must respond to the seed */
+    CHECK(doe_space_parse("factors:\n  x: 0,1\n  y: 0,1\nsamples: 64\nseed: 1\nsampling: lhs\n", &a, err) == 0);
+    CHECK(doe_space_parse("factors:\n  x: 0,1\n  y: 0,1\nsamples: 64\nseed: 99999\nsampling: lhs\n", &b, err) == 0);
+    CHECK(sobol_design_build(&a, &da, err) == 0);
+    CHECK(sobol_design_build(&b, &db, err) == 0);
+    int differs = 0;
+    for (size_t i = 0; i < da.n * da.k; i++) if (da.A[i] != db.A[i]) differs = 1;
+    CHECK(differs);
+    sobol_design_free(&da); sobol_design_free(&db);
+    return 1;
+}
+
 int main(void) {
     printf("sobol tests\n");
     RUN_TEST(test_second_order_design_and_guard);
@@ -251,5 +417,10 @@ int main(void) {
     RUN_TEST(test_determinism);
     RUN_TEST(test_design_build_overflow);
     RUN_TEST(test_analyze_rejects_nonfinite);
+    RUN_TEST(test_sampling_default_and_selection);
+    RUN_TEST(test_qr_design_uses_one_sequence);
+    RUN_TEST(test_qr_halves_coincide_only_at_rows_0_and_1);
+    RUN_TEST(test_qr_factor_cap_errors_not_falls_back);
+    RUN_TEST(test_qr_design_ignores_seed);
     return TEST_SUMMARY();
 }

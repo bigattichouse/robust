@@ -1,6 +1,6 @@
 # validation — published results vs closed-form ground truth
 
-*Run with `make validate` (0.9 s). Exits nonzero if any check fails.*
+*Run with `make validate` (~20 s). Exits nonzero if any check fails.*
 
 The unit suites under `*/tests/` pin **our code**. This suite pins the
 **claims the roadmap rests on** — the ones taken from papers rather than
@@ -142,33 +142,86 @@ rather than merely a defensible option:
 Check E confirms it numerically on the 6-factor g-function (the paper's own
 Appendix A.1 test function) at N=65536:
 
-| | worst absolute error |
-|---|---|
-| `S_i` vs closed form | **0.0078** |
-| `S_T` vs closed form | **0.0055** |
+| | worst absolute error, LHS | with the QR sequence |
+|---|---|---|
+| `S_i` vs closed form | 0.0078 | **0.0001** |
+| `S_T` vs closed form | 0.0055 | **0.0001** |
 
 plus the structural property `Σ Sᵢ ≤ 1 ≤ Σ S_Tᵢ` (Eq. 11, p.260), measured at
-0.896 and 1.120.
+0.890 and 1.112.
 
-**The one gap** is §7 conclusion 2: quasi-random sampling. We use LHS, because
-the Joe-Kuo sequence is M5 and unbuilt. Reading the paper turned up a trap in
-that future work — §5.1 p.263 requires `A` and `B` to be the left and right
-halves of a *single 2k-dimensional* QR sequence, not two k-dimensional draws
-in sequence. The latter is correct for LHS and wrong for a QR sequence, which
-is deterministic. A warning comment now sits at the exact line in
-`attribute/sobol/src/lib/sobol.c` where someone would otherwise reuse the pattern.
+The right-hand column is the paper's remaining conclusion, quasi-random
+sampling, which landed on 2026-08-07 and is now the default. See G and H.
+
+### F. Second-order indices against the exact decomposition
+
+The g-function is a product of one-dimensional terms, so `V_ij = V_i·V_j`
+exactly and every pair has a closed form — a reference, not a benchmark.
+Also pins the cost at exactly `N(k+2+k(k-1)/2)`.
+
+### G. Quasi-random sampling beats LHS, by a widening margin
+
+The paper asserts the advantage (§7 conclusion 3) but does not quantify it for
+this estimator on this benchmark. Everything except the sampler is held fixed —
+same g-function, same seed, same estimators, same N — and both arms are driven
+through the shipped `sobol_design_build`/`sobol_analyze`:
+
+| N | LHS | Sobol QR | ratio |
+|---|---|---|---|
+| 256 | 0.0798 | 0.0269 | 3.0× |
+| 1024 | 0.0333 | 0.0121 | 2.8× |
+| 4096 | 0.0352 | 0.0031 | 11.3× |
+| 16384 | 0.0119 | 0.00028 | 43.0× |
+| 65536 | 0.0078 | 0.00012 | **65.8×** |
+
+The gap *grows*, which is the signature of a convergence-rate difference rather
+than a constant offset — that is the check, not the single-point comparison.
+
+It also measures the consequence practitioners trip over. Because the
+sequence's uniformity is a property of **aligned blocks of 2^m points** (§5.1
+consideration 1), a `samples:` that is not a power of two can buy more runs and
+less accuracy: N=20000 gave **4.5× the error of N=16384 while costing 22%
+more**. The `sobol` CLI notes this when it sees one.
+
+### H. Property A of the vendored direction numbers, and where it stops
+
+Joe & Kuo state that their recommended D(6) set satisfies Sobol' *Property A*
+"up to dimension 1111". That is a secondary-source claim about a table we ship
+a slice of, and it sets a user-visible limit, so it is reproduced rather than
+cited.
+
+Property A holds exactly when the s×s matrix of leading direction-number bits
+is nonsingular over GF(2) — an s³ rank computation instead of a 2^s-point
+simulation. Measured: it holds at **every dimension through 1111 and first
+fails at 1112**. The authors' figure is exact.
+
+This is what caps `sobol` at **512 factors**: it needs 2 dimensions per factor,
+so the 1024 dimensions we vendor are all inside the region where Property A
+holds. Above that the tool errors and names the limit rather than falling back
+to LHS, because a silent substitution would leave no way to tell from the
+output which method produced the numbers.
+
+The boundary itself lies past dimension 1024, so it needs the full published
+file, which is gitignored. That half of the check **skips, visibly**, when
+`sources/fetch.sh` has not been run — a skip is never reported as a pass.
 
 ## Layout
 
 | File | Contents |
 |---|---|
 | `gfunction.h` / `.c` | The g-function and its closed-form single-factor and group indices. Sources cited in the header. |
-| `validate.c` | Checks A–D. Also carries the reference implementation of group μ\*, which is the prototype for `morris --groups` (see [`../spec/morris-groups.bp`](../spec/morris-groups.bp)). |
+| `validate.c` | Checks A–H. Also carries the reference implementation of group μ\*, which is the prototype for `morris --groups` (see [`../spec/morris-groups.bp`](../spec/morris-groups.bp)). |
 
 ## House rules this suite follows
 
 - **Cite in code.** Every formula carries its source, section and page in a
   comment. A reader should never have to trust a number's provenance.
+- **Pin to the authors' implementation where one exists.** The Sobol-sequence
+  constants in `core/tests/test_doe.c` were produced by Joe & Kuo's own
+  `sobol.cc`, not by ours. A checksum taken from our generator would have
+  passed on day one and pinned nothing.
+- **A skip is not a pass.** Check H's second half needs a data file that is
+  gitignored; when it is absent the suite says so in those words.
 - **Two routes for anything surprising.** Check D only claims an erratum
   because an independent estimator agrees with the closed form.
 - **Assert against truth, not against print.** Where a source is wrong, encode

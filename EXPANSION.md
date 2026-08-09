@@ -48,18 +48,23 @@ inseparable from that tool's design (e.g. DGSM needs the Morris trajectories).
   now real: `sobol` computes second-order indices when the flag is set, at
   `N(k+2+k(k-1)/2)` runs. Validated against the g-function's exact
   decomposition — `V_ij = V_i·V_j` for a product function — in `make validate`
-  check F, worst error 0.005 across all pairs.
-- **M5's Joe-Kuo sequence has a trap, now documented.** Saltelli et al. (2010)
-  §5.1 p.263 requires that `A` and `B` be the **left and right halves of a
-  single 2k-dimensional** quasi-random sequence — not two k-dimensional draws
-  taken in sequence, which is what the current LHS code correctly does and what
-  a QR sequence must *not* do (it is deterministic, so restarting reproduces
-  points and continuing correlates them). A warning comment now sits at the
-  exact line in `attribute/sobol/src/lib/sobol.c`. Everything else in `sobol` was
-  verified correct against that paper — see `make validate` check E.
-- **Finish M5–M7** (DESIGN.md §11): Joe-Kuo sequence + second-order indices,
-  `ofat`/`grid`/confirmation checker, Python bindings. Several E-items below
-  build on M5/M6, noted per item. (M7's CI half shipped 2026-07-16.)
+  check F, worst error 0.0007 across all pairs (0.005 before the QR sequence
+  landed).
+- ~~**M5's Joe-Kuo sequence has a trap, now documented.**~~ ✓ **RESOLVED
+  2026-08-07 by building it, trap intact.** Saltelli et al. (2010) §5.1 p.263
+  requires that `A` and `B` be the **left and right halves of a single
+  2k-dimensional** quasi-random sequence — not two k-dimensional draws taken in
+  sequence, which is what LHS correctly does and what a QR sequence must *not*
+  do (it is deterministic, so restarting reproduces points and continuing
+  correlates them). `doe_sample_sobol_dims()` exists precisely so the two
+  halves can be expressed without materialising an N×2k matrix, and
+  `test_qr_design_uses_one_sequence` pins the construction against the shipped
+  design rather than against the comment. The warning comment stayed where it
+  was, rewritten to say what was done and why the shape below it is still
+  correct for LHS.
+- **Finish M6–M7** (DESIGN.md §11): confirmation checker, Python bindings.
+  M5 is complete. Several E-items below build on M5/M6, noted per item.
+  (M7's CI half shipped 2026-07-16.)
 
 ---
 
@@ -211,7 +216,7 @@ optimum matches closed form; a dominated point never appears in the front.
 
 | Milestone | Deliverable | Depends on | |
 |---|---|---|---|
-| **E0** | ✓ `second_order` **implemented**, not merely rejected. M6 built (`ofat`, `grid`); M5 half built (second-order ✓, Joe-Kuo pending); M7 pending. | — | |
+| **E0** | ✓ `second_order` **implemented**, not merely rejected. **M5 complete** (second-order ✓, Joe-Kuo sequence ✓). M6 built (`ofat`, `grid`); confirmation checker and M7 pending. | — | |
 | **E1** | ✓ **COMPLETE** — `pareto`, `regress`, `uq`, μ\* CIs, `--keep-share`, cut-gap; Pareto chart in `report`, `--keep-share`, cut-gap diagnostic, Morris μ\* CIs. | E0 | |
 | **E2** | `--target-ci` sequential convergence for morris + sobol. | E1 (CIs) | |
 | **E3** | ~~`morris --groups` + recursive splitting~~ ✓ both built; `pawn` tool; `morris analyze --dgsm`; (optional) eFAST cross-check. | E1 | |

@@ -38,6 +38,38 @@ static char *read_file(const char *path) {
     return buf;
 }
 
+/*
+ * Which sampler produced a design is not recoverable from the numbers, so say
+ * it. `sampling:` changes the design and therefore the indices; a run whose
+ * output does not record it cannot be reproduced from the results alone.
+ */
+static const char *sampler_name(const doe_space_t *sp) {
+    return sp->sampling == DOE_SAMPLING_SOBOL
+         ? "Joe-Kuo quasi-random (sampling: sobol)"
+         : "Latin Hypercube (sampling: lhs)";
+}
+
+/*
+ * A quasi-random sequence is uniform over ALIGNED BLOCKS of 2^m points
+ * (Saltelli et al. 2010 Sec. 5.1 consideration 1), so an N that is not a power
+ * of two lands mid-block and gives up part of the guarantee. That is not a
+ * theoretical worry: `make validate` check G measures N=20000 producing 4.5x
+ * the error of N=16384 while costing 22% more runs. A note, not a warning --
+ * the design is still valid and still beats LHS.
+ */
+static void note_sample_count(const doe_space_t *sp) {
+    if (sp->sampling != DOE_SAMPLING_SOBOL) return;
+    size_t n = sp->samples;
+    if (n == 0 || (n & (n - 1)) == 0) return;      /* already a power of two */
+    size_t below = 1;
+    while (below * 2 < n) below *= 2;
+    fprintf(stderr,
+        "\nNote: samples = %zu is not a power of two. A quasi-random sequence is\n"
+        "  uniform over aligned blocks of 2^m points, so %zu can be both cheaper\n"
+        "  and more accurate than %zu. See `make validate` check G.\n\n",
+        n, below, n);
+}
+
 static int load_space(const char *path, doe_space_t *space) {
     char *content = read_file(path);
     if (!content) return -1;
@@ -100,6 +132,8 @@ static int cmd_generate(const char *path) {
 
     printf("Saltelli design: N=%zu base samples, k=%zu factors -> %zu runs\n",
            d.n, d.k, d.npoints);
+    printf("Sampler: %s\n", sampler_name(&sp));
+    note_sample_count(&sp);
     printf("  rows [%zu,%zu)   block A\n", (size_t)0, d.n);
     printf("  rows [%zu,%zu)   block B\n", d.n, 2 * d.n);
     for (size_t i = 0; i < d.k; i++) {
@@ -151,7 +185,8 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric) {
         return 1;
     }
 
-    printf("Sobol indices (metric: %s) — N=%zu, %zu runs\n\n", metric, sp.samples, np);
+    printf("Sobol indices (metric: %s) — N=%zu, %zu runs\n", metric, sp.samples, np);
+    printf("Sampler: %s\n\n", sampler_name(&sp));
     printf("%-18s %18s %18s   %s\n", "Factor", "S1 [95% CI]", "ST [95% CI]", "interaction");
     printf("%-18s %18s %18s   %s\n", "------", "-----------", "-----------", "-----------");
     double sum_s1 = 0.0;
@@ -209,6 +244,8 @@ static int cmd_validate(const char *path) {
     if (sobol_design_build(&sp, &d, err) != 0) { fprintf(stderr, "Invalid: %s\n", err); return 1; }
     printf("Valid: %zu factors, %zu runs (N=%zu base samples)\n",
            sp.factor_count, d.npoints, sp.samples);
+    printf("Sampler: %s\n", sampler_name(&sp));
+    note_sample_count(&sp);
     sobol_design_free(&d);
     return 0;
 }
