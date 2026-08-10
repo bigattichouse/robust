@@ -36,7 +36,7 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 |---|---|
 | M0–M5, MI | ✓ complete |
 | M6 | ~ `ofat` + `grid` ✓; confirmation checker pending |
-| M7 | pending — Python bindings |
+| M7 | ~ Python bindings ship and are CI-gated (299 checks), but they drive the CLI as a **subprocess**, not the shared library via **ctypes**, which is what M7 asks for |
 | E0 | ✓ complete |
 | E1 | ~ `pareto`, `regress`, `uq`, μ\* CIs, `--keep-share`, cut-gap ✓; the **Pareto chart of effects** is pending, because it needs `report` |
 | E3 | ~ `morris --groups` + `bifurcate` ✓; `pawn` and `morris analyze --dgsm` pending |
