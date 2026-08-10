@@ -129,11 +129,46 @@ VALIDATION_BIN = $(BUILD)/validate
 # layout. sobol read `samples` from the wrong offset and reported 0. Nothing
 # warned; only a `make clean` made it go away. Do not remove this.
 DEPFILES = $(shell find $(BUILD) -name '*.d' 2>/dev/null)
+
+# Pin the default goal BEFORE including the .d files.
+#
+# make takes its default goal from the first target it sees in any makefile,
+# and `-include` counts. Once a build has emitted .d files, the first rule make
+# reads comes from one of them, so a bare `make` would build one already-current
+# object file and stop:
+#
+#     $ make
+#     make: 'build/pareto/lib/pareto.o' is up to date.
+#
+# It reports success and builds nothing. A fresh checkout is immune (no .d
+# files exist yet) and so is CI (every step names a goal), so this survived
+# from 2026-08-06 -- when the .d includes were added -- until it was reported
+# from outside on 2026-08-10, by someone whose morris binary was a day stale
+# while make said it was up to date. That is the same shape as the header-
+# dependency bug the include was added to fix: a build that is silently wrong
+# rather than loudly broken.
+#
+# Keep this line above the include. `check-default-goal` fails if it moves.
+.DEFAULT_GOAL := all
+
 -include $(DEPFILES)
 
-.PHONY: all common morris sobol robust taguchi pareto regress uq ofat grid install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all validate clean
+.PHONY: all common morris sobol robust taguchi pareto regress uq ofat grid install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all validate clean check-default-goal
 
 all: common morris sobol robust pareto regress uq ofat grid taguchi
+
+# Asserts the pin above still holds. .DEFAULT_GOAL expands in a recipe after
+# every makefile -- including the .d files -- has been read, so this sees the
+# same value a bare `make` would act on. CI runs it after a build, because
+# before one there are no .d files to displace the goal and the check cannot
+# fail.
+check-default-goal:
+	@test "$(.DEFAULT_GOAL)" = "all" || { \
+	  echo "ERROR: default goal is '$(.DEFAULT_GOAL)', not 'all'."; \
+	  echo "A bare 'make' will build that one target and report success"; \
+	  echo "without building the tree. See the note above .DEFAULT_GOAL."; \
+	  exit 1; }
+	@echo "default goal: $(.DEFAULT_GOAL)"
 
 # ---- common core --------------------------------------------------------
 common: $(COMMON_LIB)

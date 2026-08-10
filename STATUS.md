@@ -156,6 +156,29 @@ now, via `doe_json_string` / `doe_json_number` in `core/src/json.c`
 (the latter emits `null` for a non-finite value, since JSON has no `NaN`).
 
 
+**`-include` sets the default goal, and that broke a bare `make`.** From
+2026-08-06 to 2026-08-10, `-include $(DEPFILES)` sat above `all:` in the
+Makefile. make takes its default goal from the first target it sees in *any*
+makefile, `-include` counts, so once a build had emitted `.d` files a bare
+`make` built one already-current object and stopped:
+
+```
+$ make
+make: 'build/pareto/lib/pareto.o' is up to date.
+```
+
+Success, and nothing built. Every incremental rebuild after the first silently
+produced stale binaries. Reported from outside by someone who spent a while
+concluding that a shipped feature "wasn't implemented", against a binary a day
+older than the source. **A fresh checkout is immune** (no `.d` files yet) and so
+was CI (every step named a goal) — which is why it survived, and why the CI step
+that guards it now deliberately runs a bare `make`. `.DEFAULT_GOAL := all` is
+pinned above the include; `make check-default-goal` fails if that moves.
+
+Same shape as the header-dependency bug the include was added to fix, and the
+glued-CI bug above: **wrong but silent, reported as success.** That is the
+failure mode this project keeps producing, so it is the one to look for.
+
 **The build had no header dependencies until 2026-08-06.** Editing `doe.h`
 rebuilt some objects and not others, and the link silently combined two struct
 layouts — `sobol` read `samples` from the wrong offset and reported 0. Nothing

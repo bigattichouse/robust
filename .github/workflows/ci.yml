@@ -21,6 +21,32 @@ jobs:
       - name: Build (libdoe + morris/sobol/robust/pareto + taguchi)
         run: make all
 
+      # A bare `make` has to build the tree once .d files exist.
+      #
+      # It did not, from 2026-08-06 to 2026-08-10: `-include $(DEPFILES)` sat
+      # above `all:`, so after the first build the default goal came from a .d
+      # file and `make` rebuilt one current object and reported success. Users
+      # got silently stale binaries on every incremental build; one spent a
+      # while concluding a shipped feature "wasn't implemented" against a
+      # day-old binary.
+      #
+      # CI could not have caught it, because every step above names a goal —
+      # which is exactly why this step does not. It reproduces the real
+      # sequence: build, touch a source, bare `make`, and require the binary
+      # to have actually moved.
+      - name: A bare `make` builds the tree (default-goal regression)
+        run: |
+          make check-default-goal
+          before=$(stat -c %Y build/bin/morris)
+          touch screen/morris/src/cli/main.c
+          make
+          after=$(stat -c %Y build/bin/morris)
+          if [ "$after" -le "$before" ]; then
+            echo "::error::a bare 'make' did not rebuild a stale binary"
+            exit 1
+          fi
+          echo "bare make rebuilt morris: $before -> $after"
+
       # `make test` fails the build if ANY suite leaks. That was not true
       # before 2026-08-06: the valgrind stage was a `cmd; cmd; cmd` sequence,
       # so only the last suite's status reached make and all output went to
