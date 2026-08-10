@@ -54,6 +54,16 @@ jobs:
       - name: Test (all C suites + valgrind, incl. taguchi)
         run: make test-all
 
+      # The Python binding parses the CLI's output, so a formatting change here
+      # breaks it silently. `make test-all` runs these too, but only if pytest
+      # happens to be installed -- installing it makes that unconditional
+      # rather than luck.
+      - name: Install pytest (for the binding contract tests)
+        run: python3 -m pip install --quiet pytest
+
+      - name: Test the Python binding contract
+        run: make test-bindings
+
       - name: Test under ASan/UBSan
         run: make test-asan
 

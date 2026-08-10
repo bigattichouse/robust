@@ -203,6 +203,33 @@ Same shape as the header-dependency bug the include was added to fix, and the
 glued-CI bug above: **wrong but silent, reported as success.** That is the
 failure mode this project keeps producing, so it is the one to look for.
 
+**A test suite outside the build is a test suite nobody runs.** The Python
+binding at `optimize/taguchi/bindings/python` has 11 test files and 260-odd
+checks, and none of it was wired into `make` or CI. Two consequences, both
+found on 2026-08-10:
+
+- Its `core.py` searched `optimize/taguchi/build/taguchi` — where taguchi put
+  its binary back when it built itself with a sub-make — **before** the
+  umbrella `build/bin/taguchi`. That stale file survives in older trees, so the
+  suite was running against a binary **four days old** and reporting passes.
+  Fixed: umbrella path first, `$TAGUCHI_CLI` overrides.
+- **22 of its checks fail on a clean machine**, and did so before any of this
+  session's work (verified by running the same suite against the pre-change
+  binary: 22 failures either way, none introduced, none fixed). They are not
+  code bugs — they assume `/usr/bin/taguchi` exists and assume the legacy build
+  path. Until they are hermetic they cannot gate the build.
+
+So `make test-bindings` runs **only** `tests/test_cli_contract.py`, which is
+hermetic and does gate the build. Making the other 22 hermetic is the follow-up.
+
+**The binding still parses the human tables.** `core.py:168` and
+`analyzer.py:86` scrape `generate` and `effects`; `\w+` in the effects regex
+does not match a factor named `kv-type`, so that factor is silently dropped
+from the analysis. The CLI has `--json` now, but the binding has not moved onto
+it — that is the next change, and `test_cli_contract.py` exists to make it
+safe. The two broken cases are `xfail(strict=True)` there, so they fail the
+build if they start passing and cannot be quietly left behind.
+
 **The build had no header dependencies until 2026-08-06.** Editing `doe.h`
 rebuilt some objects and not others, and the link silently combined two struct
 layouts — `sobol` read `samples` from the wrong offset and reported 0. Nothing

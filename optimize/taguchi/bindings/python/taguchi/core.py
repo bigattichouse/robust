@@ -36,11 +36,27 @@ class Taguchi:
         if cli_path:
             possible_paths.append(Path(cli_path))
 
-        # Search relative to this file (package root → ../../.. → build/taguchi)
-        current_dir = Path(__file__).parent
+        # $TAGUCHI_CLI wins after an explicit argument, so a test run or a CI
+        # job can pin exactly the binary it just built.
+        env_path = os.environ.get("TAGUCHI_CLI")
+        if env_path:
+            possible_paths.append(Path(env_path))
+
+        # Search relative to this file.
+        #
+        # <repo>/build/bin/taguchi FIRST: that is where the umbrella Makefile
+        # puts every tool. The optimize/taguchi/build/taguchi path below it is
+        # where taguchi put its own binary back when it built itself with a
+        # sub-make, and that file survives in older trees -- so this list used
+        # to find a stale binary in preference to the one just built. Measured
+        # on 2026-08-10: the binding's test suite was running against a binary
+        # FOUR DAYS OLD and reporting passes. Keep the umbrella path first.
+        pkg_dir = Path(__file__).resolve().parent          # .../python/taguchi
+        repo = pkg_dir.parents[4]                          # <repo>/
         possible_paths.extend([
-            current_dir.parent.parent.parent / "build" / "taguchi",
-            current_dir.parent.parent / "build" / "taguchi",
+            repo / "build" / "bin" / "taguchi",            # umbrella build
+            pkg_dir.parents[2] / "build" / "taguchi",      # legacy sub-make
+            pkg_dir.parents[1] / "build" / "taguchi",
         ])
 
         # Common system install locations

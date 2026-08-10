@@ -118,3 +118,31 @@ python3 -m venv .venv
 ```
 
 109 tests, all passing.
+
+## Tests
+
+```sh
+make test-bindings          # from the repo root
+```
+
+That runs `tests/test_cli_contract.py`, which pins the binding's **public API**
+against the CLI: run counts and orthogonal balance out of `generate_runs`,
+`range` against the level means it reports, and `recommend_optimal` naming a
+declared level *value* under both objectives.
+
+It is written against the public API on purpose. The binding currently parses
+the CLI's human output (`core.py:168`, `analyzer.py:86`) and should move onto
+`--json`; these tests stay meaningful across that change, so passing before and
+after is evidence the switch preserved behaviour.
+
+Two checks are `xfail(strict=True)`: a factor named `kv-type` is dropped from
+the analysis today, because the effects regex matches the name with `\w+`.
+Strict means the suite fails if they start passing — they have to be flipped to
+plain tests as part of the switch, not left behind.
+
+The binary comes from `$TAGUCHI_CLI`, else `<repo>/build/bin/taguchi`. It used
+to prefer `optimize/taguchi/build/taguchi`, a path left over from when taguchi
+built itself, which meant testing a stale binary and not knowing.
+
+The other files in `tests/` are **not** run by `make`: 22 of their checks
+assume a system install at `/usr/bin/taguchi` and fail on a clean machine.

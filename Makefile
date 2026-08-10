@@ -153,7 +153,7 @@ DEPFILES = $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
 -include $(DEPFILES)
 
-.PHONY: all common morris sobol robust taguchi pareto regress uq ofat grid install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all validate clean check-default-goal
+.PHONY: all common morris sobol robust taguchi pareto regress uq ofat grid install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all test-bindings validate clean check-default-goal
 
 all: common morris sobol robust pareto regress uq ofat grid taguchi
 
@@ -269,6 +269,7 @@ run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN) \
 	@MORRIS=$(MORRIS_BIN) bash screen/morris/tests/test_morris_cli.sh
 	@SOBOL=$(SOBOL_BIN) bash attribute/sobol/tests/test_sobol_cli.sh
 	@ROBUST=$(ROBUST_BIN) bash orchestrate/robust/tests/test_robust_cli.sh
+	@$(MAKE) --no-print-directory test-bindings
 
 # The valgrind stage used to be a sequence of `valgrind ... && echo clean;`
 # lines. Because each ended in `;`, only the LAST suite's exit status reached
@@ -470,6 +471,28 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 	@MORRIS=$(MORRIS_BIN) bash screen/morris/tests/test_morris_cli.sh
 	@SOBOL=$(SOBOL_BIN) bash attribute/sobol/tests/test_sobol_cli.sh
 	@ROBUST=$(ROBUST_BIN) bash orchestrate/robust/tests/test_robust_cli.sh
+	@$(MAKE) --no-print-directory test-bindings
+
+# Python binding contract tests.
+#
+# The binding drives the CLI as a subprocess and PARSES ITS OUTPUT, so a
+# formatting change here breaks it silently -- which is exactly what happened.
+# These pin the binding's public API so moving its internals onto --json can be
+# shown to preserve behaviour.
+#
+# Only test_cli_contract.py runs: the rest of that directory assumes a system
+# install at /usr/bin/taguchi and a legacy build path, and fails on a clean
+# machine, so it cannot gate the build until it is made hermetic.
+#
+# Skipped LOUDLY without pytest. A check that reports success without running
+# is worse than no check -- see the note on the valgrind stage.
+test-bindings: $(TAGUCHI_BIN)
+	@if python3 -c 'import pytest' >/dev/null 2>&1; then \
+	  TAGUCHI_CLI=$(abspath $(TAGUCHI_BIN)) python3 -m pytest -q \
+	    optimize/taguchi/bindings/python/tests/test_cli_contract.py; \
+	else \
+	  echo "SKIP: python binding contract tests (python3 -m pytest unavailable)"; \
+	fi
 
 test-all: test
 
