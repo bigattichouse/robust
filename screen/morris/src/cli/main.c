@@ -28,6 +28,9 @@ static void usage(const char *prog) {
         "screening: r*(G+1) runs instead of r*(k+1), ranked by the absolute\n"
         "group effect. The file decides, so the design and the analysis cannot\n"
         "disagree.\n"
+        "  converge  <file.space> <script> --target-ci W [--max-trajectories N]\n"
+        "                                        Double trajectories until every 95%% CI\n"
+        "                                        on mu* is narrower than W (or cap)\n"
         "  bifurcate <file.space> <script> [--keep-share S] [--json]\n"
         "                                        Screen groups, drop, split, repeat\n"
         "  validate <file.space>                 Check the .space definition\n"
@@ -256,6 +259,138 @@ static void print_groups_json(const doe_space_t *sp, const char *metric, size_t 
     printf("  \"gap_at_cut\": %s,\n", gap >= 0.0 ? JNUM(gap) : "null");
     printf("  \"cut_is_tie\": %s\n", (gap >= 0.0 && gap < 1.05) ? "true" : "false");
     printf("}\n");
+}
+
+/* ---- converge: spend runs until the intervals are narrow enough ---- */
+
+/*
+ * E2. `trajectories:` is a guess, and the guess is the one number a .space
+ * author has no basis for. This spends runs until the answer is resolved
+ * instead: double r, re-screen, stop when every bootstrap CI on mu* is
+ * narrower than the target.
+ *
+ * Deterministic. The design is a pure function of (factors, r, p, seed), so
+ * the converged r written back into the .space reproduces the run exactly --
+ * which is the point of converging rather than eyeballing.
+ */
+typedef struct {
+    const char *script;
+    const doe_space_t *sp;
+    const double *u;
+    size_t k;
+    char buf[DOE_MAX_VALUE];
+} conv_ctx_t;
+
+static const char *conv_value(void *vctx, size_t row, size_t col) {
+    conv_ctx_t *c = (conv_ctx_t *)vctx;
+    return doe_factor_value(c->sp, col, c->u[row * c->k + col], c->buf, sizeof c->buf);
+}
+
+static int cmd_converge(const char *path, const char *script,
+                        double target, size_t max_r, int as_json) {
+    doe_space_t sp;
+    if (load_space(path, &sp) != 0) return 1;
+    if (sp.group_count > 0) {
+        fprintf(stderr, "Error: converge is per-factor; remove the groups: section\n");
+        return 1;
+    }
+
+    size_t r = sp.trajectories > 0 ? sp.trajectories : 4;
+    size_t cap = max_r ? max_r : DOE_MAX_TRAJECTORIES;
+    if (cap > DOE_MAX_TRAJECTORIES) cap = DOE_MAX_TRAJECTORIES;
+
+    size_t total_evals = 0, rounds = 0;
+    int converged = 0;
+    double widest = 0.0;
+    char err[DOE_ERR_SIZE];
+
+    /* Progress on stderr so --json owns stdout. */
+    FILE *out = as_json ? stderr : stdout;
+    fprintf(out, "Converging on a %.6g-wide 95%% CI (cap %zu trajectories)\n\n",
+            target, cap);
+    fprintf(out, "%12s %12s %14s\n", "trajectories", "runs", "widest CI");
+
+    if (as_json) {
+        printf("{\n  \"tool\": \"morris\",\n  \"command\": \"converge\",\n");
+        printf("  \"schema\": %d,\n", MORRIS_JSON_SCHEMA);
+        printf("  \"target_ci\": %s,\n", JNUM(target));
+        printf("  \"rounds\": [\n");
+    }
+
+    for (;;) {
+        doe_space_t at = sp;
+        at.trajectories = r;
+
+        morris_design_t d;
+        if (morris_design_build(&at, &d, err) != 0) {
+            fprintf(stderr, "Error: %s\n", err);
+            return 1;
+        }
+
+        double *y = malloc(d.npoints * sizeof *y);
+        if (!y) { fprintf(stderr, "Error: out of memory\n"); morris_design_free(&d); return 1; }
+
+        conv_ctx_t ctx = { .script = script, .sp = &at, .u = d.u, .k = d.k };
+        if (doe_run_capture(&at, "MORRIS", script, d.npoints, conv_value, &ctx, y, err) != 0) {
+            fprintf(stderr, "Error: %s\n", err);
+            free(y); morris_design_free(&d); return 1;
+        }
+        total_evals += d.npoints;
+        rounds++;
+
+        morris_effect_t *eff = NULL;
+        size_t count = 0;
+        if (morris_analyze(&at, y, d.npoints, &eff, &count, err) != 0) {
+            fprintf(stderr, "Error: %s\n", err);
+            free(y); morris_design_free(&d); return 1;
+        }
+
+        widest = 0.0;
+        for (size_t i = 0; i < count; i++) {
+            double w = eff[i].mu_star_hi - eff[i].mu_star_lo;
+            if (w > widest) widest = w;
+        }
+
+        fprintf(out, "%12zu %12zu %14.6g\n", r, d.npoints, widest);
+        if (as_json)
+            printf("    {\"trajectories\": %zu, \"runs\": %zu, \"widest_ci\": %s}%s\n",
+                   r, d.npoints, JNUM(widest),
+                   (widest <= target || r * 2 > cap) ? "" : ",");
+
+        free(eff); free(y); morris_design_free(&d);
+
+        if (widest <= target) { converged = 1; break; }
+        if (r * 2 > cap) break;
+        r *= 2;
+    }
+
+    if (as_json) {
+        printf("  ],\n");
+        printf("  \"converged\": %s,\n", converged ? "true" : "false");
+        printf("  \"trajectories\": %zu,\n", r);
+        printf("  \"widest_ci\": %s,\n", JNUM(widest));
+        printf("  \"evaluations\": %zu,\n", total_evals);
+        printf("  \"rounds_run\": %zu,\n", rounds);
+        printf("  \"cap\": %zu\n}\n", cap);
+    }
+
+    if (converged) {
+        fprintf(out, "\nConverged at %zu trajectories, %zu evaluations total.\n"
+                     "Write `trajectories: %zu` into the .space; the design is a pure\n"
+                     "function of (factors, r, grid_levels, seed), so that reproduces\n"
+                     "this run exactly.\n", r, total_evals, r);
+        return 0;
+    }
+
+    /* Capped without converging is a real answer, not a crash: it says the
+     * budget you allowed cannot resolve this model. Exit non-zero so a script
+     * notices. */
+    fprintf(stderr,
+        "\nDid NOT converge: the widest CI is still %.6g at the %zu-trajectory cap,\n"
+        "after %zu evaluations. Either raise --max-trajectories, accept a wider\n"
+        "target, or take it as the finding -- a response this noisy will not give\n"
+        "a resolvable ranking at any budget you can afford.\n", widest, cap, total_evals);
+    return 1;
 }
 
 /* ---- bifurcate: screen, drop, split, repeat ---- */
@@ -758,6 +893,32 @@ int main(int argc, char *argv[]) {
     if (strcmp(cmd, "run") == 0) {
         if (argc < 4) { fprintf(stderr, "run needs a script argument\n"); return 1; }
         return cmd_run(path, argv[3]);
+    }
+    if (strcmp(cmd, "converge") == 0) {
+        if (argc < 4) { fprintf(stderr, "converge needs a script argument\n"); return 1; }
+        double target = 0.0;
+        size_t max_r = 0;
+        int as_json = 0;
+        for (int i = 4; i < argc; i++) {
+            if (strcmp(argv[i], "--target-ci") == 0 && i + 1 < argc) {
+                target = strtod(argv[++i], NULL);
+                if (!(target > 0.0)) {
+                    fprintf(stderr, "--target-ci must be > 0\n"); return 1;
+                }
+            } else if (strcmp(argv[i], "--max-trajectories") == 0 && i + 1 < argc) {
+                max_r = (size_t)strtoul(argv[++i], NULL, 10);
+                if (max_r < 1) { fprintf(stderr, "--max-trajectories must be >= 1\n"); return 1; }
+            } else if (strcmp(argv[i], "--json") == 0) as_json = 1;
+            else {
+                fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+                usage(argv[0]); return 1;
+            }
+        }
+        if (!(target > 0.0)) {
+            fprintf(stderr, "converge needs --target-ci W (the CI width to reach)\n");
+            return 1;
+        }
+        return cmd_converge(path, argv[3], target, max_r, as_json);
     }
     if (strcmp(cmd, "bifurcate") == 0) {
         if (argc < 4) { fprintf(stderr, "bifurcate needs a script argument\n"); return 1; }

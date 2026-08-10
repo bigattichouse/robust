@@ -40,7 +40,8 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 | E0 | ✓ complete |
 | E1 | ~ `pareto`, `regress`, `uq`, μ\* CIs, `--keep-share`, cut-gap ✓; the **Pareto chart of effects** is pending, because it needs `report` |
 | E3 | ~ `morris --groups` + `bifurcate` ✓; `pawn` and `morris analyze --dgsm` pending |
-| E2, E4, E5, E6, E7 | pending |
+| E2 | ~ `morris converge` ✓; the sobol half (`--target-ci` on `samples:`) pending |
+| E4, E5, E6, E7 | pending |
 
 *E1 and E3 were both recorded here as complete until 2026-08-09. They are not:
 each has one deliverable left, and in E1's case it was blocked on a binary the
@@ -62,13 +63,13 @@ and nothing in the toolkit does robustness-to-noise today. Everything it needs
 is now in place. It is the largest single piece of unbuilt *method* and the
 biggest gap between what the project is called and what it does.
 
-### 1. E2 — `--target-ci` sequential convergence
+### 1. E2 — the sobol half
 
-Morris and Sobol both carry bootstrap CIs, so this is unblocked. Keep doubling
-`trajectories:` / `samples:` until every CI is narrower than a target or a cap
-is hit (caps per SECURITY.md H1). Must stay regenerable from the `.space` seed
-alone — which is free for `sampling: sobol`, since the sequence is
-deterministic, and needs care for `lhs`.
+`morris converge` is built. The same for `sobol` (doubling `samples:` until
+every Sᵢ/S_T interval is narrower than the target) is the remaining half, and
+should be a close copy: the loop, the cap behaviour and the JSON shape all
+carry over. Watch the `lhs` path — `sampling: sobol` is deterministic in N, but
+LHS needs care to stay regenerable from the seed alone.
 
 ### 2. ~~M6's confirmation checker~~ — built 2026-08-10
 

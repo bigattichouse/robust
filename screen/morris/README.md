@@ -149,6 +149,27 @@ stdout is unchanged either way, so pipelines are unaffected. Both warnings also
 fire in `--json` mode, for the same reason they exist at all.
 
 
+## `converge` — stop guessing `trajectories:`
+
+```sh
+morris converge model.space ./run.sh --target-ci 5 [--max-trajectories N]
+```
+
+Doubles `trajectories:` and re-screens until every 95% CI on μ\* is narrower
+than the target, then tells you the number to write into the `.space`. That
+number reproduces the run exactly — the design is a pure function of
+`(factors, r, grid_levels, seed)` — so converging once and recording the answer
+keeps the file self-contained.
+
+Hitting the cap **exits non-zero** and says so. A budget that cannot resolve the
+ranking is a finding, and a script must not read a wide interval as a narrow
+one. Raise `--max-trajectories`, widen the target, or accept that this response
+will not give a resolvable ranking at a price you want to pay.
+
+`--target-ci` is an absolute width in response units, because that is what the
+interval is measured in. Read one `analyze` run first if you need a sense of
+scale.
+
 ## `--json` — the machine-readable contract
 
 ```sh

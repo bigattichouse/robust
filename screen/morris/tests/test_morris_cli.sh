@@ -351,6 +351,83 @@ json_is "True" "all(k in t for t in d['trace'] for k in ('round','group','mu_sta
 expect_exit 1 "bifurcate rejects an unknown option" \
     "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --format json
 
+# ---- converge: spend runs until the intervals resolve (E2) ---------------
+#
+# `trajectories:` is the one number a .space author has no basis for guessing.
+# A deterministic nonlinear model gives elementary effects that vary across
+# trajectories, so the CI narrows with r -- which is what makes the target
+# reachable at all.
+cat > "$TMP/nl.sh" <<'EOF'
+#!/bin/sh
+awk -v a="$MORRIS_a" -v b="$MORRIS_b" 'BEGIN{printf "%.6f\n", a*a + 3*b + a*b}'
+EOF
+chmod +x "$TMP/nl.sh"
+cat > "$TMP/c.space" <<'EOF'
+factors:
+  a: 0,10
+  b: 0,10
+seed: 5
+trajectories: 4
+EOF
+
+expect_exit 0 "converge reaches a loose target" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 200
+expect_match "Converged at" "converge says where it landed" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 200
+expect_exit 1 "converge needs --target-ci" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh"
+expect_exit 1 "converge rejects a non-positive target" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 0
+expect_exit 1 "converge rejects an unknown option" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 50 --format json
+
+# Capped without converging is a finding, not a crash -- and must exit non-zero
+# so a script notices rather than reading a wide interval as a narrow one.
+expect_exit 1 "converge exits 1 when the cap is hit" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 0.001 --max-trajectories 16
+expect_stderr "Did NOT converge" "converge says so when capped" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 0.001 --max-trajectories 16
+
+json_ok "converge --json parses" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 200 --json
+json_is "True" "d['converged']" "converge --json reports success" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 200 --json
+json_is "True" "d['widest_ci'] <= d['target_ci']" \
+    "converge --json: it stopped because the target was met" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 200 --json
+json_is "False" "d['converged']" "converge --json reports a capped run" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 0.001 --max-trajectories 16 --json
+# The intervals must actually narrow as r doubles, or the loop is theatre.
+json_is "True" "[r['trajectories'] for r in d['rounds']] == [4, 8, 16]" \
+    "converge --json: trajectories double each round" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 0.001 --max-trajectories 16 --json
+json_is "True" "d['rounds'][-1]['widest_ci'] < d['rounds'][0]['widest_ci']" \
+    "converge --json: the interval narrows with more trajectories" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 0.001 --max-trajectories 64 --json
+json_is "True" "d['evaluations'] == sum(r['runs'] for r in d['rounds'])" \
+    "converge --json: the spend is the sum of its rounds" \
+    "$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 0.001 --max-trajectories 16 --json
+
+# The claim the feature rests on: the converged r reproduces the run, because
+# the design is a pure function of (factors, r, grid_levels, seed).
+if [ "$HAVE_PY" -eq 1 ]; then
+    conv=$("$MORRIS" converge "$TMP/c.space" "$TMP/nl.sh" --target-ci 40 --json 2>/dev/null)
+    r=$(printf '%s' "$conv" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["trajectories"])')
+    w=$(printf '%s' "$conv" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%.6f" % d["widest_ci"])')
+    sed "s/trajectories: 4/trajectories: $r/" "$TMP/c.space" > "$TMP/cr.space"
+    { echo "run_id,response"; "$MORRIS" sample "$TMP/cr.space" | tail -n +2 \
+      | awk -F, '{printf "%d,%.6f\n", NR, $2*$2 + 3*$3 + $2*$3}'; } > "$TMP/cr.csv"
+    w2=$("$MORRIS" analyze "$TMP/cr.space" "$TMP/cr.csv" --json 2>/dev/null \
+         | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%.6f" % max(f["mu_star_hi"]-f["mu_star_lo"] for f in d["factors"]))')
+    # Tolerance, not equality: converge subtracts full doubles in C while this
+    # subtracts two values already rounded to 10 significant digits by --json.
+    same=$(python3 -c "import sys; print(abs(float(sys.argv[1])-float(sys.argv[2])) < 1e-4)" "$w" "$w2")
+    [ "$same" = "True" ] && ok "converge: the reported r reproduces the run" \
+        || bad "converge: the reported r reproduces the run" "$w vs $w2"
+else
+    skip "converge: the reported r reproduces the run exactly"
+fi
+
 expect_exit 1 "unknown command exits 1" "$MORRIS" not-a-command "$TMP/f.space"
 expect_exit 1 "no arguments exits 1" "$MORRIS"
 
