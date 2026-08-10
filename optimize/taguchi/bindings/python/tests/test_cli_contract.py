@@ -318,48 +318,33 @@ class TestFromTguDoesNotEatYourFile:
         p.write_text(self.TGU)
         return p
 
-    def test_enhanced_layer_leaves_it_alone(self, tmp_path):
-        from taguchi import Experiment as Enhanced
+    def test_from_tgu_leaves_it_alone(self, tmp_path):
+        from taguchi import Experiment
         p = self._write(tmp_path)
-        with Enhanced.from_tgu(str(p)):
-            pass
-        assert p.exists(), "from_tgu deleted the caller's file"
-
-    def test_original_layer_leaves_it_alone(self, tmp_path):
-        from taguchi.experiment import Experiment as Original
-        p = self._write(tmp_path)
-        with Original.from_tgu(str(p)):
+        with Experiment.from_tgu(str(p)):
             pass
         assert p.exists(), "from_tgu deleted the caller's file"
 
     def test_it_survives_a_failed_load(self, tmp_path):
-        """The path my first fix missed.
-
-        cleanup() was not the only place that unlinked. __del__ did its own,
-        checking only that _tgu_path was set -- so when from_tgu raised on a
-        bad file, the half-built object's destructor deleted the .tgu the user
-        was asking about. Garbage collection, not an explicit call, which is
-        why fixing cleanup() alone looked like it worked.
-        """
+        """__del__ had its own unlink that ignored ownership, so a from_tgu
+        that RAISED left an object whose destructor deleted the file."""
         import gc
-        from taguchi.experiment import Experiment as Enhanced
-        from taguchi.experiment import Experiment as Original
+        from taguchi import Experiment
 
-        for cls in (Enhanced, Original):
-            p = tmp_path / ("bad_%s.tgu" % cls.__module__.rsplit(".", 1)[-1])
-            p.write_text("\nfactors:\n  invalid name: low, high\n  temp: \n")
-            try:
-                cls.from_tgu(str(p))
-            except Exception:
-                pass
-            gc.collect()
-            assert p.exists(), "%s deleted the file after a failed load" % cls
+        p = tmp_path / "bad.tgu"
+        p.write_text("\nfactors:\n  invalid name: low, high\n  temp: \n")
+        try:
+            Experiment.from_tgu(str(p))
+        except Exception:
+            pass
+        gc.collect()
+        assert p.exists(), "deleted the file after a failed load"
 
     def test_a_temp_file_it_created_is_still_cleaned_up(self, tmp_path):
         """The other half of the contract: don't fix the leak by leaking."""
         import os
-        from taguchi.experiment import Experiment as Original
-        exp = Original()
+        from taguchi import Experiment
+        exp = Experiment()
         exp.add_factor("x", ["1", "2"])
         exp.add_factor("y", ["1", "2"])
         path = exp.get_tgu_path()

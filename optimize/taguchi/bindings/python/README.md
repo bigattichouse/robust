@@ -121,12 +121,9 @@ python3 -m venv .venv
 
 ## How the binding talks to the CLI
 
-It shells out and reads **`--json`** (`taguchi/_cli_json.py`). It used to parse
-the human tables, in four places — a design parser in `core.py` and again in
-`core_enhanced.py`, an effects parser in `analyzer.py` and again in
-`analyzer_enhanced.py` — each skipping any line it could not match. That is why
-a factor named `kv-type` disappeared from the analysis: the effects regex
-matched names with `\w+`, and nothing reported the loss.
+It shells out and reads **`--json`** (`taguchi/_cli_json.py`), not the human
+tables. Scraping them silently dropped data — a factor named `kv-type` never
+matched the effects regex and vanished from the analysis.
 
 The readers are strict where the scrapers were forgiving. A short run list, a
 missing `settings` object, or a `schema` newer than this binding understands

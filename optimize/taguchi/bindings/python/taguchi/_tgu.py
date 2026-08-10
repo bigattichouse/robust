@@ -1,25 +1,10 @@
 """
 Reading and owning `.tgu` files.
 
-WHY THIS MODULE EXISTS
-----------------------
-The package used to carry `experiment.py` and `experiment_enhanced.py`, each
-with its own copy of
-
-- the `.tgu` text parser used by `from_tgu()`, byte-identical between them, and
-- the temp-file lifecycle: create on demand, delete in `cleanup()`, delete
-  again in `__del__`.
-
-The lifecycle copy is what made this worth extracting rather than tidying.
-Both deleted the file named by `_tgu_path` without asking whether they had
-created it, and `from_tgu()` points `_tgu_path` at the CALLER's file -- so
-
-    with Experiment.from_tgu("my_experiment.tgu") as exp:
-        ...
-
-destroyed the user's input. Fixing it meant the same edit in two files, and the
-first attempt missed `__del__` in both, so the destructor went on deleting the
-file after a failed load. One place to get it right.
+`parse_tgu` turns `.tgu` text into (factors, array_type). `TguFileMixin` tracks
+whether the Experiment CREATED the file it points at: `from_tgu()` adopts the
+caller's file and must never delete it, while a generated temp file is ours to
+clean up. Everything here checks `_owns_tgu` before unlinking.
 """
 
 import os

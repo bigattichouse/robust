@@ -1,8 +1,8 @@
-# Taguchi Python Bindings - Enhanced Version
+# Taguchi Python Bindings — configuration, validation and async
 
 Enhanced Python bindings for the Taguchi orthogonal array library with improved error handling, configuration management, validation, async support, and comprehensive diagnostics while maintaining full backward compatibility.
 
-## New Features in v1.6.0
+## Features
 
 ### 🚀 **Phase 1: Critical Infrastructure**
 - **Enhanced Binary Discovery**: `TAGUCHI_CLI_PATH` environment variable support with detailed error reporting
@@ -21,7 +21,7 @@ Enhanced Python bindings for the Taguchi orthogonal array library with improved 
 
 ## Quick Start
 
-### Basic Usage (Backward Compatible)
+### Basic usage
 ```python
 from taguchi import Experiment, Analyzer
 
@@ -41,7 +41,7 @@ with Analyzer(exp, metric_name="yield") as analyzer:
     print(f"Optimal settings: {optimal}")
 ```
 
-### Enhanced Usage with Configuration
+### With explicit configuration
 ```python
 from taguchi import Experiment, Analyzer, TaguchiConfig, Taguchi
 
@@ -301,7 +301,7 @@ See the `examples/` directory for comprehensive usage examples:
 - ✅ Same import paths and class names  
 - ✅ Original error types still caught
 - ✅ No performance regression
-- ✅ Original classes available as `OriginalTaguchi`, etc.
+- ✅ Original classes available as `Taguchi`, etc.
 
 ## Requirements
 

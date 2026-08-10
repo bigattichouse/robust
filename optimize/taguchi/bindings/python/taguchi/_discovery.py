@@ -1,27 +1,13 @@
 """
-Where the taguchi CLI binary lives — one search order for the whole package.
+Where the taguchi CLI binary lives — one search order for the package.
 
-WHY THIS MODULE EXISTS
-----------------------
-This search existed twice — the package used to carry a `core.py` and a
-`core_enhanced.py`, each with its own copy — and the two disagreed in three
-ways that each produced a bug:
+Order: an explicit `cli_path` argument, then $TAGUCHI_CLI_PATH / $TAGUCHI_CLI,
+then the umbrella build at <repo>/build/bin/taguchi, then legacy and system
+locations, then PATH. An argument is a decision; an environment variable is a
+default.
 
-- Both listed `optimize/taguchi/build/taguchi` -- where taguchi put its binary
-  when it built itself with a sub-make -- BEFORE the umbrella `build/bin/`.
-  That stale file survives in older trees, so the binding's test suite ran
-  against a binary four days old and reported passes.
-- One read `$TAGUCHI_CLI`, the other `$TAGUCHI_CLI_PATH`. Pinning a binary
-  configured one half of the package and silently not the other.
-- One searched the environment BEFORE an explicit `cli_path` argument, so
-  `Taguchi(cli_path=...)` could be overridden by whatever happened to be in the
-  shell.
-
-Each was found and fixed separately, which is the cost of duplication rather
-than a coincidence. The two modules are one now, and so is this.
-
-`find_cli` returns None rather than raising, so a caller can report a missing
-binary in whatever terms suit it.
+`find_cli` returns None rather than raising, so callers can report a missing
+binary in whatever terms suit them.
 """
 
 import os
