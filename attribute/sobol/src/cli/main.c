@@ -16,8 +16,9 @@ static void usage(const char *prog) {
         "  sample   <file.space>                 Print the Saltelli design as CSV\n"
         "  generate <file.space>                 Show the design structure\n"
         "  run      <file.space> <script>        Run <script> once per point (SOBOL_* env)\n"
-        "  analyze  <file.space> <results.csv> [--metric NAME]\n"
-        "                                        First/total indices Si, STi (+ CIs)\n"
+        "  analyze  <file.space> <results.csv> [--metric NAME] [--json]\n"
+        "                                        First/total indices Si, STi (+ CIs);\n"
+        "                                        --json for machines (stable contract)\n"
         "  validate <file.space>                 Check the .space definition\n"
         "  --version                             Show version\n",
         prog);
@@ -160,7 +161,73 @@ static int cmd_run(const char *path, const char *script) {
     return rc == 0 ? 0 : 1;
 }
 
-static int cmd_analyze(const char *path, const char *csv, const char *metric) {
+/*
+ * The machine-readable contract. See the note in screen/morris/src/cli/main.c:
+ * `analyze` grew a CI column rendered glued to its value ("0.812[0.79,0.83]")
+ * and that broke every consumer splitting the row on whitespace, silently.
+ * The tables here are a display; these keys are the interface. Additions are
+ * free, renames and removals need a schema bump.
+ */
+#define SOBOL_JSON_SCHEMA 1
+#define JSTR(s) doe_json_string((s), (char[DOE_JSON_STR(DOE_MAX_NAME)]){0}, \
+                                DOE_JSON_STR(DOE_MAX_NAME))
+#define JNUM(v) doe_json_number((v), (char[DOE_JSON_NUM]){0}, DOE_JSON_NUM)
+
+/* argv-supplied, so unbounded and user-chosen: it gets the allocating escape
+ * rather than the DOE_MAX_NAME-sized one. */
+static void print_metric_field(const char *metric) {
+    char *m = doe_json_escape(metric);
+    printf("  \"metric\": \"%s\",\n", m ? m : "");
+    doe_free(m);
+}
+
+static void print_indices_json(const doe_space_t *sp, const char *metric, size_t np,
+                               const sobol_index_t *idx, size_t count, double sum_s1,
+                               const sobol_pair_t *pairs, size_t npairs) {
+    printf("{\n");
+    printf("  \"tool\": \"sobol\",\n");
+    printf("  \"command\": \"analyze\",\n");
+    printf("  \"schema\": %d,\n", SOBOL_JSON_SCHEMA);
+    print_metric_field(metric);
+    printf("  \"sampler\": \"%s\",\n",
+           sp->sampling == DOE_SAMPLING_SOBOL ? "sobol" : "lhs");
+    printf("  \"samples\": %zu,\n", sp->samples);
+    printf("  \"runs\": %zu,\n", np);
+    printf("  \"factor_count\": %zu,\n", count);
+    printf("  \"sum_first_order\": %s,\n", JNUM(sum_s1));
+    printf("  \"additive\": %s,\n", sum_s1 > 0.9 ? "true" : "false");
+    printf("  \"indices\": [\n");
+    for (size_t i = 0; i < count; i++) {
+        printf("    {\"factor\": %s, \"s1\": %s, \"s1_lo\": %s, \"s1_hi\": %s, "
+               "\"st\": %s, \"st_lo\": %s, \"st_hi\": %s, \"interaction\": %s}%s\n",
+               JSTR(idx[i].name),
+               JNUM(idx[i].s1), JNUM(idx[i].s1_lo), JNUM(idx[i].s1_hi),
+               JNUM(idx[i].st), JNUM(idx[i].st_lo), JNUM(idx[i].st_hi),
+               JNUM(idx[i].st - idx[i].s1),
+               i + 1 < count ? "," : "");
+    }
+    printf("  ]");
+
+    if (!pairs) {
+        printf(",\n  \"second_order\": null\n");
+    } else {
+        /* Every pair, not the top ten the table stops at: truncating a machine
+         * format leaves the consumer unable to tell a short list from a
+         * complete one. */
+        printf(",\n  \"second_order\": [\n");
+        for (size_t i = 0; i < npairs; i++) {
+            printf("    {\"a\": %s, \"b\": %s, \"s2\": %s, \"closed\": %s}%s\n",
+                   JSTR(pairs[i].a), JSTR(pairs[i].b),
+                   JNUM(pairs[i].s2), JNUM(pairs[i].closed),
+                   i + 1 < npairs ? "," : "");
+        }
+        printf("  ]\n");
+    }
+    printf("}\n");
+}
+
+static int cmd_analyze(const char *path, const char *csv, const char *metric,
+                       int as_json) {
     doe_space_t sp;
     if (load_space(path, &sp) != 0) return 1;
 
@@ -185,27 +252,17 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric) {
         return 1;
     }
 
-    printf("Sobol indices (metric: %s) — N=%zu, %zu runs\n", metric, sp.samples, np);
-    printf("Sampler: %s\n\n", sampler_name(&sp));
-    printf("%-18s %18s %18s   %s\n", "Factor", "S1 [95% CI]", "ST [95% CI]", "interaction");
-    printf("%-18s %18s %18s   %s\n", "------", "-----------", "-----------", "-----------");
     double sum_s1 = 0.0;
-    for (size_t i = 0; i < count; i++) {
-        char s1c[40], stc[40];
-        snprintf(s1c, sizeof s1c, "%.3f[%.2f,%.2f]", idx[i].s1, idx[i].s1_lo, idx[i].s1_hi);
-        snprintf(stc, sizeof stc, "%.3f[%.2f,%.2f]", idx[i].st, idx[i].st_lo, idx[i].st_hi);
-        printf("%-18s %18s %18s   %.3f\n", idx[i].name, s1c, stc, idx[i].st - idx[i].s1);
-        sum_s1 += idx[i].s1;
-    }
-    printf("\nSum of first-order Si = %.3f", sum_s1);
-    if (sum_s1 > 0.9) printf("  (~1 => additive; OA/Taguchi ranking trustworthy)\n");
-    else              printf("  (<1 => interactions present)\n");
-    printf("ST ~ 0 => freeze the factor; ST - S1 large => acts through interactions.\n");
+    for (size_t i = 0; i < count; i++) sum_s1 += idx[i].s1;
 
+    /* Computed before either renderer runs, so --json can carry the pairs
+     * rather than only the table showing them. */
+    sobol_pair_t *pairs = NULL;
+    size_t np2 = 0;
     if (sp.second_order) {
-        sobol_pair_t *pairs = NULL; size_t np2 = 0;
         if (sobol_analyze_pairs(&sp, responses, np, &pairs, &np2, err) != 0) {
             fprintf(stderr, "Error: %s\n", err);
+            pairs = NULL; np2 = 0;
         } else {
             /* Rank by interaction magnitude: the pairs worth resolving first. */
             for (size_t i = 0; i < np2; i++)
@@ -213,25 +270,59 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric) {
                     if (pairs[j].s2 > pairs[i].s2) {
                         sobol_pair_t t = pairs[i]; pairs[i] = pairs[j]; pairs[j] = t;
                     }
-            printf("\nSecond-order interactions (%zu pairs)\n\n", np2);
-            printf("%-30s %10s %10s\n", "pair", "S2", "closed");
-            printf("%-30s %10s %10s\n", "----", "--", "------");
-            for (size_t i = 0; i < np2 && i < 10; i++) {
-                char lbl[2 * DOE_MAX_NAME + 8];
-                snprintf(lbl, sizeof lbl, "%s x %s", pairs[i].a, pairs[i].b);
-                printf("%-30s %10.4f %10.4f\n", lbl, pairs[i].s2, pairs[i].closed);
-            }
-            if (np2 > 10) printf("... %zu more, smaller\n", np2 - 10);
-            printf("\nS2 is the interaction ALONE: what the pair explains beyond each\n"
-                   "factor acting separately. It answers the question ST - S1 can only\n"
-                   "raise -- which two. Resolve the top pair exactly with:\n"
-                   "  grid <space> <script> --factors %s,%s\n",
-                   np2 ? pairs[0].a : "A", np2 ? pairs[0].b : "B");
-            free(pairs);
         }
     }
     free(responses);
 
+    if (as_json) {
+        print_indices_json(&sp, metric, np, idx, count, sum_s1, pairs, np2);
+        free(pairs);
+        free(idx);
+        return 0;
+    }
+
+    printf("Sobol indices (metric: %s) — N=%zu, %zu runs\n", metric, sp.samples, np);
+    printf("Sampler: %s\n\n", sampler_name(&sp));
+    /*
+     * Each index and its interval are separate columns, and each interval is a
+     * single space-free token. Printed glued together ("0.812[0.79,0.83]") the
+     * value will not parse as a number for anything splitting the row on
+     * whitespace; printed as "[0.79, 0.83]" the interval would split in two and
+     * shift every column after it. See the note in morris's analyze.
+     */
+    printf("%-18s %10s %14s %10s %14s   %s\n",
+           "Factor", "S1", "[95% CI]", "ST", "[95% CI]", "interaction");
+    printf("%-18s %10s %14s %10s %14s   %s\n",
+           "------", "--", "--------", "--", "--------", "-----------");
+    for (size_t i = 0; i < count; i++) {
+        char s1c[40], stc[40];
+        snprintf(s1c, sizeof s1c, "[%.2f,%.2f]", idx[i].s1_lo, idx[i].s1_hi);
+        snprintf(stc, sizeof stc, "[%.2f,%.2f]", idx[i].st_lo, idx[i].st_hi);
+        printf("%-18s %10.3f %14s %10.3f %14s   %.3f\n",
+               idx[i].name, idx[i].s1, s1c, idx[i].st, stc, idx[i].st - idx[i].s1);
+    }
+    printf("\nSum of first-order Si = %.3f", sum_s1);
+    if (sum_s1 > 0.9) printf("  (~1 => additive; OA/Taguchi ranking trustworthy)\n");
+    else              printf("  (<1 => interactions present)\n");
+    printf("ST ~ 0 => freeze the factor; ST - S1 large => acts through interactions.\n");
+
+    if (pairs) {
+        printf("\nSecond-order interactions (%zu pairs)\n\n", np2);
+        printf("%-30s %10s %10s\n", "pair", "S2", "closed");
+        printf("%-30s %10s %10s\n", "----", "--", "------");
+        for (size_t i = 0; i < np2 && i < 10; i++) {
+            char lbl[2 * DOE_MAX_NAME + 8];
+            snprintf(lbl, sizeof lbl, "%s x %s", pairs[i].a, pairs[i].b);
+            printf("%-30s %10.4f %10.4f\n", lbl, pairs[i].s2, pairs[i].closed);
+        }
+        if (np2 > 10) printf("... %zu more, smaller (--json carries them all)\n", np2 - 10);
+        printf("\nS2 is the interaction ALONE: what the pair explains beyond each\n"
+               "factor acting separately. It answers the question ST - S1 can only\n"
+               "raise -- which two. Resolve the top pair exactly with:\n"
+               "  grid <space> <script> --factors %s,%s\n",
+               np2 ? pairs[0].a : "A", np2 ? pairs[0].b : "B");
+    }
+    free(pairs);
     free(idx);
     return 0;
 }
@@ -271,10 +362,19 @@ int main(int argc, char *argv[]) {
     if (strcmp(cmd, "analyze") == 0) {
         if (argc < 4) { fprintf(stderr, "analyze needs a results.csv argument\n"); return 1; }
         const char *metric = "response";
-        for (int i = 4; i < argc - 1; i++) {
-            if (strcmp(argv[i], "--metric") == 0) { metric = argv[i + 1]; break; }
+        int as_json = 0;
+        for (int i = 4; i < argc; i++) {
+            if (strcmp(argv[i], "--metric") == 0 && i + 1 < argc) metric = argv[++i];
+            else if (strcmp(argv[i], "--json") == 0) as_json = 1;
+            else {
+                /* Rejected, not ignored: a caller asking for an option this
+                 * build does not have must not get the human table and exit 0. */
+                fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+                usage(argv[0]);
+                return 1;
+            }
         }
-        return cmd_analyze(path, argv[3], metric);
+        return cmd_analyze(path, argv[3], metric, as_json);
     }
 
     fprintf(stderr, "Unknown command: %s\n", cmd);

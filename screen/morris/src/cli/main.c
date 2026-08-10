@@ -18,10 +18,11 @@ static void usage(const char *prog) {
         "  sample   <file.space>                 Print the design matrix as CSV\n"
         "  generate <file.space>                 List the design points (human-readable)\n"
         "  run      <file.space> <script>        Run <script> once per point (MORRIS_* env)\n"
-        "  analyze  <file.space> <results.csv> [--metric NAME] [--keep-share S]\n"
+        "  analyze  <file.space> <results.csv> [--metric NAME] [--keep-share S] [--json]\n"
         "                                        Elementary effects: mu* with 95%% CI,\n"
         "                                        sigma; --keep-share cuts at cumulative\n"
-        "                                        mu*-share S (an 80/20 rule)\n"
+        "                                        mu*-share S (an 80/20 rule);\n"
+        "                                        --json for machines (stable contract)\n"
         "\n"
         "A `groups:` section in the .space switches every command to group\n"
         "screening: r*(G+1) runs instead of r*(k+1), ranked by the absolute\n"
@@ -286,8 +287,86 @@ static int cmp_group_mu_star(const void *a, const void *b) {
     return 0;
 }
 
+/*
+ * The machine-readable contract.
+ *
+ * The human tables above are a display, and displays change: the 95% CI was
+ * added to `analyze` as a column improvement and, because it was rendered
+ * glued to mu* ("215.6[210,221]"), it silently broke every consumer that split
+ * the row on whitespace. Those consumers got an empty ranking rather than an
+ * error, so a screening stage degraded into a no-op AFTER paying for r*(k+1)
+ * real evaluations. Nothing warned, because from inside the repo it read as a
+ * formatting tweak.
+ *
+ * --json is the fix that keeps the fix: it separates what a person reads from
+ * what a program parses, so the tables can keep evolving. Treat the key names
+ * below as the interface. Add fields freely; renaming or removing one is a
+ * breaking change and needs a version bump.
+ *
+ * stderr diagnostics are deliberately identical in both modes. A warning that
+ * only a human sees is how this class of bug happens in the first place.
+ *
+ * The schema number is bumped when a key is renamed or removed, never for an
+ * addition, so a consumer can refuse a document it does not understand instead
+ * of parsing it wrongly -- exactly the signal the glued-CI change lacked.
+ */
+#define MORRIS_JSON_SCHEMA 1
+
+#define JSTR(s) doe_json_string((s), (char[DOE_JSON_STR(DOE_MAX_NAME)]){0}, \
+                                DOE_JSON_STR(DOE_MAX_NAME))
+#define JNUM(v) doe_json_number((v), (char[DOE_JSON_NUM]){0}, DOE_JSON_NUM)
+
+/*
+ * The metric name comes from argv, so unlike a factor name it is not bounded
+ * by DOE_MAX_NAME and gets the allocating escape. A silently truncated metric
+ * would mislabel the entire document -- and it is a string a user chooses, so
+ * it is the one field here that can carry a quote or a backslash.
+ */
+static void print_metric_field(const char *metric) {
+    char *m = doe_json_escape(metric);
+    printf("  \"metric\": \"%s\",\n", m ? m : "");
+    doe_free(m);
+}
+
+static void print_groups_json(const doe_space_t *sp, const char *metric, size_t np,
+                              const morris_group_effect_t *eff, size_t count) {
+    printf("{\n");
+    printf("  \"tool\": \"morris\",\n");
+    printf("  \"command\": \"analyze\",\n");
+    printf("  \"schema\": %d,\n", MORRIS_JSON_SCHEMA);
+    printf("  \"mode\": \"group\",\n");
+    print_metric_field(metric);
+    printf("  \"trajectories\": %zu,\n", sp->trajectories);
+    printf("  \"runs\": %zu,\n", np);
+    printf("  \"per_factor_runs\": %zu,\n", sp->trajectories * (sp->factor_count + 1));
+    printf("  \"factor_count\": %zu,\n", sp->factor_count);
+    printf("  \"group_count\": %zu,\n", sp->group_count);
+    printf("  \"groups\": [\n");
+    for (size_t i = 0; i < count; i++) {
+        printf("    {\"group\": %s, \"mu_star\": %s, \"sigma\": %s, \"members\": %zu}%s\n",
+               JSTR(eff[i].name), JNUM(eff[i].mu_star), JNUM(eff[i].sigma),
+               eff[i].member_count, i + 1 < count ? "," : "");
+    }
+    printf("  ],\n");
+
+    /*
+     * Group analyze is not given a cut, so the gap it can report is the one at
+     * the bottom of the ranking -- the same pair the human warning describes.
+     * Reported under the same keys as the per-factor path (spec/morris-groups.bp
+     * requires both paths to carry them) with `cut_at` saying where it was taken.
+     */
+    double gap = -1.0;
+    if (count >= 2 && eff[count - 1].mu_star > 0.0)
+        gap = eff[count - 2].mu_star / eff[count - 1].mu_star;
+    printf("  \"cut_at\": \"bottom\",\n");
+    printf("  \"gap_at_cut\": %s,\n", gap >= 0.0 ? JNUM(gap) : "null");
+    printf("  \"cut_is_tie\": %s\n", (gap >= 0.0 && gap < 1.05) ? "true" : "false");
+    printf("}\n");
+}
+
 /* Group screening: r*(G+1) runs, ranked by the absolute group effect. */
-static int cmd_analyze_groups(const doe_space_t *sp, const char *csv, const char *metric) {
+static int cmd_analyze_groups(const doe_space_t *sp, const char *csv, const char *metric,
+                              int as_json) {
     size_t np = morris_group_npoints(sp);
     double *responses = malloc(np * sizeof *responses);
     if (!responses) { fprintf(stderr, "Error: out of memory\n"); return 1; }
@@ -312,15 +391,19 @@ static int cmd_analyze_groups(const doe_space_t *sp, const char *csv, const char
 
     qsort(eff, count, sizeof *eff, cmp_group_mu_star);
 
-    printf("Morris GROUP effects (metric: %s) — %zu trajectories, %zu groups over %zu factors\n",
-           metric, sp->trajectories, sp->group_count, sp->factor_count);
-    printf("%zu runs, against %zu for per-factor screening.\n\n",
-           np, sp->trajectories * (sp->factor_count + 1));
-    printf("%-20s %12s %12s %8s\n", "Group", "mu*", "spread", "members");
-    printf("%-20s %12s %12s %8s\n", "-----", "----", "------", "-------");
-    for (size_t i = 0; i < count; i++) {
-        printf("%-20s %12.4g %12.4g %8zu\n",
-               eff[i].name, eff[i].mu_star, eff[i].sigma, eff[i].member_count);
+    if (as_json) {
+        print_groups_json(sp, metric, np, eff, count);
+    } else {
+        printf("Morris GROUP effects (metric: %s) — %zu trajectories, %zu groups over %zu factors\n",
+               metric, sp->trajectories, sp->group_count, sp->factor_count);
+        printf("%zu runs, against %zu for per-factor screening.\n\n",
+               np, sp->trajectories * (sp->factor_count + 1));
+        printf("%-20s %12s %12s %8s\n", "Group", "mu*", "spread", "members");
+        printf("%-20s %12s %12s %8s\n", "-----", "----", "------", "-------");
+        for (size_t i = 0; i < count; i++) {
+            printf("%-20s %12.4g %12.4g %8zu\n",
+                   eff[i].name, eff[i].mu_star, eff[i].sigma, eff[i].member_count);
+        }
     }
 
     /*
@@ -340,22 +423,95 @@ static int cmd_analyze_groups(const doe_space_t *sp, const char *csv, const char
         }
     }
 
-    printf("\nRanked by mu* (importance), the mean ABSOLUTE group effect, so a group\n"
-           "holding factors with opposing signs still registers. 'spread' is the\n"
-           "variability of that absolute effect, NOT the per-factor interaction flag.\n"
-           "Split the survivors and re-run to localise within a group.\n");
+    if (!as_json)
+        printf("\nRanked by mu* (importance), the mean ABSOLUTE group effect, so a group\n"
+               "holding factors with opposing signs still registers. 'spread' is the\n"
+               "variability of that absolute effect, NOT the per-factor interaction flag.\n"
+               "Split the survivors and re-run to localise within a group.\n");
     free(eff);
     return 0;
 }
 
+/*
+ * `keep` is the number of leading factors the --keep-share rule retains, or 0
+ * when no rule was asked for. Both renderers take it as an argument rather
+ * than recomputing it, so the table and the JSON cannot disagree about where
+ * the cut fell -- which is the same failure mode, one level up, as a display
+ * and a parser disagreeing about where a column ends.
+ */
+static void print_effects_json(const doe_space_t *sp, const char *metric, size_t np,
+                               const morris_effect_t *eff, size_t count,
+                               double total_mu, double keep_share,
+                               size_t keep, double cum, int all_zero) {
+    printf("{\n");
+    printf("  \"tool\": \"morris\",\n");
+    printf("  \"command\": \"analyze\",\n");
+    printf("  \"schema\": %d,\n", MORRIS_JSON_SCHEMA);
+    printf("  \"mode\": \"per-factor\",\n");
+    print_metric_field(metric);
+    printf("  \"trajectories\": %zu,\n", sp->trajectories);
+    printf("  \"runs\": %zu,\n", np);
+    printf("  \"factor_count\": %zu,\n", count);
+    printf("  \"total_mu_star\": %s,\n", JNUM(total_mu));
+    printf("  \"all_zero\": %s,\n", all_zero ? "true" : "false");
+    printf("  \"factors\": [\n");
+    for (size_t i = 0; i < count; i++) {
+        int interacting = eff[i].sigma >= 0.5 * eff[i].mu_star && eff[i].mu_star > 0;
+        printf("    {\"factor\": %s, \"rank\": %zu, \"mu\": %s, \"mu_star\": %s, "
+               "\"mu_star_lo\": %s, \"mu_star_hi\": %s, \"sigma\": %s, "
+               "\"share\": %s, \"interacting\": %s}%s\n",
+               JSTR(eff[i].name), i + 1,
+               JNUM(eff[i].mu), JNUM(eff[i].mu_star),
+               JNUM(eff[i].mu_star_lo), JNUM(eff[i].mu_star_hi), JNUM(eff[i].sigma),
+               JNUM(total_mu > 0.0 ? eff[i].mu_star / total_mu : 0.0),
+               interacting ? "true" : "false",
+               i + 1 < count ? "," : "");
+    }
+    printf("  ],\n");
+
+    if (keep == 0) {
+        /*
+         * No cut was requested, so there is no gap to report -- the keys stay
+         * present and null rather than vanishing, so a consumer can read them
+         * unconditionally. The factor list carries every mu*, so a caller
+         * applying its own cut can compute the gap at whichever rank it picks.
+         */
+        printf("  \"keep\": null,\n");
+        printf("  \"cut_at\": null,\n");
+        printf("  \"gap_at_cut\": null,\n");
+        printf("  \"cut_is_tie\": false\n");
+    } else {
+        double gap = -1.0;
+        int overlap = 0;
+        if (keep < count) {
+            if (eff[keep].mu_star > 0.0) gap = eff[keep - 1].mu_star / eff[keep].mu_star;
+            overlap = eff[keep - 1].mu_star_lo < eff[keep].mu_star_hi;
+        }
+        printf("  \"keep\": {\n");
+        printf("    \"share_requested\": %s,\n", JNUM(keep_share));
+        printf("    \"share_achieved\": %s,\n",
+               JNUM(total_mu > 0.0 ? cum / total_mu : 0.0));
+        printf("    \"count\": %zu,\n", keep);
+        printf("    \"factors\": [");
+        for (size_t i = 0; i < keep; i++)
+            printf("%s%s", i ? ", " : "", JSTR(eff[i].name));
+        printf("],\n");
+        printf("    \"ci_overlap_at_cut\": %s\n", overlap ? "true" : "false");
+        printf("  },\n");
+        printf("  \"cut_at\": \"keep-share\",\n");
+        printf("  \"gap_at_cut\": %s,\n", gap >= 0.0 ? JNUM(gap) : "null");
+        printf("  \"cut_is_tie\": %s\n", (gap >= 0.0 && gap < 1.05) ? "true" : "false");
+    }
+    printf("}\n");
+}
+
 static int cmd_analyze(const char *path, const char *csv, const char *metric,
-                       double keep_share) {
+                       double keep_share, int as_json) {
     doe_space_t sp;
     if (load_space(path, &sp) != 0) return 1;
 
     /* The .space decides; see the note on design_view_t. */
-    if (sp.group_count > 0) return cmd_analyze_groups(&sp, csv, metric);
-    (void)keep_share;
+    if (sp.group_count > 0) return cmd_analyze_groups(&sp, csv, metric, as_json);
 
     size_t np = morris_npoints(&sp);
     double *responses = malloc(np * sizeof *responses);
@@ -381,20 +537,8 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric,
 
     qsort(eff, count, sizeof *eff, cmp_mu_star);
 
-    printf("Morris elementary effects (metric: %s) — %zu trajectories\n\n",
-           metric, sp.trajectories);
-    printf("%-20s %20s %12s   %s\n", "Factor", "mu* [95% CI]", "sigma", "note");
-    printf("%-20s %20s %12s   %s\n", "------", "------------", "-----", "----");
     double total_mu = 0.0;
     for (size_t i = 0; i < count; i++) total_mu += eff[i].mu_star;
-    for (size_t i = 0; i < count; i++) {
-        const char *note = (eff[i].sigma >= 0.5 * eff[i].mu_star && eff[i].mu_star > 0)
-                           ? "interacting/nonlinear" : "";
-        char cell[48];
-        snprintf(cell, sizeof cell, "%.4g[%.3g,%.3g]",
-                 eff[i].mu_star, eff[i].mu_star_lo, eff[i].mu_star_hi);
-        printf("%-20s %20s %12.4g   %s\n", eff[i].name, cell, eff[i].sigma, note);
-    }
 
     /*
      * Keep rules. --keep-share is the default recommendation over a fixed
@@ -404,41 +548,86 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric,
      * because it fell inside a 1% tie. A share-based cut at least lands where
      * the mass runs out rather than at an arbitrary index.
      */
+    double cum = 0.0;
+    size_t keep = 0;                       /* 0 = no keep rule was asked for */
     if (keep_share > 0.0 && total_mu > 0.0) {
-        double cum = 0.0;
-        size_t keep = 0;
         for (size_t i = 0; i < count; i++) {
             cum += eff[i].mu_star;
             keep = i + 1;
             if (cum / total_mu >= keep_share) break;
         }
-        printf("\n--keep-share %.2f keeps %zu of %zu factors "
-               "(%.1f%% of total mu*):\n  ", keep_share, keep, count,
-               100.0 * cum / total_mu);
-        for (size_t i = 0; i < keep; i++) printf("%s%s", i ? ", " : "", eff[i].name);
-        printf("\n");
+    }
 
-        if (keep < count) {
-            double hi = eff[keep - 1].mu_star, lo = eff[keep].mu_star;
-            if (lo > 0.0 && hi / lo < 1.05) {
-                fprintf(stderr,
-                    "\nWARNING: the keep/drop cut falls inside a %.1f%% gap "
-                    "(%s -> %s).\nThat ranking is not resolvable at any trajectory "
-                    "count -- keep both, or separate them with a method that\n"
-                    "estimates magnitude (sobol).\n",
-                    (hi / lo - 1.0) * 100.0, eff[keep - 1].name, eff[keep].name);
-            }
-            if (eff[keep - 1].mu_star_lo < eff[keep].mu_star_hi) {
-                fprintf(stderr,
-                    "\nNote: the confidence intervals of '%s' (kept) and '%s' "
-                    "(dropped)\noverlap, so their order is not established at "
-                    "this trajectory count.\n",
-                    eff[keep - 1].name, eff[keep].name);
-            }
+    int all_zero = 1;
+    for (size_t i = 0; i < count; i++)
+        if (eff[i].mu_star != 0.0) { all_zero = 0; break; }
+
+    if (as_json) {
+        print_effects_json(&sp, metric, np, eff, count, total_mu, keep_share,
+                           keep, cum, all_zero);
+    } else {
+        printf("Morris elementary effects (metric: %s) — %zu trajectories\n\n",
+               metric, sp.trajectories);
+        /*
+         * mu* and its interval are SEPARATE COLUMNS. They were one -- printed
+         * as "215.6[210,221]" -- and a consumer splitting the row on
+         * whitespace read that as field 1 and failed to parse it as a number.
+         * Every row failed the same way, so the result was an empty ranking
+         * rather than a partial one, and the caller took it for "no factors
+         * ranked" instead of an error. Keep the interval a single
+         * space-free token for the same reason: "[210, 221]" would split in
+         * two and shift every column after it.
+         */
+        printf("%-20s %12s %16s %12s   %s\n",
+               "Factor", "mu*", "[95% CI]", "sigma", "note");
+        printf("%-20s %12s %16s %12s   %s\n",
+               "------", "----", "--------", "-----", "----");
+        for (size_t i = 0; i < count; i++) {
+            const char *note = (eff[i].sigma >= 0.5 * eff[i].mu_star && eff[i].mu_star > 0)
+                               ? "interacting/nonlinear" : "";
+            char ci[48];
+            snprintf(ci, sizeof ci, "[%.3g,%.3g]", eff[i].mu_star_lo, eff[i].mu_star_hi);
+            printf("%-20s %12.4g %16s %12.4g   %s\n",
+                   eff[i].name, eff[i].mu_star, ci, eff[i].sigma, note);
+        }
+
+        if (keep > 0) {
+            printf("\n--keep-share %.2f keeps %zu of %zu factors "
+                   "(%.1f%% of total mu*):\n  ", keep_share, keep, count,
+                   100.0 * cum / total_mu);
+            for (size_t i = 0; i < keep; i++) printf("%s%s", i ? ", " : "", eff[i].name);
+            printf("\n");
         }
     }
-    printf("\nRanked by mu* (importance). sigma >= mu*/2 flags interaction/nonlinearity;\n"
-           "factors at the bottom with small mu* are screening drop candidates.\n");
+
+    /*
+     * Diagnostics go to stderr in BOTH modes. A warning that only the
+     * human-readable path emits is how a silently-degraded screening run
+     * happens: the consumer sees a well-formed document, nothing errors, and
+     * the fact that the cut was not resolvable never reaches anyone.
+     */
+    if (keep > 0 && keep < count) {
+        double hi = eff[keep - 1].mu_star, lo = eff[keep].mu_star;
+        if (lo > 0.0 && hi / lo < 1.05) {
+            fprintf(stderr,
+                "\nWARNING: the keep/drop cut falls inside a %.1f%% gap "
+                "(%s -> %s).\nThat ranking is not resolvable at any trajectory "
+                "count -- keep both, or separate them with a method that\n"
+                "estimates magnitude (sobol).\n",
+                (hi / lo - 1.0) * 100.0, eff[keep - 1].name, eff[keep].name);
+        }
+        if (eff[keep - 1].mu_star_lo < eff[keep].mu_star_hi) {
+            fprintf(stderr,
+                "\nNote: the confidence intervals of '%s' (kept) and '%s' "
+                "(dropped)\noverlap, so their order is not established at "
+                "this trajectory count.\n",
+                eff[keep - 1].name, eff[keep].name);
+        }
+    }
+
+    if (!as_json)
+        printf("\nRanked by mu* (importance). sigma >= mu*/2 flags interaction/nonlinearity;\n"
+               "factors at the bottom with small mu* are screening drop candidates.\n");
 
     /*
      * Every mu* being exactly zero is legal -- it means no factor moved the
@@ -446,11 +635,10 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric,
      * the model script ignores its environment, prints a constant, or the
      * ranges are too narrow to move it. Reporting a table of zeros without
      * comment invites someone to conclude "nothing matters" from what is
-     * really a broken harness. Note it on stderr so piped output is unchanged.
+     * really a broken harness. Note it on stderr so piped output is unchanged;
+     * --json also carries it as `all_zero`, because a machine consumer will
+     * never see this text and the whole point is that it not be missed.
      */
-    int all_zero = 1;
-    for (size_t i = 0; i < count; i++)
-        if (eff[i].mu_star != 0.0) { all_zero = 0; break; }
     if (all_zero && count > 0) {
         fprintf(stderr,
             "\nNote: every mu* is exactly zero -- the response did not change at any\n"
@@ -513,16 +701,29 @@ int main(int argc, char *argv[]) {
         if (argc < 4) { fprintf(stderr, "analyze needs a results.csv argument\n"); return 1; }
         const char *metric = "response";
         double keep_share = 0.0;
+        int as_json = 0;
         for (int i = 4; i < argc; i++) {
             if (strcmp(argv[i], "--metric") == 0 && i + 1 < argc) metric = argv[++i];
+            else if (strcmp(argv[i], "--json") == 0) as_json = 1;
             else if (strcmp(argv[i], "--keep-share") == 0 && i + 1 < argc) {
                 keep_share = strtod(argv[++i], NULL);
                 if (!(keep_share > 0.0 && keep_share <= 1.0)) {
                     fprintf(stderr, "--keep-share must be in (0, 1]\n"); return 1;
                 }
             }
+            else {
+                /*
+                 * Unknown options used to be ignored. A caller asking for
+                 * --format json against a build that predates it would have
+                 * got the human table and exit 0 -- a silent wrong answer, the
+                 * same shape of failure this flag exists to prevent.
+                 */
+                fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+                usage(argv[0]);
+                return 1;
+            }
         }
-        return cmd_analyze(path, argv[3], metric, keep_share);
+        return cmd_analyze(path, argv[3], metric, keep_share, as_json);
     }
 
     fprintf(stderr, "Unknown command: %s\n", cmd);
