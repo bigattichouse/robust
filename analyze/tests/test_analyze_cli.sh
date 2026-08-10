@@ -27,6 +27,26 @@ expect_exit() { local w="$1" l="$2"; shift 2; "$@" >"$TMP/o" 2>"$TMP/e"; local g
 expect_match() { local p="$1" l="$2"; shift 2; "$@" >"$TMP/o" 2>"$TMP/e"
     grep -q -- "$p" "$TMP/o" "$TMP/e" && ok "$l" || bad "$l" "no '$p'"; }
 
+# `--json` promises a document a program can load, so check it with a parser
+# rather than grepping for a key and hoping. Skipped LOUDLY without python3 --
+# a check that reports success without running is worse than no check.
+HAVE_PY=0
+command -v python3 >/dev/null 2>&1 && HAVE_PY=1
+skip() { echo "  SKIP: $1  (no python3)"; }
+
+json_ok() { local l="$1"; shift; "$@" >"$TMP/o" 2>"$TMP/e"
+    [ "$HAVE_PY" -eq 1 ] || { skip "$l"; return; }
+    if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$TMP/o" 2>"$TMP/pe"
+    then ok "$l"; else bad "$l" "$(head -1 "$TMP/pe")"; fi; }
+
+json_is() { local want="$1" expr="$2" l="$3"; shift 3; "$@" >"$TMP/o" 2>"$TMP/e"
+    [ "$HAVE_PY" -eq 1 ] || { skip "$l"; return; }
+    local got
+    got=$(python3 -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+print(eval(sys.argv[2]))' "$TMP/o" "$expr" 2>"$TMP/pe")
+    [ "$got" = "$want" ] && ok "$l" || bad "$l" "got '${got:-$(head -1 "$TMP/pe")}', wanted '$want'"; }
+
 cat > "$TMP/m.space" <<'EOF'
 factors:
   a: 0,10
@@ -56,6 +76,35 @@ expect_exit 0 "regress: --ranks (SRRC)" "$BIN/regress" "$TMP/m.space" "$TMP/d.cs
 expect_match "SRRC" "regress: --ranks says so" "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --ranks
 expect_exit 0 "regress: --json" "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
 expect_match '"r2"' "regress: --json carries r2" "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
+json_ok "regress: --json parses" "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
+json_is "3" "len(d['coefficients'])" "regress: --json lists every factor" \
+    "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
+json_is "True" "all(isinstance(c['coef'], (int, float)) for c in d['coefficients'])" \
+    "regress: --json coefficients are numbers" \
+    "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
+json_is "True" "abs(d['r2'] - 1.0) < 1e-9" "regress: --json carries R^2 as a number" \
+    "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
+
+# A factor name may hold a quote -- the .space parser rejects only control
+# characters -- and --metric comes straight from argv. Interpolated raw, either
+# one produced a document no parser would accept, from the mode whose only
+# purpose is being parsed.
+cat > "$TMP/q.space" <<'EOF'
+factors:
+  a"b: 0,10
+  c: 0,10
+seed: 3
+trajectories: 8
+EOF
+awk -F, 'NR==1{print "a\"b,c,resp\"onse";next}{printf "%s,%s,%.10g\n",$2,$4,10*$2}' \
+    "$TMP/d.csv" > "$TMP/q.csv"
+json_ok "regress: --json escapes a quoted factor name" \
+    "$BIN/regress" "$TMP/q.space" "$TMP/q.csv" --metric 'resp"onse' --json
+json_is 'resp"onse' "d['metric']" "regress: --json round-trips a quoted metric" \
+    "$BIN/regress" "$TMP/q.space" "$TMP/q.csv" --metric 'resp"onse' --json
+json_is "True" "'a\"b' in [c['factor'] for c in d['coefficients']]" \
+    "regress: --json round-trips a quoted factor name" \
+    "$BIN/regress" "$TMP/q.space" "$TMP/q.csv" --metric 'resp"onse' --json
 expect_exit 1 "regress: missing metric column exits 1" \
     "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --metric nope
 expect_exit 1 "regress: missing file exits 1" "$BIN/regress" "$TMP/m.space" "$TMP/nope.csv"
@@ -76,6 +125,15 @@ expect_match "histogram" "uq: draws a histogram" "$BIN/uq" "$TMP/u.csv"
 expect_match "cdf" "uq: histogram carries the CDF" "$BIN/uq" "$TMP/u.csv"
 expect_exit 0 "uq: --json" "$BIN/uq" "$TMP/u.csv" --json
 expect_match '"p95"' "uq: --json carries percentiles" "$BIN/uq" "$TMP/u.csv" --json
+json_ok "uq: --json parses" "$BIN/uq" "$TMP/u.csv" --json
+json_is "True" "d['min'] <= d['p05'] <= d['p50'] <= d['p95'] <= d['max']" \
+    "uq: --json percentiles are ordered numbers" "$BIN/uq" "$TMP/u.csv" --json
+# --metric is argv, so it is the field a user can put a quote in.
+awk -F, 'NR==1{print "run_id,resp\"onse";next}{print}' "$TMP/u.csv" > "$TMP/uq.csv"
+json_ok "uq: --json escapes a quoted metric" \
+    "$BIN/uq" "$TMP/uq.csv" --metric 'resp"onse' --json
+json_is 'resp"onse' "d['metric']" "uq: --json round-trips a quoted metric" \
+    "$BIN/uq" "$TMP/uq.csv" --metric 'resp"onse' --json
 expect_exit 2 "uq: bad --bins exits 2" "$BIN/uq" "$TMP/u.csv" --bins 0
 expect_exit 1 "uq: missing metric exits 1" "$BIN/uq" "$TMP/u.csv" --metric nope
 expect_exit 2 "uq: no arguments exits 2" "$BIN/uq"
