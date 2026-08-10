@@ -198,13 +198,25 @@ int main(int argc, char **argv) {
             }
 
     if (as_json) {
+        /*
+         * Names are escaped, not interpolated raw. A factor name may contain a
+         * quote (the .space parser rejects only control characters) and the
+         * metric comes straight from argv -- either one used to produce a
+         * document no parser would accept, from a mode whose entire purpose is
+         * being parsed.
+         */
+        char *m = doe_json_escape(metric);
         printf("{\n  \"metric\": \"%s\",\n  \"kind\": \"%s\",\n  \"runs\": %zu,\n",
-               metric, use_ranks ? "SRRC" : "SRC", n);
-        printf("  \"r2\": %.6g,\n  \"coefficients\": [\n", r2);
+               m ? m : "", use_ranks ? "SRRC" : "SRC", n);
+        doe_free(m);
+        printf("  \"r2\": %s,\n  \"coefficients\": [\n",
+               doe_json_number(r2, (char[DOE_JSON_NUM]){0}, DOE_JSON_NUM));
         for (size_t i = 0; i < sp.factor_count; i++) {
             size_t j = order[i];
-            printf("    {\"factor\": \"%s\", \"coef\": %.6g, \"direction\": \"%s\"}%s\n",
-                   sp.factors[j].name, coef[j],
+            char nm[DOE_JSON_STR(DOE_MAX_NAME)];
+            printf("    {\"factor\": %s, \"coef\": %s, \"direction\": \"%s\"}%s\n",
+                   doe_json_string(sp.factors[j].name, nm, sizeof nm),
+                   doe_json_number(coef[j], (char[DOE_JSON_NUM]){0}, DOE_JSON_NUM),
                    fabs(coef[j]) < REGRESS_ZERO ? "none"
                      : coef[j] > 0 ? "increases" : "decreases",
                    i + 1 < sp.factor_count ? "," : "");

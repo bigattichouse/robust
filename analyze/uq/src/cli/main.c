@@ -91,7 +91,11 @@ int main(int argc, char **argv) {
     double lo = srt[0], hi = srt[n - 1];
 
     if (as_json) {
-        printf("{\n  \"metric\": \"%s\",\n  \"n\": %zu,\n", metric, n);
+        /* Escaped: --metric comes from argv, and a quote in it turned this
+         * mode's output into something no parser would accept. */
+        char *m = doe_json_escape(metric);
+        printf("{\n  \"metric\": \"%s\",\n  \"n\": %zu,\n", m ? m : "", n);
+        doe_free(m);
         printf("  \"mean\": %.10g,\n  \"sd\": %.10g,\n", mean, sd);
         printf("  \"min\": %.10g,\n  \"p05\": %.10g,\n  \"p25\": %.10g,\n"
                "  \"p50\": %.10g,\n  \"p75\": %.10g,\n  \"p95\": %.10g,\n  \"max\": %.10g\n}\n",
