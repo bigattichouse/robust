@@ -221,6 +221,26 @@ double doe_std(const double *x, size_t n);
 
 /* Escape a string for embedding in a JSON document. Caller frees (doe_free). */
 char *doe_json_escape(const char *s);
+
+/*
+ * Write `s` to `out` as a quoted, escaped JSON string, truncating rather than
+ * overflowing. Returns `out`, so it can be used inline in a printf. This is
+ * the allocation-free form of doe_json_escape for the common case of a bounded
+ * identifier (a factor or group name, at most DOE_MAX_NAME); give `out` at
+ * least DOE_JSON_STR(DOE_MAX_NAME) bytes.
+ */
+#define DOE_JSON_STR(n) ((n) * 6 + 3)
+const char *doe_json_string(const char *s, char *out, size_t cap);
+
+/*
+ * Format a double as a JSON number literal, or as `null` when it is not
+ * finite. JSON has no NaN or Infinity: printf would emit a bare `nan` or `inf`
+ * token that every strict parser rejects, turning one odd value into a
+ * document a consumer cannot read at all. Returns `out`; DOE_JSON_NUM bytes
+ * are always enough.
+ */
+#define DOE_JSON_NUM 32
+const char *doe_json_number(double v, char *out, size_t cap);
 /* Escape a string for embedding in HTML text. Caller frees (doe_free). */
 char *doe_html_escape(const char *s);
 void  doe_free(void *p);

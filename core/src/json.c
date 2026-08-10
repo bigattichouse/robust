@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 char *doe_json_escape(const char *s) {
     if (!s) return NULL;
@@ -41,6 +42,56 @@ char *doe_json_escape(const char *s) {
         }
     }
     *o = '\0';
+    return out;
+}
+
+/*
+ * The bounded form. Truncation is silent by design: the callers are emitting
+ * one field of a document, and a name longer than the buffer must not be
+ * allowed to run off the end of it or to abort the whole output. Every
+ * in-tree caller sizes `out` from DOE_MAX_NAME, so truncation cannot happen
+ * there -- the clamp exists so a future caller with a smaller buffer still
+ * produces a well-formed (if shortened) JSON string rather than a broken one.
+ */
+const char *doe_json_string(const char *s, char *out, size_t cap) {
+    if (!out || cap == 0) return out;
+    if (cap < 3) { out[0] = '\0'; return out; }
+
+    size_t o = 0;
+    out[o++] = '"';
+    for (size_t i = 0; s && s[i]; i++) {
+        unsigned char c = (unsigned char)s[i];
+        char esc[8];
+        size_t n;
+        switch (c) {
+            case '"':  memcpy(esc, "\\\"", 2); n = 2; break;
+            case '\\': memcpy(esc, "\\\\", 2); n = 2; break;
+            case '\n': memcpy(esc, "\\n",  2); n = 2; break;
+            case '\r': memcpy(esc, "\\r",  2); n = 2; break;
+            case '\t': memcpy(esc, "\\t",  2); n = 2; break;
+            default:
+                if (c < 0x20) { n = (size_t)snprintf(esc, sizeof esc, "\\u%04x", c); }
+                else          { esc[0] = (char)c; n = 1; }
+        }
+        if (o + n + 2 > cap) break;      /* room for the closing quote and NUL */
+        memcpy(out + o, esc, n);
+        o += n;
+    }
+    out[o++] = '"';
+    out[o]   = '\0';
+    return out;
+}
+
+const char *doe_json_number(double v, char *out, size_t cap) {
+    if (!out || cap == 0) return out;
+    /*
+     * %.10g, not the %.4g the human tables use: this output exists to be
+     * consumed, and a screening decision made on a rounded mu* is a different
+     * decision. Ten digits round-trips every value these tools produce closely
+     * enough to reproduce the ranking, without printing binary noise.
+     */
+    if (isfinite(v)) snprintf(out, cap, "%.10g", v);
+    else             snprintf(out, cap, "null");
     return out;
 }
 

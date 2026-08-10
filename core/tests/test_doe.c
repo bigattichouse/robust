@@ -214,6 +214,68 @@ static int test_json_escape(void) {
     return 1;
 }
 
+/*
+ * doe_json_string: the bounded escape the --json emitters use per field. It
+ * has to produce a QUOTED, escaped, always-terminated string, and it has to
+ * stay well-formed when the buffer is too small -- a half-written string with
+ * no closing quote would take the whole document down with it.
+ */
+static int test_json_string_bounded(void) {
+    char buf[DOE_JSON_STR(DOE_MAX_NAME)];
+
+    CHECK(strcmp(doe_json_string("kv_type", buf, sizeof buf), "\"kv_type\"") == 0);
+    CHECK(strcmp(doe_json_string("a\"b\\c", buf, sizeof buf), "\"a\\\"b\\\\c\"") == 0);
+    CHECK(strcmp(doe_json_string("x\ny", buf, sizeof buf), "\"x\\ny\"") == 0);
+    CHECK(strcmp(doe_json_string("", buf, sizeof buf), "\"\"") == 0);
+    CHECK(strcmp(doe_json_string(NULL, buf, sizeof buf), "\"\"") == 0);
+
+    /* A control character takes six bytes; the buffer must not be overrun. */
+    CHECK(strcmp(doe_json_string("\x01", buf, sizeof buf), "\"\\u0001\"") == 0);
+
+    /* Truncation stays syntactically valid: opening quote, whole escape
+     * sequences only, closing quote, NUL -- never a split "\\u00" fragment. */
+    char small[8];
+    const char *out = doe_json_string("abcdefghij", small, sizeof small);
+    CHECK(strlen(out) < sizeof small);
+    CHECK(out[0] == '"' && out[strlen(out) - 1] == '"');
+    CHECK(strcmp(out, "\"abcde\"") == 0);   /* 8 bytes: 5 chars, 2 quotes, NUL */
+
+    char tiny[4];
+    out = doe_json_string("\x01\x01", tiny, sizeof tiny);
+    CHECK(strcmp(out, "\"\"") == 0);       /* no room for a 6-byte escape */
+
+    /* A buffer too small even for `""` must still terminate, not scribble. */
+    char nothing[2] = { 'X', 'X' };
+    out = doe_json_string("a", nothing, sizeof nothing);
+    CHECK(out[0] == '\0');
+    return 1;
+}
+
+/*
+ * doe_json_number: JSON has no NaN or Infinity literal. printf would emit a
+ * bare `nan`/`inf` token, which turns one odd value into a document the
+ * consumer cannot read at all -- so those become `null`.
+ */
+static int test_json_number(void) {
+    char buf[DOE_JSON_NUM];
+
+    CHECK(strcmp(doe_json_number(0.0, buf, sizeof buf), "0") == 0);
+    CHECK(strcmp(doe_json_number(215.625, buf, sizeof buf), "215.625") == 0);
+    CHECK(strcmp(doe_json_number(-1.5, buf, sizeof buf), "-1.5") == 0);
+    CHECK(strcmp(doe_json_number(0.0 / 0.0, buf, sizeof buf), "null") == 0);
+    CHECK(strcmp(doe_json_number(1.0 / 0.0, buf, sizeof buf), "null") == 0);
+    CHECK(strcmp(doe_json_number(-1.0 / 0.0, buf, sizeof buf), "null") == 0);
+
+    /* Ten significant digits: enough that a ranking survives the round trip,
+     * which %.4g (what the human tables print) would not guarantee. */
+    CHECK(strcmp(doe_json_number(1.0 / 3.0, buf, sizeof buf), "0.3333333333") == 0);
+
+    /* No exponent form that JSON rejects: %g yields e.g. 1e-09, which is legal. */
+    doe_json_number(1e-9, buf, sizeof buf);
+    CHECK(strchr(buf, 'e') != NULL && strstr(buf, "e-") != NULL);
+    return 1;
+}
+
 /* ---- doe_ols_src: standardized regression -------------------------------- */
 
 /*
@@ -552,5 +614,7 @@ int main(void) {
     RUN_TEST(test_space_error_prefix_never_overflows);
     RUN_TEST(test_stats);
     RUN_TEST(test_json_escape);
+    RUN_TEST(test_json_string_bounded);
+    RUN_TEST(test_json_number);
     return TEST_SUMMARY();
 }
