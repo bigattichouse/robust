@@ -13,9 +13,14 @@ char *escape_json_string(const char *input);
 /* Serialize runs to JSON format */
 char *serialize_runs_to_json(const ExperimentRun *runs, size_t count);
 
-/* Serialize effects to JSON format (forward declaration - will be needed for analyzer) */
-struct MainEffect;  // Forward declaration
-char *serialize_effects_to_json(const struct MainEffect *effects, size_t count);
+/* NOTE: there is deliberately no serialize_effects_to_json here.
+ *
+ * One existed and returned a bracketed C-comment placeholder rather than JSON
+ * -- not parseable by anything -- from a function named for producing JSON,
+ * with a test asserting that output. Nothing called it; taguchi_effects_to_json
+ * in taguchi.c is the real implementation. Removed rather than left as a trap
+ * for whoever reaches for the obvious name.
+ */
 
 /* Free serialized string */
 void free_serialized_string(char *str);

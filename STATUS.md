@@ -262,6 +262,28 @@ it, the discovery bug in two, and the error hierarchy was unusable. Every
 defect here is found and fixed two or four times. Collapsing the layers is the
 highest-value structural change left in the binding.
 
+**`pos += snprintf(...)` reached a fourth and fifth instance.** STATUS.md has
+warned about this since 2026-08-06 and it kept appearing: `taguchi.c`'s
+`taguchi_effects_to_json` wrote against a guessed buffer with it, and
+`analyzer.c`'s `recommend_optimal_levels` used it behind `pos < buf_size`
+guards that stopped an overwrite but left `pos` meaningless. Both now use the
+clamping form, and the effects serializer sizes its buffer from the content
+rather than guessing. It was also interpolating the factor name RAW, so a quote
+in a name produced a document no parser would accept — from the public function
+named for producing JSON. A test pins the escaping; reverting it fails the
+build.
+
+**A function named for producing JSON returned something that was not JSON.**
+`serialize_effects_to_json` returned a bracketed C-comment placeholder, and
+`test_serializer.c` asserted that output — enshrining it. Nothing called it
+(`taguchi_effects_to_json` is the real one), so it was a trap for whoever
+reached for the obvious name. Deleted, along with the test.
+
+**The .tgu parser accepted control characters in factor names** while the
+.space parser has always rejected them. Those names reach the JSON emitters and
+`setenv("TAGUCHI_<name>")`, neither of which can represent them. Rejected now;
+UTF-8 names still work, since only bytes below 0x20 are refused.
+
 **The build had no header dependencies until 2026-08-06.** Editing `doe.h`
 rebuilt some objects and not others, and the link silently combined two struct
 layouts — `sobol` read `samples` from the wrong offset and reported 0. Nothing

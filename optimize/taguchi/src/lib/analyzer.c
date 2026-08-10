@@ -195,13 +195,26 @@ int recommend_optimal_levels(const MainEffect *effects, size_t effect_count,
             }
         }
 
-        if (i > 0 && pos < buf_size) {
-            pos += (size_t)snprintf(recommendation_buf + pos, buf_size - pos, ", ");
+        /*
+         * The clamping pattern, not `pos += snprintf(...)`. snprintf returns
+         * the length it WOULD have written, so on truncation pos runs past the
+         * buffer and the next `buf_size - pos` underflows to an enormous
+         * size_t. The `pos < buf_size` guards below stopped that becoming an
+         * overwrite here, but they left pos meaningless afterwards -- and
+         * STATUS.md records this exact shape as the defect this tree keeps
+         * reproducing. Write it the way that cannot go wrong.
+         */
+        int w = snprintf(recommendation_buf + pos, buf_size - pos, "%s%s=level_%zu",
+                         (i > 0) ? ", " : "", effect->factor_name, best_idx + 1);
+        if (w < 0) break;
+        if ((size_t)w >= buf_size - pos) {
+            /* Truncated: the buffer is full and anything further would be a
+             * partial factor name. Stop with what is already NUL-terminated
+             * rather than emit half a recommendation. */
+            pos = buf_size - 1;
+            break;
         }
-        if (pos < buf_size) {
-            pos += (size_t)snprintf(recommendation_buf + pos, buf_size - pos,
-                "%s=level_%zu", effect->factor_name, best_idx + 1);
-        }
+        pos += (size_t)w;
     }
 
     return 0;

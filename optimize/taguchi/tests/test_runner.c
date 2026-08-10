@@ -26,7 +26,8 @@ extern void test_serializer_runs_multiple_are_comma_separated(void);
 extern void test_serializer_runs_escapes_values(void);
 extern void test_serializer_runs_growth_at_declared_limits(void);
 extern void test_serializer_runs_many_runs_growth(void);
-extern void test_serializer_effects_placeholder(void);
+extern void test_effects_json_escapes_a_quoted_factor_name(void);
+extern void test_effects_json_is_complete_for_every_factor(void);
 extern void test_serializer_free_null_is_safe(void);
 
 /* Declare test functions from test_generator.c */
@@ -320,7 +321,8 @@ int main(void) {
     RUN_TEST(serializer_runs_escapes_values);
     RUN_TEST(serializer_runs_growth_at_declared_limits);
     RUN_TEST(serializer_runs_many_runs_growth);
-    RUN_TEST(serializer_effects_placeholder);
+    RUN_TEST(effects_json_escapes_a_quoted_factor_name);
+    RUN_TEST(effects_json_is_complete_for_every_factor);
     RUN_TEST(serializer_free_null_is_safe);
 
     printf("\nPublic API Tests:\n");

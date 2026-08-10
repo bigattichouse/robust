@@ -448,25 +448,54 @@ char *taguchi_effects_to_json(const taguchi_main_effect_t **effects, size_t coun
         return result;
     }
 
-    /* Build JSON manually for effects */
-    size_t buf_size = 1024 + count * 512;
+    /*
+     * Size the buffer from the content, then write with a CLAMPING append.
+     *
+     * This used `pos += snprintf(...)` against a guessed size. snprintf returns
+     * the length it WOULD have written, so on truncation pos walks past the
+     * buffer and the next `buf_size - pos` underflows to an enormous size_t.
+     * STATUS.md calls that the recurring defect in this tree; this was the
+     * fourth instance.
+     *
+     * It also interpolated the factor name raw. The .tgu parser does not
+     * restrict names, so a quote in one produced a document no parser would
+     * accept -- from a function whose whole purpose is to be parsed.
+     */
+    size_t buf_size = 4;                       /* "[\n" + "]" + NUL */
+    for (size_t i = 0; i < count; i++) {
+        const MainEffect *e = &effects[i]->internal_effect;
+        buf_size += strlen(e->factor_name) * 6   /* worst-case escaping */
+                  + 64                           /* fixed text + range */
+                  + e->level_count * 32;         /* "%.6f, " per level */
+    }
     char *json = xmalloc(buf_size);
     size_t pos = 0;
 
     pos += (size_t)snprintf(json + pos, buf_size - pos, "[\n");
     for (size_t i = 0; i < count; i++) {
         const MainEffect *e = &effects[i]->internal_effect;
-        pos += (size_t)snprintf(json + pos, buf_size - pos,
+        char *name = escape_json_string(e->factor_name);
+        int w = snprintf(json + pos, buf_size - pos,
             "  {\"factor\": \"%s\", \"range\": %.6f, \"level_means\": [",
-            e->factor_name, e->range);
+            name ? name : "", e->range);
+        free(name);
+        if (w < 0 || (size_t)w >= buf_size - pos) { free(json); return NULL; }
+        pos += (size_t)w;
+
         for (size_t lv = 0; lv < e->level_count; lv++) {
-            if (lv > 0) pos += (size_t)snprintf(json + pos, buf_size - pos, ", ");
-            pos += (size_t)snprintf(json + pos, buf_size - pos, "%.6f", e->level_means[lv]);
+            w = snprintf(json + pos, buf_size - pos, "%s%.6f",
+                         lv ? ", " : "", e->level_means[lv]);
+            if (w < 0 || (size_t)w >= buf_size - pos) { free(json); return NULL; }
+            pos += (size_t)w;
         }
-        pos += (size_t)snprintf(json + pos, buf_size - pos, "]}%s\n",
-            (i < count - 1) ? "," : "");
+
+        w = snprintf(json + pos, buf_size - pos, "]}%s\n",
+                     (i + 1 < count) ? "," : "");
+        if (w < 0 || (size_t)w >= buf_size - pos) { free(json); return NULL; }
+        pos += (size_t)w;
     }
-    pos += (size_t)snprintf(json + pos, buf_size - pos, "]");
+    if (buf_size - pos < 2) { free(json); return NULL; }
+    snprintf(json + pos, buf_size - pos, "]");
 
     return json;
 }

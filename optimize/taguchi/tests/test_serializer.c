@@ -18,6 +18,7 @@
  */
 
 #include "test_framework.h"
+#include "include/taguchi.h"   /* the public API the effects serializer belongs to */
 #include "src/lib/serializer.h"
 #include "src/lib/generator.h"
 #include "src/config.h"
@@ -233,19 +234,70 @@ TEST(serializer_runs_many_runs_growth) {
     free(runs);
 }
 
-/* ---- serialize_effects_to_json / free --------------------------------- */
+/* ---- taguchi_effects_to_json ------------------------------------------
+ *
+ * The public effects serializer. It used `pos += snprintf(...)` against a
+ * guessed buffer -- the defect STATUS.md says this tree keeps reproducing --
+ * and interpolated the factor name RAW, so a quote in a name produced a
+ * document no parser would accept.
+ */
 
-TEST(serializer_effects_placeholder) {
-    char *j = serialize_effects_to_json(NULL, 0);
-    ASSERT_NOT_NULL(j);
-    ASSERT_STR_EQ(j, "[]");
-    free_serialized_string(j);
+TEST(effects_json_escapes_a_quoted_factor_name) {
+    taguchi_experiment_def_t *def = taguchi_parse_definition(
+        "factors:\n  a\"b: 1, 2\n  c: 1, 2\narray: L4\n", (char[TAGUCHI_ERROR_SIZE]){0});
+    ASSERT_NOT_NULL(def);
 
-    j = serialize_effects_to_json(NULL, 7);
+    taguchi_result_set_t *rs = taguchi_create_result_set(def, "response");
+    ASSERT_NOT_NULL(rs);
+    char aerr[TAGUCHI_ERROR_SIZE];
+    for (size_t i = 1; i <= 4; i++)
+        ASSERT_EQ(taguchi_add_result(rs, i, (double)i, aerr), 0);
+
+    taguchi_main_effect_t **eff = NULL; size_t n = 0;
+    char err2[TAGUCHI_ERROR_SIZE];
+    ASSERT_EQ(taguchi_calculate_main_effects(rs, &eff, &n, err2), 0);
+
+    char *j = taguchi_effects_to_json((const taguchi_main_effect_t **)eff, n);
     ASSERT_NOT_NULL(j);
-    ASSERT_NOT_NULL(strstr(j, "7"));
-    free_serialized_string(j);
+    /* The quote is escaped, and no bare `a"b` survives. */
+    ASSERT_NOT_NULL(strstr(j, "a\\\"b"));
+    taguchi_free_string(j);
+
+    taguchi_free_effects(eff, n);
+    taguchi_free_result_set(rs);
+    taguchi_free_definition(def);
 }
+
+TEST(effects_json_is_complete_for_every_factor) {
+    taguchi_experiment_def_t *def = taguchi_parse_definition(
+        "factors:\n  aaa: 1, 2, 3\n  bbb: 1, 2, 3\n  ccc: 1, 2, 3\n  ddd: 1, 2, 3\narray: L9\n",
+        (char[TAGUCHI_ERROR_SIZE]){0});
+    ASSERT_NOT_NULL(def);
+
+    taguchi_result_set_t *rs = taguchi_create_result_set(def, "response");
+    char aerr[TAGUCHI_ERROR_SIZE];
+    for (size_t i = 1; i <= 9; i++)
+        ASSERT_EQ(taguchi_add_result(rs, i, (double)i * 1.5, aerr), 0);
+
+    taguchi_main_effect_t **eff = NULL; size_t n = 0;
+    char err2[TAGUCHI_ERROR_SIZE];
+    ASSERT_EQ(taguchi_calculate_main_effects(rs, &eff, &n, err2), 0);
+
+    char *j = taguchi_effects_to_json((const taguchi_main_effect_t **)eff, n);
+    ASSERT_NOT_NULL(j);
+    /* Every factor present, and the document CLOSES -- a truncating writer
+     * would drop the tail and leave an unterminated array. */
+    ASSERT_NOT_NULL(strstr(j, "aaa"));
+    ASSERT_NOT_NULL(strstr(j, "ddd"));
+    ASSERT_EQ(j[strlen(j) - 1], ']');
+    taguchi_free_string(j);
+
+    taguchi_free_effects(eff, n);
+    taguchi_free_result_set(rs);
+    taguchi_free_definition(def);
+}
+
+/* ---- free ------------------------------------------------------------- */
 
 TEST(serializer_free_null_is_safe) {
     free_serialized_string(NULL);

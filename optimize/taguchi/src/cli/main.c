@@ -75,11 +75,12 @@ static void print_usage(const char *program_name) {
         "                                   Main effects only\n"
         "  validate <file.tgu>              Validate experiment definition\n"
         "  suggest-array <file.tgu>         Suggest optimal orthogonal array\n"
-        "  list-arrays                      List available orthogonal arrays\n"
+        "  list-arrays [--json]             List available orthogonal arrays\n"
         "  --help                           Show this help message\n"
         "  --version                        Show version information\n"
         "\n"
-        "--json gives machine-readable output on generate, analyze and effects.\n"
+        "--json gives machine-readable output on generate, analyze, effects and\n"
+        "list-arrays.\n"
         "The tables are a display and will keep changing; --json is the contract,\n"
         "versioned by a `schema` key. Parse that, not the tables.\n"
         "\n"
@@ -109,9 +110,48 @@ static int cmd_version(int argc, char *argv[]) {
 }
 
 static int cmd_list_arrays(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
+    int as_json = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--json") == 0) as_json = 1;
+        else {
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+            return 1;
+        }
+    }
+
     const char **arrays = taguchi_list_arrays();
+
+    if (as_json) {
+        /*
+         * Static reference data, but a binding choosing an array reads it, and
+         * "(9 runs, 4 cols, 3 levels)" is a sentence to be regex'd. `levels`
+         * is null for a mixed-level array rather than 0, because 0 levels and
+         * "levels vary by column" are different statements.
+         */
+        printf("{\n");
+        printf("  \"tool\": \"taguchi\",\n");
+        printf("  \"command\": \"list-arrays\",\n");
+        printf("  \"schema\": %d,\n", TAGUCHI_JSON_SCHEMA);
+        printf("  \"arrays\": [\n");
+        for (int i = 0; arrays[i] != NULL; i++) {
+            size_t rows, cols, levels;
+            int ok = taguchi_get_array_info(arrays[i], &rows, &cols, &levels) == 0;
+            printf("    {\"name\": ");
+            json_str(arrays[i]);
+            if (ok) {
+                printf(", \"runs\": %zu, \"columns\": %zu, \"levels\": ", rows, cols);
+                if (levels == 0) printf("null, \"mixed_levels\": true}");
+                else             printf("%zu, \"mixed_levels\": false}", levels);
+            } else {
+                printf(", \"runs\": null, \"columns\": null, \"levels\": null, "
+                       "\"mixed_levels\": null}");
+            }
+            printf("%s\n", arrays[i + 1] != NULL ? "," : "");
+        }
+        printf("  ]\n}\n");
+        return 0;
+    }
+
     printf("Available orthogonal arrays:\n");
     for (int i = 0; arrays[i] != NULL; i++) {
         size_t rows, cols, levels;

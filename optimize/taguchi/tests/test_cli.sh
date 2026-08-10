@@ -354,6 +354,37 @@ expect_exit 1 "effects rejects an unknown option" \
 expect_exit 1 "analyze rejects an unknown option" \
     $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/results.csv" --format json
 
+# ---------------------------------------------------------------- list-arrays --json
+json_ok "list-arrays --json parses" $TAGUCHI list-arrays --json
+json_is "True" "len(d['arrays']) > 10" "list-arrays --json lists the arrays" \
+    $TAGUCHI list-arrays --json
+json_is "True" "all(k in a for a in d['arrays'] for k in ('name','runs','columns','levels','mixed_levels'))" \
+    "list-arrays --json describes each array as fields, not a sentence" \
+    $TAGUCHI list-arrays --json
+json_is "True" "[a for a in d['arrays'] if a['name']=='L9'][0]['runs'] == 9" \
+    "list-arrays --json: L9 has nine runs" $TAGUCHI list-arrays --json
+# A mixed-level array reports null levels, not 0 -- "no levels" and "levels
+# vary by column" are different statements and the table said "mixed" for one.
+json_is "True" "all(a['levels'] is None for a in d['arrays'] if a['mixed_levels'])" \
+    "list-arrays --json: mixed-level arrays report null, not zero" \
+    $TAGUCHI list-arrays --json
+expect_exit 1 "list-arrays rejects an unknown option" $TAGUCHI list-arrays --format json
+
+# ---------------------------------------------------------------- name validation
+# Control characters in a factor name reach the JSON emitters and
+# setenv("TAGUCHI_<name>"), neither of which can represent them. The .space
+# parser has always rejected them; this one did not.
+printf 'factors:\n  a\001b: 1, 2\n  c: 1, 2\narray: L4\n' > "$TMP/ctl.tgu"
+expect_exit 1 "validate rejects a control character in a factor name" \
+    $TAGUCHI validate "$TMP/ctl.tgu"
+expect_match "control character" "validate says why it rejected the name" \
+    $TAGUCHI validate "$TMP/ctl.tgu"
+# UTF-8 names must keep working: only bytes below 0x20 are refused.
+printf 'factors:\n  caf\303\251: 1, 2\n  c: 1, 2\narray: L4\n' > "$TMP/utf.tgu"
+expect_exit 0 "validate accepts a UTF-8 factor name" $TAGUCHI validate "$TMP/utf.tgu"
+json_ok "generate --json handles a UTF-8 factor name" \
+    $TAGUCHI generate "$TMP/utf.tgu" --json
+
 # ---------------------------------------------------------------- summary
 echo
 echo "taguchi CLI tests: $pass passed, $fail failed"

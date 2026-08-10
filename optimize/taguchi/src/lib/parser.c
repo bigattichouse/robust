@@ -116,6 +116,21 @@ int parse_factor_line(const char *line, Factor *factor, char *error_buf) {
         set_error(error_buf, "Empty factor name");
         return -1;
     }
+
+    /*
+     * Reject control characters, as core/space.c's .space parser already does.
+     *
+     * They were accepted here, and a factor name reaches two places that
+     * cannot represent them: the JSON emitters (where a raw control byte is a
+     * character JSON forbids) and setenv("TAGUCHI_<name>") in the run path.
+     * Bytes >= 0x80 stay legal so UTF-8 names keep working.
+     */
+    for (const unsigned char *p = (const unsigned char *)factor->name; *p; p++) {
+        if (*p < 0x20 || *p == 0x7f) {
+            set_error(error_buf, "Factor name contains a control character");
+            return -1;
+        }
+    }
     
     // Skip colon and any leading whitespace
     const char *values_start = colon_pos + 1;
