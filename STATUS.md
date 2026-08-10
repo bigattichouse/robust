@@ -12,7 +12,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 
 ## Where things stand
 
-**Eleven binaries ship**, all in `build/bin/`:
+**Nine binaries ship**, all in `build/bin/`:
 
 | stage | binaries |
 |---|---|
@@ -67,8 +67,11 @@ is named for and the largest single piece of unbuilt *method*.
 
 ### 4. Smaller
 
-M7 Python bindings; `pareto svg`; the Pareto chart in `report`; E6 (PCE,
-Shapley); E7 (`desire`, `objectives:`).
+`report` — the standalone HTML/SVG dashboard. **README listed it as shipping
+until 2026-08-09; it does not exist.** `robust` writes its own HTML/JSON
+report, so this is the standalone version plus the Pareto chart of effects.
+Then M7 Python bindings; `pareto svg`; E6 (PCE, Shapley); E7 (`desire`,
+`objectives:`); E3's remaining `pawn` tool and `morris analyze --dgsm`.
 
 ### 5. Research leads — `EXPANSION_NOTE.md` §8.4
 

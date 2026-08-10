@@ -30,7 +30,10 @@ deterministic simulator to find what matters; Taguchi runs on the bench to optim
 | `uq`      | output distribution — percentiles, histogram, skew |
 | `ofat`    | one-factor-at-a-time confirmation — verify an effect before acting |
 | `grid`    | small full-factorial — resolve an interaction exactly |
-| `report`  | unified HTML/SVG dashboard |
+
+Not built yet: `report` (unified HTML/SVG dashboard) — `robust` writes its own
+HTML/JSON report today, so this is the standalone version. See
+[STATUS.md](STATUS.md).
 
 All of them share one `.space` factor-definition format and a common C core
 (`core/libdoe`) holding the PRNG, sampling, factor scaling, the fork/env run-loop,
@@ -94,7 +97,7 @@ is free to evolve without breaking anything downstream.
 
 ## Status
 
-**Eleven binaries ship**, covering screen → attribute → resolve → optimize with
+**Nine binaries ship**, covering screen → attribute → resolve → optimize with
 an analyze stage alongside: `morris` (μ\*/σ, group screening, recursive
 splitting), `sobol` (Sᵢ/S_Tᵢ with bootstrap CIs and second-order pairs),
 `ofat` and `grid` (confirmation and interaction resolution), `taguchi`,
