@@ -217,11 +217,11 @@ optimum matches closed form; a dominated point never appears in the front.
 | Milestone | Deliverable | Depends on | |
 |---|---|---|---|
 | **E0** | ✓ `second_order` **implemented**, not merely rejected. **M5 complete** (second-order ✓, Joe-Kuo sequence ✓). M6 built (`ofat`, `grid`); confirmation checker and M7 pending. | — | |
-| **E1** | ✓ **COMPLETE** — `pareto`, `regress`, `uq`, μ\* CIs, `--keep-share`, cut-gap; Pareto chart in `report`, `--keep-share`, cut-gap diagnostic, Morris μ\* CIs. | E0 | |
+| **E1** | ~ `pareto`, `regress`, `uq`, Morris μ\* CIs, `--keep-share` and the cut-gap diagnostic all ✓ **built**. **One left: the Pareto chart of effects**, which has nowhere to live until `report` exists. Recorded as COMPLETE here until 2026-08-09; it was not. | E0 | |
 | **E2** | `--target-ci` sequential convergence for morris + sobol. | E1 (CIs) | |
-| **E3** | ~~`morris --groups` + recursive splitting~~ ✓ both built; `pawn` tool; `morris analyze --dgsm`; (optional) eFAST cross-check. | E1 | |
+| **E3** | ~ ~~`morris --groups` + recursive splitting~~ ✓ both built and measured. **Pending: `pawn` tool, `morris analyze --dgsm`**, (optional) eFAST cross-check. | E1 | |
 | **E4** | `rsm` tool + `robust funnel --optimize`. | E1 (LSQ), M6 | |
-| **E5** | `noise:` factors, crossed designs, S/N analysis. | E4 | |
+| **E5** | `noise:` factors, crossed designs, S/N analysis. **The namesake** — nothing in the toolkit does robustness-to-noise today, and this is the largest single piece of unbuilt method. | E4 | |
 | **E6** | PCE surrogate; Shapley (gated on correlated inputs). | E3 | |
 | **E7** | `desire` filter tool, `objectives:` in `.space`, per-metric analysis. (`pareto` moved to E1.) | E1; E4 for the optimize path | |
 

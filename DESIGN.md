@@ -308,9 +308,14 @@ independent, and any design can be regenerated from the `.space` file alone.
 
 ## 11. Roadmap
 
-**Status: M0–M4 complete, plus E1's `pareto`** — common core + `morris` +
-`sobol` + the `robust` funnel orchestrator + `pareto`, all suites green under
-`-Werror`, valgrind and ASan/UBSan.
+**Status: M0–M5 and MI complete** — common core + `morris` + `sobol` (now
+sampling with the Joe-Kuo sequence) + the `robust` funnel orchestrator, plus
+E1's `pareto`, `regress`, `uq` and M6's `ofat`, `grid`. Nine binaries ship.
+All suites green under `-Werror` and clang, valgrind, ASan/UBSan, both fuzzers
+and `make validate` 8/8.
+
+Left: M6's confirmation checker, M7's Python bindings, and the `report` tool
+(§11's table below and STATUS.md carry the current order).
 
 Two additions since this section was written, both in EXPANSION.md:
 `validation/` (`make validate`) reproduces the published results the roadmap
@@ -327,9 +332,9 @@ trap for M5's quasi-random sampling (`A` and `B` must be halves of one
 | **M3** | `sobol` Saltelli + Sᵢ/S_Tᵢ with bootstrap CIs; validated against Ishigami. | ✓ |
 | **M4** | `robust funnel`/`screen` (Morris→Sobol, in-process) + self-contained HTML/JSON report + `.tgu` hand-off; orchestrated-process tests. | ✓ |
 | **M5** | ✓ **complete.** Second-order indices (`second_order: true`, validated against the g-function's exact decomposition in check F) and the Joe-Kuo low-discrepancy sequence (`sampling: sobol`, now the default; bit-for-bit identical to the authors' reference generator, checks G and H). | ✓ |
-| **M6** | `ofat` + `grid` built; confirmation checker still to do. | ~ |
+| **M6** | `ofat` + `grid` built. **Still to do: the confirmation checker** — compare a *predicted* optimum against a *measured* confirmation run and say whether the additive prediction held. `spec/screening-methods.md` §1 calls that the hypothesis test for the whole method, so this is the largest conceptual gap left in M0–M7. `report` is also unbuilt (§9). | ~ |
 | **MI** | **Taguchi integration** — folded in + GitHub repo renamed to robust (§12). | ✓ |
-| **M7** | Python (ctypes) bindings mirroring taguchi; CI running `make test`. | |
+| **M7** | Python (ctypes) bindings mirroring taguchi. CI ✓ (runs build → test-all → test-asan → fuzz → validate, under gcc **and** clang). | ~ |
 
 Beyond M7 — new methods (PAWN, DGSM, RSM, noise factors, PCE), post-run
 analysis (SRC/SRRC, UQ summaries, Pareto charts, convergence targets), and

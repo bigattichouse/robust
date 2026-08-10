@@ -37,43 +37,81 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 | M0–M5, MI | ✓ complete |
 | M6 | ~ `ofat` + `grid` ✓; confirmation checker pending |
 | M7 | pending — Python bindings |
-| E0, E1, E3 | ✓ complete |
+| E0 | ✓ complete |
+| E1 | ~ `pareto`, `regress`, `uq`, μ\* CIs, `--keep-share`, cut-gap ✓; the **Pareto chart of effects** is pending, because it needs `report` |
+| E3 | ~ `morris --groups` + `bifurcate` ✓; `pawn` and `morris analyze --dgsm` pending |
 | E2, E4, E5, E6, E7 | pending |
+
+*E1 and E3 were both recorded here as complete until 2026-08-09. They are not:
+each has one deliverable left, and in E1's case it was blocked on a binary the
+README claimed already shipped. Counting `build/bin/` found it; re-reading the
+sentence would not have.*
 
 ---
 
-## What to build next, in order
+## What to build next
+
+*Ordered by value per effort, but that is not the only axis. Read the two notes
+under the heading before picking.*
+
+**Cheapest real win: E2.** Small, fully unblocked, and it removes a guess users
+currently have to make.
+
+**The prize: E5.** Noise factors are the "robust" this project is named for,
+and nothing in the toolkit does robustness-to-noise today. Everything it needs
+is now in place. It is the largest single piece of unbuilt *method* and the
+biggest gap between what the project is called and what it does.
 
 ### 1. E2 — `--target-ci` sequential convergence
 
-Now unblocked: Morris and Sobol both carry bootstrap CIs. Keep doubling
+Morris and Sobol both carry bootstrap CIs, so this is unblocked. Keep doubling
 `trajectories:` / `samples:` until every CI is narrower than a target or a cap
 is hit (caps per SECURITY.md H1). Must stay regenerable from the `.space` seed
-alone.
+alone — which is free for `sampling: sobol`, since the sequence is
+deterministic, and needs care for `lhs`.
 
 ### 2. M6's confirmation checker
 
-`ofat` and `grid` exist. Missing: the piece that compares a *predicted*
-optimum against a *measured* confirmation run and says whether the additive
-prediction held. That is the step `spec/screening-methods.md` §1 calls the
-hypothesis test for the whole Taguchi method.
+`ofat` and `grid` exist. Missing: the piece that compares a *predicted* optimum
+against a *measured* confirmation run and says whether the additive prediction
+held.
+
+Worth more than its position suggests. `spec/screening-methods.md` §1 calls
+this the hypothesis test for the whole Taguchi method — without it the toolkit
+predicts an optimum and never checks whether the prediction was sound, which is
+the one step that distinguishes a design of experiments from a guess with
+arithmetic.
 
 ### 3. E4 → E5 — RSM, then noise factors
 
-`rsm` + `robust funnel --optimize` (the E1 least-squares core in
-`core/src/stats.c` is already there — `doe_ols_src`). Then `noise:` factors,
-crossed inner×outer designs and S/N ratios, which is the "robust" the project
-is named for and the largest single piece of unbuilt *method*.
+`rsm` + `robust funnel --optimize`; the least-squares core is already there
+(`doe_ols_src` in `core/src/stats.c`). Then E5: `noise:` factors, crossed
+inner×outer designs and S/N ratios.
 
-### 4. Smaller
+E5 is the namesake. It is also the item most likely to change the shape of the
+`.space` format, so doing it before the smaller cosmetic work avoids
+re-doing that work.
 
-`report` — the standalone HTML/SVG dashboard. **README listed it as shipping
-until 2026-08-09; it does not exist.** `robust` writes its own HTML/JSON
-report, so this is the standalone version plus the Pareto chart of effects.
-Then M7 Python bindings; `pareto svg`; E6 (PCE, Shapley); E7 (`desire`,
-`objectives:`); E3's remaining `pawn` tool and `morris analyze --dgsm`.
+### 4. `report`, and the Pareto chart that closes E1
 
-### 5. Research leads — `EXPANSION_NOTE.md` §8.4
+The standalone HTML/SVG dashboard. `robust` writes its own HTML/JSON report
+today, so the missing thing is the *standalone* tool — plus the Pareto chart of
+effects, which is E1's one remaining deliverable and has nowhere to live until
+`report` exists. **The README listed `report` as shipping until 2026-08-09.**
+
+### 5. Smaller
+
+M7 Python bindings; `pareto svg`; E3's remaining `pawn` tool and
+`morris analyze --dgsm`; E6 (PCE, Shapley); E7 (`desire`, `objectives:`).
+
+### 6. Engineering, not method
+
+- **A real GCC 16 job.** The clang job catches the increment-only class that
+  PR #1 hit, but it is a proxy, not an equivalent. Add gcc-16 when the runners
+  carry it.
+- `core/src/runner.c` stays at 77% on purpose — see Housekeeping.
+
+### 7. Research leads — `EXPANSION_NOTE.md` §8.4
 
 Unbuilt and still the most interesting direction: the reduction pattern
 (analysis → low-dimensional family → DOE) as a *named funnel stage*;
