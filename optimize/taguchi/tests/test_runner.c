@@ -26,6 +26,8 @@ extern void test_serializer_runs_multiple_are_comma_separated(void);
 extern void test_serializer_runs_escapes_values(void);
 extern void test_serializer_runs_growth_at_declared_limits(void);
 extern void test_serializer_runs_many_runs_growth(void);
+extern void test_def_level_accessors_agree_with_the_definition(void);
+extern void test_run_get_factor_names_is_null_terminated(void);
 extern void test_effects_json_escapes_a_quoted_factor_name(void);
 extern void test_effects_json_is_complete_for_every_factor(void);
 extern void test_serializer_free_null_is_safe(void);
@@ -321,6 +323,8 @@ int main(void) {
     RUN_TEST(serializer_runs_escapes_values);
     RUN_TEST(serializer_runs_growth_at_declared_limits);
     RUN_TEST(serializer_runs_many_runs_growth);
+    RUN_TEST(def_level_accessors_agree_with_the_definition);
+    RUN_TEST(run_get_factor_names_is_null_terminated);
     RUN_TEST(effects_json_escapes_a_quoted_factor_name);
     RUN_TEST(effects_json_is_complete_for_every_factor);
     RUN_TEST(serializer_free_null_is_safe);

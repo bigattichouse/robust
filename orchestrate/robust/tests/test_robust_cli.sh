@@ -115,6 +115,64 @@ else
     skip "screen --json PATH writes valid JSON"
 fi
 
+# ---- funnel: the flagship command, previously untested ------------------
+#
+# cmd_funnel had ZERO CLI coverage -- the orchestrator's headline path, the one
+# the README leads with. It runs in about 0.15s at these sizes, so there was
+# never a cost reason for the gap.
+cat > "$TMP/f.space" <<'EOF'
+factors:
+  loud: 0,10
+  quiet: 0,10
+seed: 5
+trajectories: 4
+samples: 32
+EOF
+expect_exit 0 "funnel runs" "$ROBUST" funnel "$TMP/f.space" "$TMP/m.sh"
+expect_match "Sobol attribution" "funnel reports the attribution stage" \
+    "$ROBUST" funnel "$TMP/f.space" "$TMP/m.sh"
+
+json_ok "funnel --json - parses" "$ROBUST" funnel "$TMP/f.space" "$TMP/m.sh" --json -
+json_is "funnel" "d['stage']" "funnel --json names the stage" \
+    "$ROBUST" funnel "$TMP/f.space" "$TMP/m.sh" --json -
+json_is "True" "len(d['sobol']) > 0" \
+    "funnel --json carries Sobol indices, unlike a screen-only run" \
+    "$ROBUST" funnel "$TMP/f.space" "$TMP/m.sh" --json -
+json_is "True" "all(k in x for x in d['sobol'] for k in ('factor','S1','ST'))" \
+    "funnel --json: each index has its fields" \
+    "$ROBUST" funnel "$TMP/f.space" "$TMP/m.sh" --json -
+
+# The regression this guards: adding "-" support to the JSON writer left the
+# progress banner, both tables and a "Wrote JSON: -" line on stdout AROUND the
+# document, so `funnel --json - | jq` got something no parser would accept.
+"$ROBUST" funnel "$TMP/f.space" "$TMP/m.sh" --json - >"$TMP/fo" 2>"$TMP/fe"
+if grep -qE "Morris screening|Wrote JSON|Running funnel" "$TMP/fo"; then
+    bad "funnel --json - keeps prose off stdout" "human output found in the document"
+else
+    ok "funnel --json - keeps prose off stdout"
+fi
+grep -q "Sobol attribution" "$TMP/fe" \
+    && ok "funnel --json - still reports progress on stderr" \
+    || bad "funnel --json - still reports progress on stderr" "nothing on stderr"
+
+# Writing to a real path keeps the tables on stdout, as before.
+"$ROBUST" funnel "$TMP/f.space" "$TMP/m.sh" --json "$TMP/f.json" >"$TMP/fo2" 2>/dev/null
+grep -q "Wrote JSON" "$TMP/fo2" \
+    && ok "funnel --json PATH still says where it wrote" \
+    || bad "funnel --json PATH still says where it wrote" "no confirmation line"
+if [ "$HAVE_PY" -eq 1 ]; then
+    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$TMP/f.json" 2>/dev/null \
+        && ok "funnel --json PATH writes valid JSON" \
+        || bad "funnel --json PATH writes valid JSON" "parse failed"
+else
+    skip "funnel --json PATH writes valid JSON"
+fi
+
+# --tgu hands the survivors to the optimize stage.
+"$ROBUST" funnel "$TMP/f.space" "$TMP/m.sh" --tgu "$TMP/out.tgu" >/dev/null 2>&1
+if [ -s "$TMP/out.tgu" ]; then ok "funnel --tgu writes an array for the survivors"
+else bad "funnel --tgu writes an array for the survivors" "no file"; fi
+
 echo
 echo "robust CLI tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -23,6 +23,13 @@ struct taguchi_experiment_def {
 
 struct taguchi_experiment_run {
     ExperimentRun internal_run;
+    /*
+     * Backing storage for taguchi_run_get_factor_names(), which the header
+     * documents as returning a NULL-terminated array the caller must not free.
+     * Built on demand; see the note on that function for why it cannot simply
+     * point into internal_run.
+     */
+    const char *name_ptrs[MAX_FACTORS + 1];
 };
 
 struct taguchi_result_set {
@@ -257,13 +264,39 @@ size_t taguchi_run_get_id(const taguchi_experiment_run_t *run) {
 const char **taguchi_run_get_factor_names(const taguchi_experiment_run_t *run) {
     if (!run) return NULL;
 
-    // The internal structure uses char factor_names[MAX_FACTORS][MAX_FACTOR_NAME]
-    // When we return &factor_names[0], it's type is char(*)[MAX_FACTOR_NAME]
-    // which is different from char**, but we can cast it.
-    // The correct approach is to return the address of the first element
-    // of the 2D array, which allows accessing as array[i] for i in [0,factor_count)
-    // We return the pointer to the first factor name, which can be accessed as an array
-    return (const char **)&run->internal_run.factor_names[0];
+    /*
+     * This used to `return (const char **)&run->internal_run.factor_names[0];`
+     * -- casting a char[MAX_FACTORS][MAX_FACTOR_NAME] to char**.
+     *
+     * That is not a reinterpretation, it is a different data structure. The 2D
+     * array is contiguous CHARACTER storage with no pointers in it, so
+     * names[0] read the first sizeof(char*) bytes of the first factor's NAME
+     * and used them as an address. Dereferencing that is a wild read: with a
+     * factor called "alpha" the caller follows 0x00006168706c61 and segfaults.
+     * The header has always promised a NULL-terminated array of names.
+     *
+     * The function had no test at all, which is how a cast this wrong survived
+     * in a public API.
+     *
+     * Built once per run into storage the run owns, so the documented "do not
+     * free" contract still holds. The const cast is confined here: the pointer
+     * table is a cache, not part of the run's logical value.
+     */
+    /*
+     * Rebuilt on every call rather than cached behind a "built yet?" flag.
+     * The first version cached, and the flag lives in memory the run's
+     * allocator does not necessarily zero -- so whether it worked depended on
+     * what happened to be in that byte. It passed in a standalone program and
+     * failed inside the test suite, which is the worst way for a bug to
+     * behave. Filling k pointers is cheaper than the mistake.
+     */
+    struct taguchi_experiment_run *self = (struct taguchi_experiment_run *)run;
+    size_t n = self->internal_run.factor_count;
+    if (n > MAX_FACTORS) n = MAX_FACTORS;
+    for (size_t i = 0; i < n; i++)
+        self->name_ptrs[i] = self->internal_run.factor_names[i];
+    self->name_ptrs[n] = NULL;
+    return self->name_ptrs;
 }
 
 void taguchi_free_runs(taguchi_experiment_run_t **runs, size_t count) {

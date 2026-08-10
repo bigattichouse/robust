@@ -26,7 +26,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 **Green across every mode.** Zero build warnings under
 `-Wall -Wextra -Werror -std=c99 -pedantic`; nine test binaries plus six shell
 suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
-`make validate` 8/8. Coverage **88.3% lines / 98.7% functions**.
+`make validate` 8/8. Coverage **89.8% lines / 100% functions**.
 
 **No known defects.**
 
@@ -202,6 +202,28 @@ pinned above the include; `make check-default-goal` fails if that moves.
 Same shape as the header-dependency bug the include was added to fix, and the
 glued-CI bug above: **wrong but silent, reported as success.** That is the
 failure mode this project keeps producing, so it is the one to look for.
+
+**The last function with no coverage was returning a wild pointer.**
+`taguchi_run_get_factor_names` cast a `char[MAX_FACTORS][MAX_FACTOR_NAME]` to
+`const char **` and returned it. That is not a reinterpretation, it is a
+different data structure: the 2D array is contiguous character storage with no
+pointers in it, so `names[0]` read the first eight bytes of the first factor's
+NAME and used them as an address. With a factor called "alpha" a caller follows
+`0x00006168706c61`. The header has always documented a NULL-terminated array of
+names. Chasing function coverage from 98% to 100% is what found it — it was the
+only function in the tree nothing had ever called.
+
+The first fix was wrong too, instructively: it cached the pointer table behind a
+"built yet?" flag living in memory the run's allocator does not zero, so it
+worked in a standalone program and failed inside the test suite. Rebuilt every
+call now. Filling k pointers is cheaper than the mistake.
+
+**`robust funnel` had zero CLI coverage** — the orchestrator's headline command,
+the one the README leads with. It runs in 0.15s at test sizes, so there was
+never a cost reason. Adding it immediately caught a regression from this
+session: `funnel --json -` printed the progress banner, both tables and
+"Wrote JSON: -" onto stdout AROUND the document, so piping it to a parser
+failed. Introduced while adding `-` support to the JSON writer.
 
 **A test suite outside the build is a test suite nobody runs.** The Python
 binding at `optimize/taguchi/bindings/python` has 11 test files and 260-odd

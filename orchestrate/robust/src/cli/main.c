@@ -99,14 +99,16 @@ static void parse_opts(int argc, char **argv, int start, opts_t *o) {
     }
 }
 
-static void print_morris(const robust_result_t *r) {
-    printf("Morris screening (%zu factors):\n", r->k);
-    printf("  %-18s %10s %10s   %s\n", "factor", "mu*", "sigma", "status");
+static void fprint_morris(FILE *f, const robust_result_t *r) {
+    fprintf(f, "Morris screening (%zu factors):\n", r->k);
+    fprintf(f, "  %-18s %10s %10s   %s\n", "factor", "mu*", "sigma", "status");
     for (size_t i = 0; i < r->k; i++) {
-        printf("  %-18s %10.4g %10.4g   %s\n", r->effects[i].name,
-               r->effects[i].mu_star, r->effects[i].sigma, r->keep[i] ? "KEEP" : "drop");
+        fprintf(f, "  %-18s %10.4g %10.4g   %s\n", r->effects[i].name,
+                r->effects[i].mu_star, r->effects[i].sigma, r->keep[i] ? "KEEP" : "drop");
     }
 }
+
+static void print_morris(const robust_result_t *r) { fprint_morris(stdout, r); }
 
 static int cmd_funnel(const char *path, const char *script, const opts_t *o) {
     doe_space_t sp;
@@ -116,28 +118,40 @@ static int cmd_funnel(const char *path, const char *script, const opts_t *o) {
     robust_result_t r;
     char err[DOE_ERR_SIZE];
 
-    printf("Running funnel on %zu factors (model: %s)...\n", sp.factor_count, script);
+    /*
+     * With --json -, the document owns stdout and everything else goes to
+     * stderr. Adding "-" support to robust_write_json without this left the
+     * progress banner, the two tables and a "Wrote JSON: -" line interleaved
+     * around the document on stdout, so `funnel --json - | jq` got something
+     * no parser would accept. Exactly the defect this session exists to fix,
+     * introduced while fixing it.
+     */
+    int json_stdout = o->json && o->json[0] == '-' && o->json[1] == '\0';
+    FILE *out = json_stdout ? stderr : stdout;
+
+    fprintf(out, "Running funnel on %zu factors (model: %s)...\n",
+            sp.factor_count, script);
     if (robust_funnel(&sp, shell_run, &sctx, o->keep_fraction, &r, err) != 0) {
         fprintf(stderr, "Error: %s\n", err);
         robust_result_free(&r);
         return 1;
     }
 
-    print_morris(&r);
-    printf("\nSobol attribution on %zu survivor(s):\n", r.n_survivors);
-    printf("  %-18s %8s %8s   %s\n", "factor", "S1", "ST", "interaction (ST-S1)");
+    fprint_morris(out, &r);
+    fprintf(out, "\nSobol attribution on %zu survivor(s):\n", r.n_survivors);
+    fprintf(out, "  %-18s %8s %8s   %s\n", "factor", "S1", "ST", "interaction (ST-S1)");
     for (size_t i = 0; i < r.n_indices; i++) {
         const sobol_index_t *x = &r.indices[i];
-        printf("  %-18s %8.3f %8.3f   %.3f\n", x->name, x->s1, x->st, x->st - x->s1);
+        fprintf(out, "  %-18s %8.3f %8.3f   %.3f\n", x->name, x->s1, x->st, x->st - x->s1);
     }
 
     int rc = 0;
     if (o->html && robust_write_html(&r, o->html, err) != 0) { fprintf(stderr, "Error: %s\n", err); rc = 1; }
-    else if (o->html) printf("\nWrote HTML report: %s\n", o->html);
+    else if (o->html) fprintf(out, "\nWrote HTML report: %s\n", o->html);
     if (o->json && robust_write_json(&r, o->json, err) != 0) { fprintf(stderr, "Error: %s\n", err); rc = 1; }
-    else if (o->json) printf("Wrote JSON: %s\n", o->json);
+    else if (o->json && !json_stdout) fprintf(out, "Wrote JSON: %s\n", o->json);
     if (o->tgu && robust_write_tgu(&r, o->tgu, err) != 0) { fprintf(stderr, "Error: %s\n", err); rc = 1; }
-    else if (o->tgu) printf("Wrote taguchi array: %s\n", o->tgu);
+    else if (o->tgu) fprintf(out, "Wrote taguchi array: %s\n", o->tgu);
 
     robust_result_free(&r);
     return rc;

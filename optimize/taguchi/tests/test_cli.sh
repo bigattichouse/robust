@@ -354,6 +354,13 @@ expect_exit 1 "effects rejects an unknown option" \
 expect_exit 1 "analyze rejects an unknown option" \
     $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/results.csv" --format json
 
+# `help` and `version` as SUBCOMMANDS, distinct from --help/--version. Both
+# were uncovered: two entry points nobody had ever run.
+expect_exit 0 "help subcommand exits 0" $TAGUCHI help
+expect_match "Commands:" "help subcommand lists the commands" $TAGUCHI help
+expect_exit 0 "version subcommand exits 0" $TAGUCHI version
+expect_match "v[0-9]" "version subcommand reports a version" $TAGUCHI version
+
 # ---------------------------------------------------------------- list-arrays --json
 json_ok "list-arrays --json parses" $TAGUCHI list-arrays --json
 json_is "True" "len(d['arrays']) > 10" "list-arrays --json lists the arrays" \

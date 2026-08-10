@@ -297,6 +297,64 @@ TEST(effects_json_is_complete_for_every_factor) {
     taguchi_free_definition(def);
 }
 
+/* ---- definition level accessors ---------------------------------------
+ *
+ * The pair that turns taguchi_recommend_optimal's "A=level_3" into the value
+ * it names. Added with the --json work; the count half went uncovered, which
+ * is how an accessor ships returning the wrong thing.
+ */
+
+TEST(def_level_accessors_agree_with_the_definition) {
+    char perr[TAGUCHI_ERROR_SIZE];
+    taguchi_experiment_def_t *def = taguchi_parse_definition(
+        "factors:\n  a: p, q, r\n  b: x, y, z\narray: L9\n", perr);
+    ASSERT_NOT_NULL(def);
+
+    ASSERT_EQ(taguchi_def_get_factor_count(def), 2);
+    ASSERT_EQ(taguchi_def_get_factor_level_count(def, 0), 3);
+    ASSERT_EQ(taguchi_def_get_factor_level_count(def, 1), 3);
+    ASSERT_STR_EQ(taguchi_def_get_factor_level(def, 0, 0), "p");
+    ASSERT_STR_EQ(taguchi_def_get_factor_level(def, 0, 2), "r");
+    ASSERT_STR_EQ(taguchi_def_get_factor_level(def, 1, 1), "y");
+
+    /* Out of range is 0 / NULL, not a read past the array. */
+    ASSERT_EQ(taguchi_def_get_factor_level_count(def, 99), 0);
+    ASSERT_EQ(taguchi_def_get_factor_level_count(NULL, 0), 0);
+    ASSERT_TRUE(taguchi_def_get_factor_level(def, 0, 99) == NULL);
+    ASSERT_TRUE(taguchi_def_get_factor_level(def, 99, 0) == NULL);
+    ASSERT_TRUE(taguchi_def_get_factor_level(NULL, 0, 0) == NULL);
+
+    taguchi_free_definition(def);
+}
+
+TEST(run_get_factor_names_is_null_terminated) {
+    /* Public API, and the last function in the tree with no coverage at all.
+     * The contract is "NULL-terminated array of factor names" -- a caller
+     * walking it without that terminator runs off the end, so the terminator
+     * is the thing worth asserting. */
+    char perr[TAGUCHI_ERROR_SIZE];
+    taguchi_experiment_def_t *def = taguchi_parse_definition(
+        "factors:\n  alpha: 1, 2\n  beta: 1, 2\narray: L4\n", perr);
+    ASSERT_NOT_NULL(def);
+
+    taguchi_experiment_run_t **runs = NULL; size_t n = 0;
+    char gerr[TAGUCHI_ERROR_SIZE];
+    ASSERT_EQ(taguchi_generate_runs(def, &runs, &n, gerr), 0);
+    ASSERT_TRUE(n > 0);
+
+    const char **names = taguchi_run_get_factor_names(runs[0]);
+    ASSERT_NOT_NULL(names);
+    size_t count = 0;
+    while (names[count] != NULL) count++;      /* must terminate */
+    ASSERT_EQ(count, 2);
+    ASSERT_NOT_NULL(taguchi_run_get_value(runs[0], names[0]));
+
+    ASSERT_TRUE(taguchi_run_get_factor_names(NULL) == NULL);
+
+    taguchi_free_runs(runs, n);
+    taguchi_free_definition(def);
+}
+
 /* ---- free ------------------------------------------------------------- */
 
 TEST(serializer_free_null_is_safe) {
