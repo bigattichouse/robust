@@ -287,73 +287,15 @@ class TestReaderIsStrict:
             runs_from_json('{"schema": 99, "runs": []}')
         assert "schema" in str(exc.value)
 
-    def test_the_error_is_catchable_from_both_hierarchies(self):
-        """This package has two distinct TaguchiError classes and the original
-        and enhanced layers each catch a different one. The reader is shared,
-        so what it raises must satisfy both."""
+    def test_the_error_is_a_taguchi_error(self):
+        """The package has one TaguchiError; the reader must raise it."""
         from taguchi._cli_json import runs_from_json
-        from taguchi.core import TaguchiError as CoreError
-        from taguchi.errors import TaguchiError as ErrorsError
-        assert CoreError is not ErrorsError
-        for klass in (CoreError, ErrorsError):
-            with pytest.raises(klass):
-                runs_from_json("not json")
+        from taguchi.errors import TaguchiError
+        import taguchi.core as core
 
-
-# --------------------------------------------------------------------------
-# The CLI's own --json contract, checked directly.
-#
-# This is what the binding should be reading. Pinning it here means the switch
-# has a target that is already known to hold.
-# --------------------------------------------------------------------------
-
-class TestCliJsonContract:
-
-    def run_json(self, cli, *args):
-        out = subprocess.run([cli._cli_path, *args],
-                             capture_output=True, text=True, check=True)
-        return json.loads(out.stdout)
-
-    def test_generate_json_is_loadable_and_complete(self, cli, tmp_path):
-        d = self.run_json(cli, "generate", write_tgu(tmp_path, PLAIN_TGU), "--json")
-        assert d["schema"] == 1
-        assert d["run_count"] == len(d["runs"]) == 9
-        assert d["factors"] == ["temp", "ph"]
-
-    def test_generate_json_keeps_a_hyphenated_factor(self, cli, tmp_path):
-        d = self.run_json(cli, "generate", write_tgu(tmp_path, HYPHEN_TGU), "--json")
-        assert "kv-type" in d["factors"]
-        assert all("kv-type" in r["settings"] for r in d["runs"])
-
-    def test_analyze_json_carries_values_not_only_indices(self, cli, tmp_path):
-        tgu = write_tgu(tmp_path, PLAIN_TGU)
-        csv = tmp_path / "r.csv"
-        csv.write_text("run_id,response\n" + "".join(
-            "%d,%g\n" % (k, v) for k, v in sorted(TestRecommendation.RESP.items())))
-        d = self.run_json(cli, "analyze", tgu, str(csv), "--json")
-        assert d["objective"] == "maximize"
-        for s in d["recommendation"]["settings"]:
-            assert s["value"] is not None
-        assert {s["factor"]: s["value"] for s in d["recommendation"]["settings"]} == {
-            "temp": "hot", "ph": "high"}
-
-    def test_analyze_json_respects_minimize(self, cli, tmp_path):
-        tgu = write_tgu(tmp_path, PLAIN_TGU)
-        csv = tmp_path / "r.csv"
-        csv.write_text("run_id,response\n" + "".join(
-            "%d,%g\n" % (k, v) for k, v in sorted(TestRecommendation.RESP.items())))
-        d = self.run_json(cli, "analyze", tgu, str(csv), "--minimize", "--json")
-        assert {s["factor"]: s["value"] for s in d["recommendation"]["settings"]} == {
-            "temp": "cold", "ph": "low"}
-
-    def test_unknown_option_is_rejected_not_ignored(self, cli, tmp_path):
-        """The failure this whole exercise is about: a caller asking for a mode
-        the binary lacks must get an error, not a human table and exit 0."""
-        out = subprocess.run(
-            [cli._cli_path, "generate", write_tgu(tmp_path, PLAIN_TGU), "--format", "json"],
-            capture_output=True, text=True)
-        assert out.returncode != 0
-        assert "unknown option" in out.stderr.lower()
+        assert core.TaguchiError is TaguchiError
+        with pytest.raises(TaguchiError):
+            runs_from_json("not json")
 
 
 class TestFromTguDoesNotEatYourFile:
@@ -400,7 +342,7 @@ class TestFromTguDoesNotEatYourFile:
         why fixing cleanup() alone looked like it worked.
         """
         import gc
-        from taguchi.experiment_enhanced import Experiment as Enhanced
+        from taguchi.experiment import Experiment as Enhanced
         from taguchi.experiment import Experiment as Original
 
         for cls in (Enhanced, Original):

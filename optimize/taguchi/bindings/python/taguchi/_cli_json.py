@@ -4,8 +4,8 @@ Readers for the CLI's `--json` output.
 WHY THIS MODULE EXISTS
 ----------------------
 The binding used to scrape the CLI's human tables, in FOUR places: a design
-parser in `core.py` and again in `core_enhanced.py`, an effects parser in
-`analyzer.py` and again in `analyzer_enhanced.py`. Each split on punctuation
+parser in `core.py` and again in `core.py`, an effects parser in
+`analyzer.py` and again in `analyzer.py`. Each split on punctuation
 and `continue`d past anything that did not match, so upstream formatting
 changes removed data silently instead of raising.
 
@@ -27,25 +27,12 @@ being silent.
 import json
 from typing import Any, Dict, List
 
-# There are TWO TaguchiError classes in this package and they are not the same
-# object: core.py defines its own, errors.py defines another, and the original
-# and "enhanced" layers each catch a different one. A shared reader that raised
-# just one of them would escape half the callers' `except TaguchiError`.
-#
-# So raise a class that is a subclass of BOTH, built on first use because
-# core.py imports this module and importing it back at module scope would
-# cycle. Reconciling the two hierarchies is a separate job; this makes sure
-# nothing new depends on which one you happened to catch.
-_ERROR_CLASS = None
+from .errors import TaguchiError
 
 
 def _error(message):
-    global _ERROR_CLASS
-    if _ERROR_CLASS is None:
-        from .core import TaguchiError as _CoreError
-        from .errors import TaguchiError as _ErrorsError
-        _ERROR_CLASS = type("TaguchiCliJsonError", (_CoreError, _ErrorsError), {})
-    return _ERROR_CLASS(message)
+    return TaguchiError(message)
+
 
 # The schema this reader understands. The CLI bumps its `schema` only when a
 # key is renamed or removed, never for an addition, so a HIGHER number means

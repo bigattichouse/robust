@@ -3,26 +3,25 @@ Where the taguchi CLI binary lives — one search order for the whole package.
 
 WHY THIS MODULE EXISTS
 ----------------------
-This search existed twice, in `core.py` and `core_enhanced.py`, and the two
-copies disagreed in three ways that each produced a bug:
+This search existed twice — the package used to carry a `core.py` and a
+`core_enhanced.py`, each with its own copy — and the two disagreed in three
+ways that each produced a bug:
 
 - Both listed `optimize/taguchi/build/taguchi` -- where taguchi put its binary
   when it built itself with a sub-make -- BEFORE the umbrella `build/bin/`.
   That stale file survives in older trees, so the binding's test suite ran
   against a binary four days old and reported passes.
-- `core.py` read `$TAGUCHI_CLI`; `core_enhanced.py` read `$TAGUCHI_CLI_PATH`.
-  Pinning a binary configured one half of the package and silently not the
-  other.
-- `core_enhanced.py` searched the environment BEFORE an explicit `cli_path`
-  argument, so `Taguchi(cli_path=...)` could be overridden by whatever happened
-  to be in the shell.
+- One read `$TAGUCHI_CLI`, the other `$TAGUCHI_CLI_PATH`. Pinning a binary
+  configured one half of the package and silently not the other.
+- One searched the environment BEFORE an explicit `cli_path` argument, so
+  `Taguchi(cli_path=...)` could be overridden by whatever happened to be in the
+  shell.
 
-Each was found and fixed separately, which is the cost of the duplication
-rather than a coincidence. One search order now, in one place.
+Each was found and fixed separately, which is the cost of duplication rather
+than a coincidence. The two modules are one now, and so is this.
 
-What is NOT shared is the error: the two layers raise different exception types
-with different diagnostics, and that is a real interface difference rather than
-an accident. `find_cli` returns None and lets each caller report it its own way.
+`find_cli` returns None rather than raising, so a caller can report a missing
+binary in whatever terms suit it.
 """
 
 import os

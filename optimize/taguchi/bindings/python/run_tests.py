@@ -84,9 +84,9 @@ def run_unit_tests():
     tests = [
         ("tests/test_config.py", "Configuration tests"),
         ("tests/test_errors.py", "Error handling tests"),  
-        ("tests/test_core_enhanced.py", "Core functionality tests"),
-        ("tests/test_experiment_enhanced.py", "Experiment tests"),
-        ("tests/test_analyzer_enhanced.py", "Analyzer tests"),
+        ("tests/test_core.py", "Core functionality tests"),
+        ("tests/test_experiment.py", "Experiment tests"),
+        ("tests/test_analyzer.py", "Analyzer tests"),
     ]
     
     results = []

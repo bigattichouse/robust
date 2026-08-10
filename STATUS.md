@@ -310,6 +310,109 @@ set, so a `from_tgu` that RAISED left a half-built object whose destructor
 deleted the file the user was asking about. The first fix passed its test
 because that test only covered the with-block. Both paths are covered now.
 
+**The binding is one implementation now, not two.** It used to carry
+`core.py`/`core_enhanced.py`, `experiment.py`/`experiment_enhanced.py`,
+`analyzer.py`/`analyzer_enhanced.py` and two unrelated `TaguchiError` classes.
+Comparing the public surfaces settled it: the enhanced classes were a strict
+superset — no method existed only on the originals, and the only signature
+difference was `summary()` gaining an optional argument with a default. So the
+merge was mostly deletion.
+
+One class per concept, one error hierarchy, canonical module names, and the
+`Original*` aliases are gone. Shared internals live in `_discovery.py` (finding
+the CLI binary), `_tgu.py` (parsing `.tgu` and owning the temp file) and
+`_cli_json.py` (reading `--json`). Net ~750 lines removed.
+
+This mattered because every defect in the duplicated code had to be found and
+fixed twice, and usually was not: the stale-binary search, the file-deleting
+destructor, the `.tgu` parser, and an exception hierarchy where the exported
+`TaguchiError` caught nothing.
+
+**A test suite outside the build is a test suite nobody runs.** The Python
+binding at `optimize/taguchi/bindings/python` has 11 test files and 260-odd
+checks, and none of it was wired into `make` or CI. Two consequences, both
+found on 2026-08-10:
+
+- Its `core.py` searched `optimize/taguchi/build/taguchi` — where taguchi put
+  its binary back when it built itself with a sub-make — **before** the
+  umbrella `build/bin/taguchi`. That stale file survives in older trees, so the
+  suite was running against a binary **four days old** and reporting passes.
+  Fixed: umbrella path first, `$TAGUCHI_CLI` overrides.
+- **22 of its checks fail on a clean machine**, and did so before any of this
+  session's work (verified by running the same suite against the pre-change
+  binary: 22 failures either way, none introduced, none fixed). They are not
+  code bugs — they assume `/usr/bin/taguchi` exists and assume the legacy build
+  path. Until they are hermetic they cannot gate the build.
+
+So `make test-bindings` runs **only** `tests/test_cli_contract.py`, which is
+hermetic and does gate the build. Making the other 22 hermetic is the follow-up.
+
+**The binding reads `--json` now.** It scraped the human tables in four
+places, and `\w+` in the effects regex dropped a factor named `kv-type` from
+the analysis silently. All four now go through one reader,
+`taguchi/_cli_json.py`, which raises where the scrapers skipped. The two
+`xfail(strict=True)` cases in `test_cli_contract.py` are plain passing tests
+again, which is the switch's acceptance criterion met.
+
+Coverage of the binding is **84% by line but only partly enforced** — the whole
+suite covers 84%, and `test_cli_contract.py` is what gates the build. That gap,
+not the 84%, is what let the `kv-type` drop ship.
+
+Working through the non-hermetic checks took the suite from **37 broken
+(33 failures + 4 errors) to 13**, and turned up four real defects rather than
+just environment coupling:
+
+- **`from taguchi import TaguchiError` caught nothing the library raised.** The
+  package exported `class BackwardCompatibleTaguchiError(TaguchiError,
+  _OriginalTaguchiError)` — a SUBCLASS of both layers' error types. `except`
+  matches a class or its ancestors, so a subclass of both catches neither. Both
+  now derive from one base (`_base_error.py`) and the export is that base.
+- **`core_enhanced.py` had its own stale binary discovery**, missing the
+  umbrella `build/bin/` path and reading a different env var
+  (`TAGUCHI_CLI_PATH` vs `TAGUCHI_CLI`). Same defect as `core.py`, missed
+  because the logic exists twice.
+- **`TAGUCHI_DEBUG=1` and `=yes` silently did nothing** — the parser tested
+  `.lower() == "true"` only.
+- Fixtures scoped inside one test class, so a second class's four tests errored
+  on a missing fixture instead of running.
+
+It is now at **zero**: all 306 checks pass, and `make test-bindings` runs the
+WHOLE directory rather than the one hermetic file. Getting there turned up five
+more real defects — every batch did, which is the point:
+
+- **`Experiment.from_tgu(path)` deleted the caller's file.** `cleanup()`
+  unlinked whatever `_tgu_path` named, and `from_tgu` pointed that at the file
+  it was handed, so `with Experiment.from_tgu("my_experiment.tgu"): ...`
+  destroyed the input on the way out of the block. Silent, immediate,
+  unrecoverable, and present in BOTH layers. Ownership is tracked now rather
+  than inferred from "the path is set".
+- **The binding could not see L18.** `_get_arrays_info` scraped with a regex
+  requiring a NUMBER before "levels"; a mixed-level array prints "mixed", so
+  L18 never matched. `list_arrays()` returned 19 of 20 and
+  `get_array_info("L18")` raised "not found" — the one array designed for
+  mixed-level factors was unreachable. Both layers read `list-arrays --json`
+  now, and `levels` is null for mixed rather than 0.
+
+- **`CommandExecutionError` never escaped `_run_command`.** `raise error` sat
+  inside the `try`, so the following `except Exception` caught and rewrapped it
+  as a plain `TaguchiError` — `exit_code` and `stderr` discarded, and
+  `except CommandExecutionError` never matching.
+- **`Taguchi(cli_path=...)` could be silently overridden** by whatever
+  `TAGUCHI_CLI_PATH` was set to in the shell: the enhanced layer searched the
+  environment variable BEFORE the explicit argument. An argument is a decision;
+  an environment variable is a default.
+- **`summary()` could never report incomplete data.** It builds a "Data
+  completeness: X%" line and a missing-runs warning, but called `main_effects()`
+  first — which raises on missing runs. Both lines were unreachable in the only
+  situation they exist for. It reports now; `main_effects()` stays strict,
+  because an unbalanced design gives biased level means.
+
+The `from_tgu` data loss needed fixing **twice**: `cleanup()` was not the only
+place that unlinked. `__del__` did its own, checking only that `_tgu_path` was
+set, so a `from_tgu` that RAISED left a half-built object whose destructor
+deleted the file the user was asking about. The first fix passed its test
+because that test only covered the with-block. Both paths are covered now.
+
 **Deduplicating has started, at the seams where the bugs actually were.**
 Two shared modules, 254 lines of duplicated logic removed:
 

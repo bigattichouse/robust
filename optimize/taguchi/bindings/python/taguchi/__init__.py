@@ -46,36 +46,14 @@ Async Support:
         return arrays
 """
 
-# Import original modules for backward compatibility
-from ._base_error import TaguchiErrorBase
-from .core import Taguchi as _OriginalTaguchi, TaguchiError as _OriginalTaguchiError
-from .experiment import Experiment as _OriginalExperiment  
-from .analyzer import Analyzer as _OriginalAnalyzer
-
-# Import enhanced modules
 from .config import TaguchiConfig, ConfigManager
 from .errors import (
     TaguchiError, BinaryDiscoveryError, CommandExecutionError, 
     TimeoutError, ValidationError
 )
-from .core_enhanced import Taguchi, AsyncTaguchi
-from .experiment_enhanced import Experiment
-from .analyzer_enhanced import Analyzer
-
-# For backward compatibility, make sure the enhanced error inherits from original
-# This ensures existing exception handling continues to work
-# Both layers' TaguchiError now derive from one base, so the exported name is
-# an ANCESTOR of everything raised rather than a descendant of both.
-#
-# It used to be `class BackwardCompatibleTaguchiError(TaguchiError,
-# _OriginalTaguchiError)`, which reads like it covers both and covers neither:
-# `except` matches a class or its ancestors, so a subclass of both catches
-# nothing either one raises. `from taguchi import TaguchiError` could not catch
-# a single error this package produced.
-BackwardCompatibleTaguchiError = TaguchiErrorBase   # name kept for callers
-
-# Replace the enhanced TaguchiError with backward compatible version
-TaguchiError = TaguchiErrorBase
+from .core import Taguchi, AsyncTaguchi
+from .experiment import Experiment
+from .analyzer import Analyzer
 
 # Version info
 __version__ = "1.6.0"  # Incremented for enhanced features
@@ -99,18 +77,7 @@ __all__ = [
     # Async support
     "AsyncTaguchi",
     
-    # Original classes for explicit access if needed
-    "OriginalTaguchi",
-    "OriginalTaguchiError", 
-    "OriginalExperiment",
-    "OriginalAnalyzer",
 ]
-
-# Expose original classes for advanced users who need explicit access
-OriginalTaguchi = _OriginalTaguchi
-OriginalTaguchiError = _OriginalTaguchiError
-OriginalExperiment = _OriginalExperiment
-OriginalAnalyzer = _OriginalAnalyzer
 
 # Convenience functions for quick setup
 def configure_from_environment() -> TaguchiConfig:

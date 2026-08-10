@@ -5,14 +5,13 @@ Provides rich error context, operation tracking, and actionable error messages
 for better debugging experience.
 """
 
-from ._base_error import TaguchiErrorBase
 import os
 import subprocess
 import traceback
 from typing import List, Optional, Dict, Any, Union
 
 
-class TaguchiError(TaguchiErrorBase):
+class TaguchiError(Exception):
     """
     Enhanced exception for Taguchi library errors.
     
