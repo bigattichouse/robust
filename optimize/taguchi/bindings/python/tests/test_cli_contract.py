@@ -30,6 +30,7 @@ it is not the suite wired into CI.
 """
 
 import json
+import os
 import subprocess
 from collections import Counter
 
@@ -316,12 +317,30 @@ class TestCliJsonContract:
 
 class TestBinaryDiscovery:
 
-    def test_finds_the_umbrella_build_not_a_stale_sibling(self, cli):
+    def test_does_not_pick_the_stale_legacy_sibling(self, cli):
         """The binding used to search optimize/taguchi/build/taguchi first --
-        where taguchi put its binary when it built itself. That file survives
-        in older trees, so the suite ran against a four-day-old binary and
-        reported passes."""
-        assert cli._cli_path.replace("\\", "/").endswith("build/bin/taguchi")
+        where taguchi put its binary when it built itself with a sub-make. That
+        file survives in older trees, so the suite ran against a four-day-old
+        binary and reported passes.
+
+        Asserted as "not the legacy path", not as one literal location: the
+        umbrella build is build/bin/taguchi normally and build/asan/bin/taguchi
+        under `make test-asan`, and pinning one of those would fail the other
+        for no reason. (It did.)"""
+        path = cli._cli_path.replace("\\", "/")
+        assert not path.endswith("optimize/taguchi/build/taguchi"), (
+            "found the legacy sub-make path: %s" % path)
+        assert path.endswith("/bin/taguchi"), (
+            "expected an umbrella build layout (.../bin/taguchi), got %s" % path)
+
+    def test_an_explicit_TAGUCHI_CLI_wins(self, cli):
+        """CI pins the binary it just built. If the env var were ignored, the
+        suite could silently test something else -- which is the whole reason
+        this class exists."""
+        want = os.environ.get("TAGUCHI_CLI")
+        if not want:
+            pytest.skip("TAGUCHI_CLI not set in this environment")
+        assert os.path.realpath(Taguchi()._cli_path) == os.path.realpath(want)
 
     def test_the_binary_it_found_supports_json(self, cli, tmp_path):
         """Cheap guard against the same class of mistake: if discovery ever
