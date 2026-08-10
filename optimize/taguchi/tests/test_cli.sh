@@ -392,6 +392,55 @@ expect_exit 0 "validate accepts a UTF-8 factor name" $TAGUCHI validate "$TMP/utf
 json_ok "generate --json handles a UTF-8 factor name" \
     $TAGUCHI generate "$TMP/utf.tgu" --json
 
+# ---------------------------------------------------------------- confirm
+#
+# The confirmation run: M6's missing piece. An orthogonal array never runs the
+# combination it recommends, so the additive prediction is a hypothesis and
+# nothing in the analysis tests it.
+#
+# grad.csv is exactly additive (response = 10*temp_level + ph_level), so the
+# prediction must be EXACT -- and run 9 of that design really did measure 33,
+# which is what the model predicts for the recommended settings.
+expect_exit 0 "confirm runs" $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv"
+expect_match "Predicted response" "confirm predicts a response" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv"
+expect_match "HYPOTHESIS" "confirm says the prediction is untested without a run" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv"
+expect_match "HELD" "confirm: an additive response confirms" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --measured 33
+expect_match "did NOT hold" "confirm: a measurement far from prediction fails" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --measured 5
+expect_exit 1 "confirm rejects a non-numeric --measured" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --measured abc
+expect_exit 1 "confirm rejects an unknown option" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --format json
+
+json_ok "confirm --json parses" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --json
+json_is "33" "d['predicted']" "confirm --json: an additive model predicts exactly" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --json
+json_is "22" "d['grand_mean']" "confirm --json reports the grand mean" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --json
+# prediction = grand + sum of the contributions it lists
+json_is "True" "abs(d['predicted'] - (d['grand_mean'] + sum(s['contribution'] for s in d['settings']))) < 1e-9" \
+    "confirm --json: prediction equals grand mean plus its own contributions" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --json
+json_is "None" "d['additive_model_held']" \
+    "confirm --json: no verdict without a measurement" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --json
+json_is "True" "d['additive_model_held']" "confirm --json: exact measurement holds" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --measured 33 --json
+json_is "False" "d['additive_model_held']" "confirm --json: a far measurement fails" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --measured 5 --json
+json_is "0" "d['error']" "confirm --json: error is measured minus predicted" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --measured 33 --json
+# minimizing must pick the other end and predict a different value
+json_is "11" "d['predicted']" "confirm --json: --minimize predicts the low corner" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --minimize --json
+json_is "True" "[s['value'] for s in d['settings']] == ['cold', 'low']" \
+    "confirm --json: --minimize recommends the low settings" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --minimize --json
+
 # ---------------------------------------------------------------- summary
 echo
 echo "taguchi CLI tests: $pass passed, $fail failed"

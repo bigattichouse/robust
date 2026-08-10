@@ -35,7 +35,7 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 | | state |
 |---|---|
 | M0–M5, MI | ✓ complete |
-| M6 | ~ `ofat` + `grid` ✓; confirmation checker pending |
+| M6 | ~ `ofat` + `grid` + `taguchi confirm` ✓; `report` still unbuilt |
 | M7 | ~ Python bindings ship and are CI-gated (299 checks), but they drive the CLI as a **subprocess**, not the shared library via **ctypes**, which is what M7 asks for |
 | E0 | ✓ complete |
 | E1 | ~ `pareto`, `regress`, `uq`, μ\* CIs, `--keep-share`, cut-gap ✓; the **Pareto chart of effects** is pending, because it needs `report` |
@@ -70,11 +70,22 @@ is hit (caps per SECURITY.md H1). Must stay regenerable from the `.space` seed
 alone — which is free for `sampling: sobol`, since the sequence is
 deterministic, and needs care for `lhs`.
 
-### 2. M6's confirmation checker
+### 2. ~~M6's confirmation checker~~ — built 2026-08-10
 
-`ofat` and `grid` exist. Missing: the piece that compares a *predicted* optimum
-against a *measured* confirmation run and says whether the additive prediction
-held.
+`taguchi confirm <file.tgu> <results.csv> [--measured V]` predicts the response
+at the recommended settings and, given a measured confirmation run, says
+whether the additive prediction held.
+
+That was the largest conceptual gap in M0–M7: an orthogonal array never runs
+the combination it recommends, so the additive prediction is a hypothesis and
+nothing in the analysis tested it. `spec/screening-methods.md` — "the additive
+prediction is the hypothesis, not the result; skipping the confirmation run
+means never testing it."
+
+The verdict is judged against the largest main effect, which is the size of the
+thing the design claims to have measured. It is a sanity check, not a
+significance test: that needs an error variance, and a saturated array has no
+degrees of freedom to estimate one. The output says so.
 
 Worth more than its position suggests. `spec/screening-methods.md` §1 calls
 this the hypothesis test for the whole Taguchi method — without it the toolkit

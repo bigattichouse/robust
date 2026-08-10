@@ -332,7 +332,7 @@ trap for M5's quasi-random sampling (`A` and `B` must be halves of one
 | **M3** | `sobol` Saltelli + Sᵢ/S_Tᵢ with bootstrap CIs; validated against Ishigami. | ✓ |
 | **M4** | `robust funnel`/`screen` (Morris→Sobol, in-process) + self-contained HTML/JSON report + `.tgu` hand-off; orchestrated-process tests. | ✓ |
 | **M5** | ✓ **complete.** Second-order indices (`second_order: true`, validated against the g-function's exact decomposition in check F) and the Joe-Kuo low-discrepancy sequence (`sampling: sobol`, now the default; bit-for-bit identical to the authors' reference generator, checks G and H). | ✓ |
-| **M6** | `ofat` + `grid` built. **Still to do: the confirmation checker** — compare a *predicted* optimum against a *measured* confirmation run and say whether the additive prediction held. `spec/screening-methods.md` §1 calls that the hypothesis test for the whole method, so this is the largest conceptual gap left in M0–M7. `report` is also unbuilt (§9). | ~ |
+| **M6** | `ofat` + `grid` + `taguchi confirm` built. ~~Still to do: the confirmation checker~~ — compare a *predicted* optimum against a *measured* confirmation run and say whether the additive prediction held. `spec/screening-methods.md` §1 calls that the hypothesis test for the whole method, so this is the largest conceptual gap left in M0–M7. `report` is also unbuilt (§9). | ~ |
 | **MI** | **Taguchi integration** — folded in + GitHub repo renamed to robust (§12). | ✓ |
 | **M7** | Python (ctypes) bindings mirroring taguchi. CI ✓ (runs build → test-all → test-asan → fuzz → validate, under gcc **and** clang). | ~ |
 

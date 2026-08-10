@@ -73,6 +73,10 @@ static void print_usage(const char *program_name) {
         "                                   Main effects + optimal configuration\n"
         "  effects <file.tgu> <results.csv> [--metric N] [--json]\n"
         "                                   Main effects only\n"
+        "  confirm <file.tgu> <results.csv> [--measured V] [--metric N]\n"
+        "                                   [--minimize] [--json]\n"
+        "                                   Predict the optimum, and test that\n"
+        "                                   prediction against a measured run\n"
         "  validate <file.tgu>              Validate experiment definition\n"
         "  suggest-array <file.tgu>         Suggest optimal orthogonal array\n"
         "  list-arrays [--json]             List available orthogonal arrays\n"
@@ -821,6 +825,245 @@ static int cmd_effects(int argc, char *argv[]) {
     return 0;
 }
 
+/*
+ * confirm — test the additive prediction instead of assuming it.
+ *
+ * A Taguchi analysis PREDICTS the response at the settings it recommends, by
+ * adding each factor's best-level deviation to the grand mean:
+ *
+ *     y_hat = grand + SUM_i (mean_i[best] - grand)
+ *
+ * That is a hypothesis: it assumes the factors act additively, which is
+ * exactly what an orthogonal array cannot check, because it never runs the
+ * combination it recommends. spec/screening-methods.md is blunt about it --
+ * "the additive prediction is the hypothesis, not the result; skipping the
+ * confirmation run means never testing it."
+ *
+ * So: print the settings to run and the value to expect, and with --measured,
+ * say whether the answer came back where the model said it would.
+ *
+ * The grand mean is taken as the mean of one factor's level means. In a
+ * balanced array every factor gives the same answer, which is the property the
+ * array exists for.
+ */
+static double grand_mean_of(taguchi_main_effect_t **effects, size_t count) {
+    if (count == 0) return 0.0;
+    size_t n = 0;
+    const double *means = taguchi_effect_get_level_means(effects[0], &n);
+    if (n == 0) return 0.0;
+    double sum = 0.0;
+    for (size_t i = 0; i < n; i++) sum += means[i];
+    return sum / (double)n;
+}
+
+static size_t best_level_of(taguchi_main_effect_t *effect, bool higher_is_better) {
+    size_t n = 0;
+    const double *means = taguchi_effect_get_level_means(effect, &n);
+    size_t best = 0;
+    for (size_t lv = 1; lv < n; lv++) {
+        int better = higher_is_better ? (means[lv] > means[best])
+                                      : (means[lv] < means[best]);
+        if (better) best = lv;
+    }
+    return best;
+}
+
+static int cmd_confirm(int argc, char *argv[]) {
+    if (argc < 3) {
+        fprintf(stderr, "Error: confirm requires .tgu file and results CSV\n");
+        fprintf(stderr, "Usage: confirm <file.tgu> <results.csv> [--measured V] "
+                        "[--metric NAME] [--minimize] [--json]\n");
+        return 1;
+    }
+
+    const char *tgu_file = argv[1];
+    const char *csv_file = argv[2];
+    const char *metric_name = "response";
+    bool higher_is_better = true;
+    int as_json = 0, have_measured = 0;
+    double measured = 0.0;
+
+    for (int i = 3; i < argc; i++) {
+        if (strcmp(argv[i], "--metric") == 0 && i + 1 < argc) metric_name = argv[++i];
+        else if (strcmp(argv[i], "--minimize") == 0) higher_is_better = false;
+        else if (strcmp(argv[i], "--json") == 0) as_json = 1;
+        else if (strcmp(argv[i], "--measured") == 0 && i + 1 < argc) {
+            char *end;
+            measured = strtod(argv[++i], &end);
+            if (end == argv[i] || *end != '\0' || !isfinite(measured)) {
+                fprintf(stderr, "Error: --measured needs a finite number\n");
+                return 1;
+            }
+            have_measured = 1;
+        } else {
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+            return 1;
+        }
+    }
+
+    char *content = read_file_dynamic(tgu_file);
+    if (!content) return 1;
+
+    char error[TAGUCHI_ERROR_SIZE];
+    taguchi_experiment_def_t *def = taguchi_parse_definition(content, error);
+    free(content);
+    if (!def) {
+        fprintf(stderr, "Error parsing %s: %s\n", tgu_file, error);
+        return 1;
+    }
+
+    taguchi_result_set_t *results = taguchi_create_result_set(def, metric_name);
+    if (!results) {
+        fprintf(stderr, "Error creating result set\n");
+        taguchi_free_definition(def);
+        return 1;
+    }
+    if (parse_csv_results(csv_file, metric_name, results, error) != 0) {
+        fprintf(stderr, "Error reading results: %s\n", error);
+        taguchi_free_result_set(results);
+        taguchi_free_definition(def);
+        return 1;
+    }
+
+    taguchi_main_effect_t **effects = NULL;
+    size_t effect_count = 0;
+    if (taguchi_calculate_main_effects(results, &effects, &effect_count, error) != 0) {
+        fprintf(stderr, "Error calculating effects: %s\n", error);
+        taguchi_free_result_set(results);
+        taguchi_free_definition(def);
+        return 1;
+    }
+
+    double grand = grand_mean_of(effects, effect_count);
+    double predicted = grand;
+    double biggest_effect = 0.0;
+    for (size_t i = 0; i < effect_count; i++) {
+        size_t n = 0;
+        const double *means = taguchi_effect_get_level_means(effects[i], &n);
+        size_t best = best_level_of(effects[i], higher_is_better);
+        if (n > 0) predicted += means[best] - grand;
+        double r = taguchi_effect_get_range(effects[i]);
+        if (r > biggest_effect) biggest_effect = r;
+    }
+
+    /*
+     * The verdict, and what it is worth.
+     *
+     * Judged against the LARGEST MAIN EFFECT, because that is the size of the
+     * thing the design claims to have measured: an error small next to it means
+     * the additive model tracks what you set out to detect, and an error
+     * comparable to it means the model missed something as big as the answer.
+     *
+     * This is a heuristic, not a significance test. A real one needs an error
+     * variance, which a saturated array has no degrees of freedom to estimate
+     * -- so it needs replication or an unassigned column, and neither is
+     * something this command can conjure. Say the number and say what it does
+     * not prove.
+     */
+    double error_abs = 0.0, error_share = 0.0;
+    int held = 0;
+    if (have_measured) {
+        error_abs = fabs(measured - predicted);
+        error_share = biggest_effect > 0.0 ? error_abs / biggest_effect : 0.0;
+        held = biggest_effect > 0.0 ? (error_share <= 0.25) : (error_abs == 0.0);
+    }
+
+    if (as_json) {
+        printf("{\n");
+        printf("  \"tool\": \"taguchi\",\n");
+        printf("  \"command\": \"confirm\",\n");
+        printf("  \"schema\": %d,\n", TAGUCHI_JSON_SCHEMA);
+        printf("  \"metric\": ");
+        json_str(metric_name);
+        printf(",\n  \"objective\": \"%s\",\n", higher_is_better ? "maximize" : "minimize");
+        printf("  \"grand_mean\": ");
+        json_num(grand);
+        printf(",\n  \"predicted\": ");
+        json_num(predicted);
+        printf(",\n  \"largest_main_effect\": ");
+        json_num(biggest_effect);
+        printf(",\n  \"settings\": [\n");
+        for (size_t i = 0; i < effect_count; i++) {
+            size_t n = 0;
+            const double *means = taguchi_effect_get_level_means(effects[i], &n);
+            size_t best = best_level_of(effects[i], higher_is_better);
+            const char *fname = taguchi_effect_get_factor(effects[i]);
+            printf("    {\"factor\": ");
+            json_str(fname);
+            printf(", \"level\": %zu, \"value\": ", best + 1);
+            json_level_value(def, fname, best);
+            printf(", \"contribution\": ");
+            json_num(n > 0 ? means[best] - grand : 0.0);
+            printf("}%s\n", i + 1 < effect_count ? "," : "");
+        }
+        printf("  ],\n");
+        if (!have_measured) {
+            printf("  \"measured\": null,\n");
+            printf("  \"error\": null,\n");
+            printf("  \"error_share_of_largest_effect\": null,\n");
+            printf("  \"additive_model_held\": null\n");
+        } else {
+            printf("  \"measured\": ");
+            json_num(measured);
+            printf(",\n  \"error\": ");
+            json_num(measured - predicted);
+            printf(",\n  \"error_share_of_largest_effect\": ");
+            json_num(error_share);
+            printf(",\n  \"additive_model_held\": %s\n", held ? "true" : "false");
+        }
+        printf("}\n");
+    } else {
+        printf("Confirmation for metric: %s (%s)\n\n",
+               metric_name, higher_is_better ? "maximizing" : "minimizing");
+        printf("Run this combination:\n");
+        for (size_t i = 0; i < effect_count; i++) {
+            size_t n = 0;
+            const double *means = taguchi_effect_get_level_means(effects[i], &n);
+            size_t best = best_level_of(effects[i], higher_is_better);
+            const char *fname = taguchi_effect_get_factor(effects[i]);
+            size_t fi = def_index_of(def, fname);
+            const char *val = (fi == (size_t)-1) ? NULL
+                            : taguchi_def_get_factor_level(def, fi, best);
+            printf("  %-20s %-16s (contributes %+.4g)\n",
+                   fname, val ? val : "?", n > 0 ? means[best] - grand : 0.0);
+        }
+        printf("\nGrand mean          %.6g\n", grand);
+        printf("Predicted response  %.6g\n", predicted);
+
+        if (!have_measured) {
+            printf("\nThat prediction is the HYPOTHESIS, not the result. The array never\n"
+                   "ran this combination, so nothing here has tested whether the factors\n"
+                   "actually add up. Run it, then:\n"
+                   "  taguchi confirm %s %s --measured <value>\n", tgu_file, csv_file);
+        } else {
+            printf("Measured response   %.6g\n", measured);
+            printf("Error               %+.6g", measured - predicted);
+            if (biggest_effect > 0.0)
+                printf("  (%.0f%% of the largest main effect)", 100.0 * error_share);
+            printf("\n\n");
+            if (held) {
+                printf("The additive prediction HELD. The factors behave independently at\n"
+                       "these settings, so the main effects can be read as the answer.\n");
+            } else {
+                printf("The additive prediction did NOT hold. The measurement is off by a\n"
+                       "margin comparable to the effects themselves, which means something\n"
+                       "the array could not see -- an interaction, or aliasing. Resolve the\n"
+                       "suspect pair with `grid`, and do not act on the ranking until you\n"
+                       "have.\n");
+            }
+            printf("\nThis compares one run against one prediction. It is a sanity check,\n"
+                   "not a significance test: that needs an error variance, and a saturated\n"
+                   "array has no degrees of freedom left to estimate one. Replicate, or\n"
+                   "leave a column unassigned, if you need the stronger claim.\n");
+        }
+    }
+
+    taguchi_free_effects(effects, effect_count);
+    taguchi_free_result_set(results);
+    taguchi_free_definition(def);
+    return 0;
+}
+
 static int cmd_analyze(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Error: analyze command requires .tgu file and results CSV\n");
@@ -1019,6 +1262,8 @@ int main(int argc, char *argv[]) {
         return cmd_run(sub_argc, sub_argv);
     } else if (strcmp(command, "analyze") == 0) {
         return cmd_analyze(sub_argc, sub_argv);
+    } else if (strcmp(command, "confirm") == 0) {
+        return cmd_confirm(sub_argc, sub_argv);
     } else if (strcmp(command, "effects") == 0) {
         return cmd_effects(sub_argc, sub_argv);
     } else {
