@@ -273,8 +273,9 @@ just environment coupling:
 - Fixtures scoped inside one test class, so a second class's four tests errored
   on a missing fixture instead of running.
 
-Working the list down further took it to **8**, and turned up two more real
-defects — both of the same silent-loss family as everything else this session:
+It is now at **zero**: all 306 checks pass, and `make test-bindings` runs the
+WHOLE directory rather than the one hermetic file. Getting there turned up five
+more real defects — every batch did, which is the point:
 
 - **`Experiment.from_tgu(path)` deleted the caller's file.** `cleanup()`
   unlinked whatever `_tgu_path` named, and `from_tgu` pointed that at the file
@@ -289,13 +290,25 @@ defects — both of the same silent-loss family as everything else this session:
   mixed-level factors was unreachable. Both layers read `list-arrays --json`
   now, and `levels` is null for mixed rather than 0.
 
-Also: `CommandExecutionError` never escaped `_run_command`. `raise error` sat
-inside the `try`, so the following `except Exception` caught and rewrapped it
-as a plain `TaguchiError` — `exit_code` and `stderr` discarded, and
-`except CommandExecutionError` never matching.
+- **`CommandExecutionError` never escaped `_run_command`.** `raise error` sat
+  inside the `try`, so the following `except Exception` caught and rewrapped it
+  as a plain `TaguchiError` — `exit_code` and `stderr` discarded, and
+  `except CommandExecutionError` never matching.
+- **`Taguchi(cli_path=...)` could be silently overridden** by whatever
+  `TAGUCHI_CLI_PATH` was set to in the shell: the enhanced layer searched the
+  environment variable BEFORE the explicit argument. An argument is a decision;
+  an environment variable is a default.
+- **`summary()` could never report incomplete data.** It builds a "Data
+  completeness: X%" line and a missing-runs warning, but called `main_effects()`
+  first — which raises on missing runs. Both lines were unreachable in the only
+  situation they exist for. It reports now; `main_effects()` stays strict,
+  because an unbalanced design gives biased level means.
 
-The remaining 8 are the enhanced layer's async mocks and validation semantics.
-They are the argument for the item below, not for more repair.
+The `from_tgu` data loss needed fixing **twice**: `cleanup()` was not the only
+place that unlinked. `__del__` did its own, checking only that `_tgu_path` was
+set, so a `from_tgu` that RAISED left a half-built object whose destructor
+deleted the file the user was asking about. The first fix passed its test
+because that test only covered the with-block. Both paths are covered now.
 
 **The duplicated "enhanced" layer is the standing liability.**
 `core.py`/`core_enhanced.py`, `analyzer.py`/`analyzer_enhanced.py`,

@@ -241,8 +241,18 @@ class Experiment:
         self.cleanup()
 
     def __del__(self) -> None:
-        # Guard against partially-initialised objects and interpreter shutdown
+        # Guard against partially-initialised objects and interpreter shutdown.
+        #
+        # This checked only that _tgu_path was set, so it deleted the CALLER's
+        # file for an experiment built by from_tgu -- the same bug cleanup()
+        # had, in a second place, and the more dangerous of the two: it fires
+        # on garbage collection, so from_tgu() raising a ValidationError left
+        # a half-built object whose destructor removed the .tgu the user was
+        # asking about. Ownership is checked here too. Read from __dict__
+        # because __del__ can run on an object whose __init__ did not finish.
         try:
+            if not self.__dict__.get('_owns_tgu'):
+                return
             path = self.__dict__.get('_tgu_path')
             if path and os.path.exists(path):
                 os.unlink(path)

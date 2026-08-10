@@ -9,7 +9,7 @@ import asyncio
 import os
 import tempfile
 import pytest
-from unittest.mock import patch, Mock
+from unittest.mock import AsyncMock, patch, Mock
 
 from taguchi.config import TaguchiConfig, ConfigManager
 from taguchi.core_enhanced import Taguchi, AsyncTaguchi
@@ -174,10 +174,15 @@ class TestBackwardCompatibility:
         # Mock effects output
         effects_mock = Mock()
         effects_mock.returncode = 0
-        effects_mock.stdout = "temp    0.050   L1=1.020, L2=1.070"
+        # The --json document main_effects() reads now.
+        effects_mock.stdout = "{\"tool\": \"taguchi\", \"command\": \"effects\", \"schema\": 1, \"metric\": \"response\", \"factor_count\": 1, \"effects\": [{\"factor\": \"temp\", \"range\": 0.05, \"levels\": [{\"level\": 1, \"value\": \"low\", \"mean\": 1.02}, {\"level\": 2, \"value\": \"high\", \"mean\": 1.07}]}]}"
         effects_mock.stderr = ""
         
-        with patch('subprocess.run', effects_mock):
+        # return_value=, not the mock itself: patching subprocess.run WITH the
+        # mock makes every call return a FRESH Mock, so returncode was a Mock
+        # (non-zero), the error path ran, and stderr -- also a Mock -- blew up
+        # in the message formatter. The test never exercised the happy path.
+        with patch('subprocess.run', return_value=effects_mock):
             with patch('shutil.which', return_value='/usr/bin/taguchi'):
                 # Original workflow should work unchanged
                 with Analyzer(mock_experiment, metric_name="response") as analyzer:
@@ -469,13 +474,14 @@ class TestAsyncIntegration:
                 mock_process.returncode = 0
                 mock_process.communicate = Mock()
                 mock_process.communicate.return_value = (
-                    b"L9    (9 runs, 4 cols, 3 levels)\nL16   (16 runs, 5 cols, 4 levels)\n",
+                    # The --json document list_arrays_async reads now.
+                    "{\"tool\": \"taguchi\", \"command\": \"list-arrays\", \"schema\": 1, \"arrays\": [{\"name\": \"L9\", \"runs\": 9, \"columns\": 4, \"levels\": 3, \"mixed_levels\": false}, {\"name\": \"L16\", \"runs\": 16, \"columns\": 5, \"levels\": 4, \"mixed_levels\": false}]}".encode(),
                     b""
                 )
                 
                 with patch('asyncio.create_subprocess_exec', return_value=mock_process):
                     with patch('asyncio.wait_for', return_value=(
-                        b"L9    (9 runs, 4 cols, 3 levels)\nL16   (16 runs, 5 cols, 4 levels)\n",
+                        "{\"tool\": \"taguchi\", \"command\": \"list-arrays\", \"schema\": 1, \"arrays\": [{\"name\": \"L9\", \"runs\": 9, \"columns\": 4, \"levels\": 3, \"mixed_levels\": false}, {\"name\": \"L16\", \"runs\": 16, \"columns\": 5, \"levels\": 4, \"mixed_levels\": false}]}".encode(),
                         b""
                     )):
                         arrays = await async_taguchi.list_arrays_async()
@@ -494,7 +500,8 @@ class TestAsyncIntegration:
                 # Mock timeout
                 mock_process = Mock()
                 mock_process.kill = Mock()
-                mock_process.wait = Mock()
+                # AsyncMock: the timeout path awaits process.wait().
+                mock_process.wait = AsyncMock(return_value=None)
                 
                 with patch('asyncio.create_subprocess_exec', return_value=mock_process):
                     with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError):
@@ -528,13 +535,16 @@ class TestFullWorkflowIntegration:
                     taguchi = Taguchi(config=config)
                     
                     # Mock CLI responses
+                    # --json documents, which is what the binding reads now.
+                    # These were the human tables: an arrays line the regex
+                    # could parse, a "Run 1: temp=low" line, and an effects row.
                     mock_responses = [
                         # list-arrays response
-                        Mock(returncode=0, stdout="L9 (9 runs, 4 cols, 3 levels)", stderr=""),
-                        # generate response  
-                        Mock(returncode=0, stdout="Run 1: temp=low\nRun 2: temp=high", stderr=""),
+                        Mock(returncode=0, stdout="{\"tool\": \"taguchi\", \"command\": \"list-arrays\", \"schema\": 1, \"arrays\": [{\"name\": \"L9\", \"runs\": 9, \"columns\": 4, \"levels\": 3, \"mixed_levels\": false}]}", stderr=""),
+                        # generate response
+                        Mock(returncode=0, stdout="{\"tool\": \"taguchi\", \"command\": \"generate\", \"schema\": 1, \"run_count\": 2, \"factor_count\": 1, \"factors\": [\"temp\"], \"runs\": [{\"run_id\": 1, \"values\": [\"low\"], \"settings\": {\"temp\": \"low\"}}, {\"run_id\": 2, \"values\": [\"high\"], \"settings\": {\"temp\": \"high\"}}]}", stderr=""),
                         # effects response
-                        Mock(returncode=0, stdout="temp 0.050 L1=1.020, L2=1.070", stderr=""),
+                        Mock(returncode=0, stdout="{\"tool\": \"taguchi\", \"command\": \"effects\", \"schema\": 1, \"metric\": \"response\", \"factor_count\": 1, \"effects\": [{\"factor\": \"temp\", \"range\": 0.05, \"levels\": [{\"level\": 1, \"value\": \"low\", \"mean\": 1.02}, {\"level\": 2, \"value\": \"high\", \"mean\": 1.07}]}]}", stderr=""),
                     ]
                     
                     with patch('subprocess.run', side_effect=mock_responses):

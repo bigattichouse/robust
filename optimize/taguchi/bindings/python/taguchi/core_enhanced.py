@@ -88,20 +88,25 @@ class Taguchi:
         """Find the taguchi CLI binary with enhanced error reporting."""
         possible_paths: List[str] = []
         
-        # 1. Environment variable (highest priority).
+        # 1. Explicit configuration beats everything.
+        #
+        # It sat BELOW the environment variable, so Taguchi(cli_path=...) could
+        # be silently overridden by whatever TAGUCHI_CLI_PATH happened to be in
+        # the shell. An argument is a decision; an environment variable is a
+        # default. core.py has always had this order and this layer did not.
+        if self._config.cli_path:
+            possible_paths.append(self._config.cli_path)
+
+        # 2. Environment variable.
         #
         # TAGUCHI_CLI as well as TAGUCHI_CLI_PATH: core.py reads the former and
         # this layer read only the latter, so pinning a binary for a test run
-        # worked for one half of the package and not the other. One variable
-        # should configure the whole thing.
+        # configured one half of the package and not the other.
         for var in ("TAGUCHI_CLI_PATH", "TAGUCHI_CLI"):
             cli_path_env = os.getenv(var)
             if cli_path_env:
                 possible_paths.append(cli_path_env)
-        
-        # 2. Explicit configuration
-        if self._config.cli_path:
-            possible_paths.append(self._config.cli_path)
+
         
         # 3. Relative paths from package location
         current_dir = Path(__file__).parent

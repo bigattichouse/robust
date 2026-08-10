@@ -480,16 +480,19 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 # These pin the binding's public API so moving its internals onto --json can be
 # shown to preserve behaviour.
 #
-# Only test_cli_contract.py runs: the rest of that directory assumes a system
-# install at /usr/bin/taguchi and a legacy build path, and fails on a clean
-# machine, so it cannot gate the build until it is made hermetic.
+# The WHOLE directory runs now. It used to be test_cli_contract.py alone,
+# because 37 of the other checks failed on a clean machine -- assuming a system
+# install at /usr/bin/taguchi, assuming a legacy build path, and mocking
+# collaborations the code no longer has. Making them hermetic turned up a
+# destructor that deleted the user's .tgu file, a mixed-level array the binding
+# could not see, and a structured exception that never escaped. All 305 pass.
 #
 # Skipped LOUDLY without pytest. A check that reports success without running
 # is worse than no check -- see the note on the valgrind stage.
 test-bindings: $(TAGUCHI_BIN)
 	@if python3 -c 'import pytest' >/dev/null 2>&1; then \
 	  TAGUCHI_CLI=$(abspath $(TAGUCHI_BIN)) python3 -m pytest -q \
-	    optimize/taguchi/bindings/python/tests/test_cli_contract.py; \
+	    optimize/taguchi/bindings/python/tests; \
 	else \
 	  echo "SKIP: python binding contract tests (python3 -m pytest unavailable)"; \
 	fi

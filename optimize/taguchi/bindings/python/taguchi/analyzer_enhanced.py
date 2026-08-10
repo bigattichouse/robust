@@ -520,10 +520,40 @@ class Analyzer:
         }
 
     def summary(self, higher_is_better: bool = True) -> str:
-        """Return a formatted text summary of main effects and recommendations."""
+        """Return a formatted text summary of main effects and recommendations.
+
+        With INCOMPLETE results it reports the gap instead of refusing. It
+        already built a "Data completeness" line and a missing-runs warning,
+        but computed main_effects() first -- and that raises on missing runs,
+        so both of those lines were unreachable in the only situation they
+        exist for. A summary that will not tell you what is wrong is the least
+        useful possible response to something being wrong.
+
+        main_effects() stays strict. An unbalanced design gives biased level
+        means, so refusing there is right; the reporting function is a
+        different question from the analysis function.
+        """
+        completeness = self.check_completeness()
+
+        header = [
+            "=" * 60,
+            f"Taguchi Experiment Analysis: {self._metric_name}",
+            "=" * 60,
+            "",
+            f"Data completeness: {completeness['completion_percentage']:.1f}% "
+            f"({completeness['results_provided']}/{completeness['total_runs']} runs)",
+        ]
+        if not completeness['is_complete']:
+            return "\n".join(header + [
+                f"WARNING: Missing results for runs: {completeness['missing_results']}",
+                "",
+                "No main effects computed: the design is unbalanced without them,",
+                "so the level means would be biased. Add the missing runs.",
+                "",
+            ])
+
         effects = self.main_effects()
         optimal = self.recommend_optimal(higher_is_better)
-        completeness = self.check_completeness()
 
         lines = [
             "=" * 60,

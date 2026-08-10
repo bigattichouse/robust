@@ -151,9 +151,17 @@ class TestAnalyzerEnhanced:
         with pytest.raises(ValidationError):
             analyzer.validate_and_raise()
         
-        # Should not raise with valid setup
-        analyzer._metric_name = "valid_metric"
-        analyzer.validate_and_raise()  # Should not raise
+        # Should not raise with a valid setup. Constructed fresh rather than
+        # assigning _metric_name on the existing object: validate() caches, and
+        # the cache is invalidated by add_result, not by poking a private
+        # attribute. The cache is reasonable; depending on it from outside is
+        # not.
+        good = Analyzer(mock_experiment, metric_name="valid_metric",
+                        taguchi=mock_taguchi)
+        good.add_result(1, 0.95)
+        good.add_result(2, 0.87)
+        good.add_result(3, 0.92)
+        good.validate_and_raise()  # Should not raise
     
     def test_check_completeness(self, mock_experiment, mock_taguchi):
         """Test completeness checking."""
@@ -597,7 +605,8 @@ class TestAnalyzerIntegration:
     
     def test_error_propagation(self, mock_experiment, mock_taguchi):
         """Test that errors from Taguchi are properly propagated."""
-        mock_taguchi.effects.side_effect = TaguchiError("CLI error")
+        # main_effects() reads effects_json() now, not effects().
+        mock_taguchi.effects_json.side_effect = TaguchiError("CLI error")
         
         analyzer = Analyzer(mock_experiment, taguchi=mock_taguchi)
         analyzer.add_result(1, 0.95)

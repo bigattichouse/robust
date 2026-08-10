@@ -390,6 +390,29 @@ class TestFromTguDoesNotEatYourFile:
             pass
         assert p.exists(), "from_tgu deleted the caller's file"
 
+    def test_it_survives_a_failed_load(self, tmp_path):
+        """The path my first fix missed.
+
+        cleanup() was not the only place that unlinked. __del__ did its own,
+        checking only that _tgu_path was set -- so when from_tgu raised on a
+        bad file, the half-built object's destructor deleted the .tgu the user
+        was asking about. Garbage collection, not an explicit call, which is
+        why fixing cleanup() alone looked like it worked.
+        """
+        import gc
+        from taguchi.experiment_enhanced import Experiment as Enhanced
+        from taguchi.experiment import Experiment as Original
+
+        for cls in (Enhanced, Original):
+            p = tmp_path / ("bad_%s.tgu" % cls.__module__.rsplit(".", 1)[-1])
+            p.write_text("\nfactors:\n  invalid name: low, high\n  temp: \n")
+            try:
+                cls.from_tgu(str(p))
+            except Exception:
+                pass
+            gc.collect()
+            assert p.exists(), "%s deleted the file after a failed load" % cls
+
     def test_a_temp_file_it_created_is_still_cleaned_up(self, tmp_path):
         """The other half of the contract: don't fix the leak by leaking."""
         import os
