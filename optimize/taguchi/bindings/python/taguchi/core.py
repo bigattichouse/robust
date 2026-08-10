@@ -12,6 +12,7 @@ from typing import List, Optional, Dict, Any
 
 from ._base_error import TaguchiErrorBase
 from ._cli_json import arrays_from_json, effects_from_json, runs_from_json
+from ._discovery import find_cli
 
 # Subprocess timeout in seconds — prevents hangs if the binary stalls.
 _CLI_TIMEOUT = 30
@@ -38,50 +39,10 @@ class Taguchi:
         self._array_cache: Optional[List[Dict]] = None
 
     def _find_cli(self, cli_path: Optional[str]) -> str:
-        """Find the taguchi CLI binary."""
-        possible_paths: List[Path] = []
-
-        if cli_path:
-            possible_paths.append(Path(cli_path))
-
-        # $TAGUCHI_CLI wins after an explicit argument, so a test run or a CI
-        # job can pin exactly the binary it just built.
-        env_path = os.environ.get("TAGUCHI_CLI")
-        if env_path:
-            possible_paths.append(Path(env_path))
-
-        # Search relative to this file.
-        #
-        # <repo>/build/bin/taguchi FIRST: that is where the umbrella Makefile
-        # puts every tool. The optimize/taguchi/build/taguchi path below it is
-        # where taguchi put its own binary back when it built itself with a
-        # sub-make, and that file survives in older trees -- so this list used
-        # to find a stale binary in preference to the one just built. Measured
-        # on 2026-08-10: the binding's test suite was running against a binary
-        # FOUR DAYS OLD and reporting passes. Keep the umbrella path first.
-        pkg_dir = Path(__file__).resolve().parent          # .../python/taguchi
-        repo = pkg_dir.parents[4]                          # <repo>/
-        possible_paths.extend([
-            repo / "build" / "bin" / "taguchi",            # umbrella build
-            pkg_dir.parents[2] / "build" / "taguchi",      # legacy sub-make
-            pkg_dir.parents[1] / "build" / "taguchi",
-        ])
-
-        # Common system install locations
-        possible_paths.extend([
-            Path("/usr/local/bin/taguchi"),
-            Path("/usr/bin/taguchi"),
-        ])
-
-        for path in possible_paths:
-            if path.exists() and os.access(path, os.X_OK):
-                return str(path.absolute())
-
-        # Fall back to PATH lookup — shutil.which is cross-platform
-        found = shutil.which("taguchi")
+        """Find the taguchi CLI binary. Search order lives in _discovery."""
+        found = find_cli(cli_path)
         if found:
             return found
-
         raise TaguchiError("Could not find taguchi CLI. Build with 'make' first.")
 
     def _run_command(self, args: List[str]) -> str:

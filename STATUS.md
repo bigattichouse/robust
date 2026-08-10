@@ -310,7 +310,24 @@ set, so a `from_tgu` that RAISED left a half-built object whose destructor
 deleted the file the user was asking about. The first fix passed its test
 because that test only covered the with-block. Both paths are covered now.
 
-**The duplicated "enhanced" layer is the standing liability.**
+**Deduplicating has started, at the seams where the bugs actually were.**
+Two shared modules, 254 lines of duplicated logic removed:
+
+- `_discovery.py` — one search order for the CLI binary. The two copies
+  disagreed three ways, and each disagreement was a separate bug found
+  separately: a stale path preferred over the umbrella build, a different
+  environment variable per layer, and an explicit `cli_path` argument
+  outranked by the environment.
+- `_tgu.py` — the `.tgu` parser (byte-identical in both) and the file
+  lifecycle. The lifecycle is the one that matters: both layers deleted the
+  file named by `_tgu_path` without asking whether they had created it, which
+  destroyed callers' files, and the first fix missed `__del__` in both.
+
+What is deliberately NOT shared is error reporting: the layers raise different
+exception types with different diagnostics, and that is an interface
+difference rather than an accident.
+
+**The rest of the duplicated "enhanced" layer is the standing liability.**
 `core.py`/`core_enhanced.py`, `analyzer.py`/`analyzer_enhanced.py`,
 `experiment.py`/`experiment_enhanced.py`, and until now two unrelated
 `TaguchiError` classes. The CLI-scraping bug lived in FOUR places because of

@@ -6,6 +6,7 @@ import tempfile
 import os
 import re
 from typing import Dict, List, Optional, Any
+from ._tgu import TguFileMixin, parse_tgu
 from .core import Taguchi, TaguchiError
 
 # Characters that are illegal in factor names because they break environment
@@ -34,7 +35,7 @@ def _validate_levels(name: str, levels: List[str]) -> None:
             )
 
 
-class Experiment:
+class Experiment(TguFileMixin):
     """
     High-level interface for designing and running Taguchi experiments.
 
@@ -106,26 +107,8 @@ class Experiment:
         """
         if self._tgu_path is None:
             self._initialize()
-            fd, path = tempfile.mkstemp(suffix='.tgu')
-            with os.fdopen(fd, 'w') as f:
-                f.write(self._generate_tgu())
-            self._tgu_path = path
-            self._owns_tgu = True      # we made it, so we may delete it
+            self._write_tgu(self._generate_tgu())
         return self._tgu_path
-
-    def cleanup(self) -> None:
-        """Delete any temporary .tgu file created by this experiment."""
-        if self._owns_tgu and self._tgu_path and os.path.exists(self._tgu_path):
-            try:
-                os.unlink(self._tgu_path)
-            except OSError:
-                pass
-        self._tgu_path = None
-        self._owns_tgu = False
-
-    # ------------------------------------------------------------------
-    # Public generation API
-    # ------------------------------------------------------------------
 
     def generate(self) -> List[Dict[str, Any]]:
         """Generate and cache experiment runs."""
@@ -184,39 +167,15 @@ class Experiment:
             content = f.read()
 
         exp = cls()
-        # Point directly at the source file — no temp file needed, and the
-        # CALLER owns it, so cleanup() must not delete it.
-        exp._tgu_path = path
-        exp._owns_tgu = False
+        # The CALLER owns this file; _adopt_tgu records that so nothing
+        # deletes it. See _tgu.TguFileMixin.
+        exp._adopt_tgu(path)
 
-        factors: Dict[str, List[str]] = {}
-        in_factors = False
-
-        for raw_line in content.split('\n'):
-            # Strip inline comments and surrounding whitespace
-            line = raw_line.split('#')[0].strip()
-            if not line:
-                continue
-
-            if line.startswith('factors:'):
-                in_factors = True
-                continue
-
-            if line.startswith('array:'):
-                exp._array_type = line[len('array:'):].strip()
-                in_factors = False
-                continue
-
-            # Any non-indented, non-blank line outside factors: ends the block
-            if in_factors and not raw_line.startswith(' ') and not raw_line.startswith('\t'):
-                in_factors = False
-
-            if in_factors and ':' in line:
-                name, _, levels_str = line.partition(':')
-                name = name.strip()
-                levels = [lv.strip() for lv in levels_str.split(',') if lv.strip()]
-                if name and levels:
-                    factors[name] = levels
+        # One parser, in _tgu. This block existed identically in both
+        # Experiment classes.
+        factors, array_type = parse_tgu(content)
+        if array_type:
+            exp._array_type = array_type
 
         if not factors:
             raise TaguchiError(f"No factors found in '{path}'")
@@ -240,21 +199,3 @@ class Experiment:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.cleanup()
 
-    def __del__(self) -> None:
-        # Guard against partially-initialised objects and interpreter shutdown.
-        #
-        # This checked only that _tgu_path was set, so it deleted the CALLER's
-        # file for an experiment built by from_tgu -- the same bug cleanup()
-        # had, in a second place, and the more dangerous of the two: it fires
-        # on garbage collection, so from_tgu() raising a ValidationError left
-        # a half-built object whose destructor removed the .tgu the user was
-        # asking about. Ownership is checked here too. Read from __dict__
-        # because __del__ can run on an object whose __init__ did not finish.
-        try:
-            if not self.__dict__.get('_owns_tgu'):
-                return
-            path = self.__dict__.get('_tgu_path')
-            if path and os.path.exists(path):
-                os.unlink(path)
-        except Exception:
-            pass

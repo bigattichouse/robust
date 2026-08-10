@@ -14,19 +14,18 @@ class TestFindCli:
         t = Taguchi(cli_path=cli_path)
         assert t._cli_path == cli_path
 
-    def test_raises_if_not_found(self, tmp_path):
-        # Patch Path.exists so no discovered path is considered present, and
-        # patch subprocess.run so the which/shutil fallback also fails.
-        with patch("taguchi.core.Path") as mock_path_cls, \
-             patch("subprocess.run") as mock_run:
-            # Every Path(...) instance reports exists()=False
-            mock_instance = MagicMock()
-            mock_instance.exists.return_value = False
-            mock_instance.__truediv__ = lambda self, other: mock_instance
-            mock_path_cls.return_value = mock_instance
-            mock_run.return_value = MagicMock(returncode=1, stdout="")
-            with pytest.raises(TaguchiError, match="Could not find taguchi CLI"):
-                Taguchi(cli_path=str(tmp_path / "nonexistent"))
+    def test_raises_if_not_found(self):
+        """Contract, not mechanism.
+
+        This used to patch taguchi.core.Path to make every candidate look
+        absent -- which stopped working the moment the search moved into
+        _discovery, even though the behaviour under test had not changed. What
+        core.Taguchi promises is "raise TaguchiError when there is no binary";
+        how the looking is done is _discovery's business and is covered there.
+        """
+        with patch("taguchi.core.find_cli", return_value=None):
+            with pytest.raises(TaguchiError, match="Could not find"):
+                Taguchi()
 
     def test_finds_via_path_fallback(self, cli_path):
         """When explicit path is missing but binary is on PATH."""

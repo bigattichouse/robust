@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
 
 from ._cli_json import arrays_from_json, effects_from_json, runs_from_json
+from ._discovery import candidate_paths, find_cli
 from .config import TaguchiConfig, ConfigManager
 from .errors import (
     TaguchiError, BinaryDiscoveryError, CommandExecutionError,
@@ -85,74 +86,23 @@ class Taguchi:
         logger.info(f"Configuration: {self._config.to_dict()}")
 
     def _find_cli(self) -> str:
-        """Find the taguchi CLI binary with enhanced error reporting."""
-        possible_paths: List[str] = []
-        
-        # 1. Explicit configuration beats everything.
-        #
-        # It sat BELOW the environment variable, so Taguchi(cli_path=...) could
-        # be silently overridden by whatever TAGUCHI_CLI_PATH happened to be in
-        # the shell. An argument is a decision; an environment variable is a
-        # default. core.py has always had this order and this layer did not.
-        if self._config.cli_path:
-            possible_paths.append(self._config.cli_path)
+        """Find the taguchi CLI binary, with the diagnostics this layer adds.
 
-        # 2. Environment variable.
-        #
-        # TAGUCHI_CLI as well as TAGUCHI_CLI_PATH: core.py reads the former and
-        # this layer read only the latter, so pinning a binary for a test run
-        # configured one half of the package and not the other.
-        for var in ("TAGUCHI_CLI_PATH", "TAGUCHI_CLI"):
-            cli_path_env = os.getenv(var)
-            if cli_path_env:
-                possible_paths.append(cli_path_env)
-
-        
-        # 3. Relative paths from package location
-        current_dir = Path(__file__).parent
-        possible_paths.extend([
-            # <repo>/build/bin/taguchi FIRST: where the umbrella Makefile puts
-            # every tool. The paths below it are from when taguchi built itself
-            # with a sub-make; those files survive in older trees, so searching
-            # them first meant preferring a STALE binary to the one just built.
-            # Same defect as core.py had -- fixed there, missed here, because
-            # the discovery logic exists twice.
-            str(current_dir.parents[4] / "build" / "bin" / "taguchi"),
-            str(current_dir.parent / "taguchi_cli"),  # For autoresearch integration
-            str(current_dir.parent.parent.parent / "build" / "taguchi"),
-            str(current_dir.parent.parent / "build" / "taguchi"),
-            str(current_dir.parent / "build" / "taguchi"),
-        ])
-        
-        # 4. Common system install locations
-        possible_paths.extend([
-            "/usr/local/bin/taguchi",
-            "/usr/bin/taguchi",
-            "/opt/taguchi/bin/taguchi",
-        ])
-        
-        # Check each possible path
-        for path_str in possible_paths:
-            path = Path(path_str)
-            if path.exists() and os.access(path, os.X_OK):
-                resolved_path = str(path.absolute())
-                if self._config.debug_mode:
-                    logger.debug(f"Found CLI binary at: {resolved_path}")
-                return resolved_path
-        
-        # 5. Fall back to PATH lookup
-        found = shutil.which("taguchi")
+        The SEARCH lives in _discovery, shared with core.py. It existed twice
+        and the copies disagreed three ways -- stale path preferred, a
+        different environment variable, and an explicit argument outranked by
+        the environment -- each of which was a separate bug found separately.
+        The reporting stays here: BinaryDiscoveryError carrying every path
+        tried is this layer's interface, and core.py's plainer error is that
+        layer's.
+        """
+        found = find_cli(self._config.cli_path)
         if found:
             if self._config.debug_mode:
-                logger.debug(f"Found CLI binary via PATH: {found}")
+                logger.debug(f"Found CLI binary at: {found}")
             return found
-        
-        # Binary not found - provide detailed error
-        raise BinaryDiscoveryError(
-            searched_paths=possible_paths + ["PATH lookup"],
-            cli_path_env=cli_path_env,
-            path_env=os.getenv("PATH"),
-        )
+
+        raise BinaryDiscoveryError(candidate_paths(self._config.cli_path))
 
     def _run_command(self, args: List[str], operation: Optional[str] = None) -> str:
         """
