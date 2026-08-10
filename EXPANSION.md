@@ -80,10 +80,11 @@ inseparable from that tool's design (e.g. DGSM needs the Morris trajectories).
 | **Pareto chart of effects** | The classic DOE view: contribution bars ranked largest-first with a cumulative-share line — the "vital few vs trivial many" read of μ\* or Sᵢ at a glance. | Presentation of already-computed indices: lands in the standalone `report` tool (M6) and `robust report`. Sort + cumulative sum, SVG bars. | Cumulative line reaches 100%; bar order matches the ranked indices exactly. |
 | **`pareto`** — frontier filter **and store** ✓ **BUILT** | The trade-off set across several metric columns (yield ↑ vs cost ↓), plus a `.front` file that accumulates a frontier across experiment batches so it survives as a study artifact instead of being recomputed and lost. *Moved here from E7:* the filter depends on neither E1's least-squares core nor E4's RSM. O(n²) dominance on a CSV is the cheapest binary in the roadmap and was scheduled last. | Spec: [`spec/pareto.bp`](spec/pareto.bp). `.front` is itself a valid results CSV (comment preamble), so the whole pipeline composes and `pareto list` is only a convenience. | Analytic front `y1 = x`, `y2 = 1 − x²` — including 500 planted interior points that must *all* be dropped, since the all-pass case cannot detect an over-permissive filter. Merge is idempotent and order-independent, and must equal the one-shot filter over concatenated batches. |
 | **Cut-gap diagnostic** ✓ **BUILT** | Report the gap in μ\* at the keep/drop boundary, and warn when the cut falls inside a near-tie. | A few lines in `morris analyze`; `gap_at_cut` + `cut_is_tie` in `--json`. | Fires on a 1% gap, silent on a 5× gap. |
+| **`analyze --json`** ✓ **BUILT** | A machine-readable contract for `morris analyze` and `sobol analyze`, separate from the human tables so a display change stops being an API change. Schema-versioned. | `--json` on both, mirroring `regress`/`uq`. Carries the cut-gap keys above, which the rows here assumed existed before they did. | A real parser loads the document; the table stays positionally parseable in the same suites. |
 
 Deliverable: three new binaries (`regress`, `uq`, `pareto`) under `analyze/`, CI
-columns and the cut-gap diagnostic on `morris analyze`, and the Pareto panel in
-`report`. The funnel also gains a Pareto-style keep rule — `--keep-share S`
+columns and the cut-gap diagnostic on `morris analyze`, `--json` on the two
+analyze stages that lacked it, and the Pareto panel in `report`. The funnel also gains a Pareto-style keep rule — `--keep-share S`
 keeps top factors until cumulative μ\*-share ≥ S (an 80/20 cut, vs
 `--keep-fraction`'s point threshold). **This is the highest value-per-effort
 tier.**

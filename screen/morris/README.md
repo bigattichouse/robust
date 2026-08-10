@@ -145,4 +145,69 @@ Two warnings fire on stderr when the cut is not trustworthy:
 - the confidence intervals of the last kept and first dropped factor **overlap**,
   so their order is not established at this trajectory count
 
-stdout is unchanged either way, so pipelines are unaffected.
+stdout is unchanged either way, so pipelines are unaffected. Both warnings also
+fire in `--json` mode, for the same reason they exist at all.
+
+
+## `--json` — the machine-readable contract
+
+```sh
+morris analyze model.space results.csv --keep-share 0.9 --json
+```
+
+The table is a **display**; `--json` is the **interface**. Use it from anything
+that consumes `analyze` programmatically.
+
+```json
+{
+  "tool": "morris", "command": "analyze", "schema": 1,
+  "mode": "per-factor", "metric": "response",
+  "trajectories": 20, "runs": 84, "factor_count": 3,
+  "total_mu_star": 324.4, "all_zero": false,
+  "factors": [
+    {"factor": "kv_type", "rank": 1, "mu": 215.6, "mu_star": 215.6,
+     "mu_star_lo": 210.1, "mu_star_hi": 221.3, "sigma": 8.067,
+     "share": 0.6645, "interacting": false}
+  ],
+  "keep": {"share_requested": 0.9, "share_achieved": 0.973, "count": 2,
+           "factors": ["kv_type", "n_depth"], "ci_overlap_at_cut": false},
+  "cut_at": "keep-share", "gap_at_cut": 24.38, "cut_is_tie": false
+}
+```
+
+A `groups:` file produces `"mode": "group"` with a `groups` array
+(`group`, `mu_star`, `sigma`, `members`) in place of `factors`, plus
+`per_factor_runs` — what the same screening would have cost per factor.
+
+Notes on the fields:
+
+- **`schema`** is bumped when a key is renamed or removed, never for an
+  addition. Refuse a document whose schema you do not know rather than parsing
+  it wrongly.
+- **`gap_at_cut`** is `mu_star[last kept] / mu_star[first dropped]`, and
+  **`cut_is_tie`** is true when that ratio is under 1.05 — the ranking is then
+  not resolvable at any trajectory count. Both keys are always present: `null`
+  and `false` when no `--keep-share` was given (no cut was requested), and
+  `gap_at_cut` is also `null` when the dropped factor's μ\* is zero, i.e. the
+  separation is infinite.
+- **`cut_at`** says where that gap was measured: `"keep-share"` for the
+  `--keep-share` boundary, `null` when no cut was requested, and `"bottom"` in
+  group mode, where `analyze` is given no cut and reports the gap at the bottom
+  of the ranking — the same pair the stderr warning describes.
+- **`all_zero`** repeats the stderr note that no factor moved the response.
+  A consumer will never read that text, and it is the difference between
+  "nothing matters" and "the harness is broken".
+
+### Why this exists
+
+`analyze` once printed μ\* glued to its interval — `215.6[210,221]` — so a
+consumer splitting the row on whitespace got a field 1 that would not parse as
+a number. Every row failed identically, which yielded an *empty* ranking rather
+than a partial one; the caller read that as "nothing to rank" and skipped
+screening entirely, after paying for `r·(k+1)` real benchmark runs. Nothing
+errored and nothing warned.
+
+The columns are separated now (and every interval stays one space-free token,
+so it cannot split either), but the durable fix is this mode: it lets the table
+keep evolving without breaking anyone. `sobol analyze` carries the same flag
+and the same guarantee.

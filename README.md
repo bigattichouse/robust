@@ -95,6 +95,27 @@ rather than `analyze/` for exactly that reason — they exist to buy new runs.
 Binaries all land in `build/bin/` regardless of source location, so this layout
 is free to evolve without breaking anything downstream.
 
+## Driving these tools from another program
+
+Every `analyze` stage takes **`--json`** — `morris analyze`, `sobol analyze`,
+`regress`, `uq` — and that is the interface. The text tables are a display for
+people; they are laid out to stay positionally parseable, but they will keep
+changing, and a program that parses them will keep breaking. The JSON documents
+carry a `schema` number that is bumped only when a key is renamed or removed,
+so a consumer can refuse a version it does not understand instead of misreading
+it.
+
+This is not hypothetical. `morris analyze` once printed μ\* glued to its new
+confidence interval (`215.6[210,221]`); a downstream tool split each row on
+whitespace, failed to parse *every* row identically, and so read an empty
+ranking as "no factors matter" — skipping its screening stage after paying for
+hours of real benchmark runs, with nothing erroring and nothing warning. See
+[screen/morris/README.md](screen/morris/README.md#--json--the-machine-readable-contract).
+
+Diagnostics — near-tie cuts, overlapping intervals, an all-inert result — go to
+**stderr in every mode**, so `--json` never buys a clean-looking document at the
+price of the warning that made it worth reading.
+
 ## Status
 
 **Nine binaries ship**, covering screen → attribute → resolve → optimize with

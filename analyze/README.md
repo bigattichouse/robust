@@ -21,4 +21,12 @@ desire --max yield --min cost results.csv | sobol analyze model.space - --metric
 pareto --max yield --min cost results.csv > front.csv
 ```
 
+**`--json` is the machine-readable contract**, here and on the two analyze
+stages outside this directory (`morris analyze`, `sobol analyze`). Text output
+is a display and will keep changing; parse the JSON, and check its `schema`
+number. `core/src/json.c` provides the shared escape and number formatting —
+use `doe_json_string` / `doe_json_number` rather than interpolating a name or
+a double into a format string, because a factor name may contain a quote and a
+non-finite double has no JSON literal.
+
 All build on `core/libdoe`. See [../EXPANSION.md](../EXPANSION.md).

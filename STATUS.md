@@ -1,6 +1,6 @@
 # Status & Handoff
 
-*Working document. Current as of 2026-08-09. Read this first; it is the state
+*Working document. Current as of 2026-08-10. Read this first; it is the state
 of play plus the traps worth not rediscovering.*
 
 Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
@@ -24,7 +24,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 | `orchestrate/` | `robust` |
 
 **Green across every mode.** Zero build warnings under
-`-Wall -Wextra -Werror -std=c99 -pedantic`; nine test binaries plus five shell
+`-Wall -Wextra -Werror -std=c99 -pedantic`; nine test binaries plus six shell
 suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 `make validate` 8/8. Coverage **88.3% lines / 98.7% functions**.
 
@@ -122,6 +122,39 @@ any importance result needs.
 ---
 
 ## Traps and lessons worth not rediscovering
+
+**A display change to `analyze` is an API change.** The μ\* confidence interval
+(E1, commit `8a2c342`) shipped rendered *glued* to the value —
+`215.6[210,221]` — under a header advertising `mu* [95% CI]` as one column. It
+read as a formatting improvement from inside the repo. Downstream,
+`llama-optimize` split each row on whitespace, got `215.6[210,221]` for field 1,
+and failed to parse it as a number. **Every** row failed the same way, so the
+result was an *empty* ranking rather than a partial one; the caller took that
+for "no factors ranked", kept all of them, and `--screen` degraded into a no-op
+— after paying for `r·(k+1)` real GPU benchmark runs. Nothing errored and
+nothing warned. Reported 2026-08-09, fixed 2026-08-10.
+
+Three things came out of it, and they are the general lesson:
+
+- **The only reliable fix is a separate contract.** `morris analyze --json` and
+  `sobol analyze --json` now exist, versioned with a `schema` key, so the table
+  is free to change again. Anything consuming these tools should use it.
+- **A table nobody parses positionally is still parsed positionally.** Columns
+  are separated, and every interval is a single space-free token (`[210,221]`)
+  — `[210, 221]` would split in two and shift every column after it. The morris
+  and sobol CLI suites assert this the way a consumer reads it: split on
+  whitespace, demand a bare number. Reintroducing the glued format fails them.
+- **Unknown options were being ignored.** `analyze ... --format json` used to
+  print the human table and exit 0 — the same silent-wrong-answer shape. Both
+  tools now reject an option they do not know.
+
+Related, found while fixing it: `regress --json` and `uq --json` interpolated
+factor and metric names raw. The `.space` parser rejects only control
+characters, and `--metric` is argv, so one quote produced a document no parser
+would accept — from the mode whose only purpose is being parsed. Both escape
+now, via `doe_json_string` / `doe_json_number` in `core/src/json.c`
+(the latter emits `null` for a non-finite value, since JSON has no `NaN`).
+
 
 **The build had no header dependencies until 2026-08-06.** Editing `doe.h`
 rebuilt some objects and not others, and the link silently combined two struct

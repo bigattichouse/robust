@@ -50,3 +50,42 @@ the guide — if those are wide, the pair estimates are worse.
 Validated in `make validate` check F against the g-function's exact
 decomposition (`V_ij = V_i·V_j` for a product function, so every pair has a
 closed form): worst error 0.005 at N=16384.
+
+
+## `--json` — the machine-readable contract
+
+```sh
+sobol analyze model.space results.csv --json
+```
+
+The table is a display; these keys are the interface.
+
+```json
+{
+  "tool": "sobol", "command": "analyze", "schema": 1,
+  "metric": "response", "sampler": "sobol", "samples": 1024, "runs": 5120,
+  "factor_count": 3, "sum_first_order": 0.865, "additive": false,
+  "indices": [
+    {"factor": "b", "s1": 0.353, "s1_lo": 0.29, "s1_hi": 0.41,
+     "st": 0.505, "st_lo": 0.44, "st_hi": 0.57, "interaction": 0.152}
+  ],
+  "second_order": [
+    {"a": "b", "b": "c", "s2": 0.1314, "closed": 0.8654}
+  ]
+}
+```
+
+- **`schema`** is bumped when a key is renamed or removed, never for an
+  addition. Refuse a schema you do not know rather than parsing it wrongly.
+- **`sampler`** is `"sobol"` or `"lhs"`. It changes the design and therefore
+  the indices, so a result that does not record it cannot be reproduced.
+- **`second_order`** is `null` unless `second_order: true` is set, and when
+  present it carries **every** pair — the table stops at ten, but truncating a
+  machine format leaves the consumer unable to tell a short list from a
+  complete one.
+
+Both index columns and their intervals print as separate whitespace-delimited
+fields in the table too, and each interval is a single space-free token
+(`[0.29,0.41]`). They used to be glued together — `0.353[0.29,0.41]` — which
+silently broke every consumer that split the row positionally. See the same
+section in [../../screen/morris/README.md](../../screen/morris/README.md).
