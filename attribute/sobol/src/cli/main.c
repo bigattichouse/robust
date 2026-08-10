@@ -19,6 +19,9 @@ static void usage(const char *prog) {
         "  analyze  <file.space> <results.csv> [--metric NAME] [--json]\n"
         "                                        First/total indices Si, STi (+ CIs);\n"
         "                                        --json for machines (stable contract)\n"
+        "  converge <file.space> <script> --target-ci W [--max-samples N]\n"
+        "                                        Double samples until every S1/ST 95%% CI\n"
+        "                                        is narrower than W (or the cap)\n"
         "  validate <file.space>                 Check the .space definition\n"
         "  --version                             Show version\n",
         prog);
@@ -327,6 +330,127 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric,
     return 0;
 }
 
+/* ---- converge: spend runs until the indices resolve (E2) ---- */
+
+/*
+ * `samples:` is the guess sobol asks a .space author to make, and getting it
+ * wrong is quiet: a variance share with an interval spanning half the range
+ * still prints as a number. This doubles N until every S1 and ST interval is
+ * narrower than the target.
+ *
+ * Doubling suits this design specifically. A quasi-random sequence is uniform
+ * over ALIGNED blocks of 2^m points, so starting from a power of two and
+ * doubling stays aligned -- the property note_sample_count() warns about
+ * losing is preserved for free.
+ */
+static int cmd_converge(const char *path, const char *script,
+                        double target, size_t max_n, int as_json) {
+    doe_space_t sp;
+    if (load_space(path, &sp) != 0) return 1;
+
+    size_t n = sp.samples > 0 ? sp.samples : 64;
+    size_t cap = max_n ? max_n : DOE_MAX_SAMPLES;
+    if (cap > DOE_MAX_SAMPLES) cap = DOE_MAX_SAMPLES;
+
+    size_t total_evals = 0, rounds = 0;
+    int converged = 0;
+    double widest = 0.0;
+    char err[DOE_ERR_SIZE];
+
+    FILE *out = as_json ? stderr : stdout;
+    fprintf(out, "Converging on a %.6g-wide 95%% CI (cap N=%zu)\n", target, cap);
+    fprintf(out, "Sampler: %s\n\n", sampler_name(&sp));
+    fprintf(out, "%12s %12s %14s\n", "N", "runs", "widest CI");
+
+    if (as_json) {
+        printf("{\n  \"tool\": \"sobol\",\n  \"command\": \"converge\",\n");
+        printf("  \"schema\": %d,\n", SOBOL_JSON_SCHEMA);
+        printf("  \"sampler\": \"%s\",\n",
+               sp.sampling == DOE_SAMPLING_SOBOL ? "sobol" : "lhs");
+        printf("  \"target_ci\": %s,\n", JNUM(target));
+        printf("  \"rounds\": [\n");
+    }
+
+    for (;;) {
+        doe_space_t at = sp;
+        at.samples = n;
+
+        sobol_design_t d;
+        if (sobol_design_build(&at, &d, err) != 0) {
+            fprintf(stderr, "Error: %s\n", err);
+            return 1;
+        }
+
+        double *y = malloc(d.npoints * sizeof *y);
+        if (!y) { fprintf(stderr, "Error: out of memory\n"); sobol_design_free(&d); return 1; }
+
+        run_ctx_t ctx = { .space = &at, .d = &d, .last_row = -1 };
+        if (doe_run_capture(&at, "SOBOL", script, d.npoints, run_value, &ctx, y, err) != 0) {
+            fprintf(stderr, "Error: %s\n", err);
+            free(y); sobol_design_free(&d); return 1;
+        }
+        total_evals += d.npoints;
+        rounds++;
+
+        sobol_index_t *idx = NULL;
+        size_t count = 0;
+        if (sobol_analyze(&at, y, d.npoints, &idx, &count, err) != 0) {
+            fprintf(stderr, "Error: %s\n", err);
+            free(y); sobol_design_free(&d); return 1;
+        }
+
+        /* Both indices: ST can stay wide while S1 has settled, and a total
+         * index you cannot bound is exactly the one you must not act on. */
+        widest = 0.0;
+        for (size_t i = 0; i < count; i++) {
+            double w1 = idx[i].s1_hi - idx[i].s1_lo;
+            double wt = idx[i].st_hi - idx[i].st_lo;
+            if (w1 > widest) widest = w1;
+            if (wt > widest) widest = wt;
+        }
+
+        fprintf(out, "%12zu %12zu %14.6g\n", n, d.npoints, widest);
+        if (as_json)
+            printf("    {\"samples\": %zu, \"runs\": %zu, \"widest_ci\": %s}%s\n",
+                   n, d.npoints, JNUM(widest),
+                   (widest <= target || n * 2 > cap) ? "" : ",");
+
+        free(idx); free(y); sobol_design_free(&d);
+
+        if (widest <= target) { converged = 1; break; }
+        if (n * 2 > cap) break;
+        n *= 2;
+    }
+
+    if (as_json) {
+        printf("  ],\n");
+        printf("  \"converged\": %s,\n", converged ? "true" : "false");
+        printf("  \"samples\": %zu,\n", n);
+        printf("  \"widest_ci\": %s,\n", JNUM(widest));
+        printf("  \"evaluations\": %zu,\n", total_evals);
+        printf("  \"rounds_run\": %zu,\n", rounds);
+        printf("  \"cap\": %zu\n}\n", cap);
+    }
+
+    if (converged) {
+        fprintf(out, "\nConverged at N=%zu, %zu evaluations total.\n"
+                     "Write `samples: %zu` into the .space.\n", n, total_evals, n);
+        if (sp.sampling != DOE_SAMPLING_SOBOL)
+            fprintf(out,
+                "\nNote: sampling is LHS, whose draw depends on the RNG stream and not\n"
+                "on N alone, so re-running at this N reproduces the design only because\n"
+                "the seed is fixed in the .space. Keep the seed with the number.\n");
+        return 0;
+    }
+
+    fprintf(stderr,
+        "\nDid NOT converge: the widest CI is still %.6g at N=%zu, after %zu\n"
+        "evaluations. Raise --max-samples, accept a wider target, or take it as\n"
+        "the finding -- variance shares this poorly determined should not be\n"
+        "ranked, let alone acted on.\n", widest, cap, total_evals);
+    return 1;
+}
+
 static int cmd_validate(const char *path) {
     doe_space_t sp;
     if (load_space(path, &sp) != 0) return 1;
@@ -358,6 +482,30 @@ int main(int argc, char *argv[]) {
     if (strcmp(cmd, "run") == 0) {
         if (argc < 4) { fprintf(stderr, "run needs a script argument\n"); return 1; }
         return cmd_run(path, argv[3]);
+    }
+    if (strcmp(cmd, "converge") == 0) {
+        if (argc < 4) { fprintf(stderr, "converge needs a script argument\n"); return 1; }
+        double target = 0.0;
+        size_t max_n = 0;
+        int as_json = 0;
+        for (int i = 4; i < argc; i++) {
+            if (strcmp(argv[i], "--target-ci") == 0 && i + 1 < argc) {
+                target = strtod(argv[++i], NULL);
+                if (!(target > 0.0)) { fprintf(stderr, "--target-ci must be > 0\n"); return 1; }
+            } else if (strcmp(argv[i], "--max-samples") == 0 && i + 1 < argc) {
+                max_n = (size_t)strtoul(argv[++i], NULL, 10);
+                if (max_n < 1) { fprintf(stderr, "--max-samples must be >= 1\n"); return 1; }
+            } else if (strcmp(argv[i], "--json") == 0) as_json = 1;
+            else {
+                fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+                usage(argv[0]); return 1;
+            }
+        }
+        if (!(target > 0.0)) {
+            fprintf(stderr, "converge needs --target-ci W (the CI width to reach)\n");
+            return 1;
+        }
+        return cmd_converge(path, argv[3], target, max_n, as_json);
     }
     if (strcmp(cmd, "analyze") == 0) {
         if (argc < 4) { fprintf(stderr, "analyze needs a results.csv argument\n"); return 1; }

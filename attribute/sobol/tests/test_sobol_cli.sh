@@ -212,6 +212,79 @@ json_is "True" "'a\"b' in [i['factor'] for i in d['indices']]" \
     "analyze --json round-trips the quoted factor name" \
     "$SOBOL" analyze "$TMP/q.space" "$TMP/q.csv" --metric 'resp"onse' --json
 
+# ---- converge: spend runs until the indices resolve (E2) ----------------
+#
+# `samples:` is the guess this tool asks a .space author to make, and getting
+# it wrong is quiet: a variance share with an interval spanning half the range
+# still prints as a number.
+cat > "$TMP/c.space" <<'EOF'
+factors:
+  a: 0,10
+  b: 0,10
+samples: 64
+seed: 3
+EOF
+cat > "$TMP/cm.sh" <<'EOF'
+#!/bin/sh
+awk -v a="$SOBOL_a" -v b="$SOBOL_b" 'BEGIN{printf "%.6f\n", 3*a + b*b}'
+EOF
+chmod +x "$TMP/cm.sh"
+
+expect_exit 0 "converge reaches a loose target" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 2
+expect_match "Converged at" "converge says where it landed" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 2
+expect_exit 1 "converge needs --target-ci" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh"
+expect_exit 1 "converge rejects a non-positive target" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 0
+expect_exit 1 "converge rejects an unknown option" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 2 --format json
+
+# Capped without converging exits non-zero: a script must not read a wide
+# interval as a narrow one.
+expect_exit 1 "converge exits 1 when the cap is hit" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 0.001 --max-samples 256
+expect_stderr "Did NOT converge" "converge says so when capped" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 0.001 --max-samples 256
+
+json_ok "converge --json parses" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 2 --json
+json_is "True" "d['converged']" "converge --json reports success" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 2 --json
+json_is "True" "d['widest_ci'] <= d['target_ci']" \
+    "converge --json: it stopped because the target was met" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 2 --json
+json_is "False" "d['converged']" "converge --json reports a capped run" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 0.001 --max-samples 256 --json
+# Doubling from a power of two stays on the aligned blocks the sequence needs.
+json_is "True" "[r['samples'] for r in d['rounds']] == [64, 128, 256]" \
+    "converge --json: samples double each round" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 0.001 --max-samples 256 --json
+json_is "True" "d['rounds'][-1]['widest_ci'] < d['rounds'][0]['widest_ci']" \
+    "converge --json: the interval narrows with more samples" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 0.001 --max-samples 256 --json
+json_is "True" "d['evaluations'] == sum(r['runs'] for r in d['rounds'])" \
+    "converge --json: the spend is the sum of its rounds" \
+    "$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 0.001 --max-samples 256 --json
+
+# The claim the feature rests on: the reported N reproduces the run.
+if [ "$HAVE_PY" -eq 1 ]; then
+    conv=$("$SOBOL" converge "$TMP/c.space" "$TMP/cm.sh" --target-ci 0.7 --json 2>/dev/null)
+    N=$(printf '%s' "$conv" | python3 -c 'import json,sys; print(json.load(sys.stdin)["samples"])')
+    w=$(printf '%s' "$conv" | python3 -c 'import json,sys; print("%.6f" % json.load(sys.stdin)["widest_ci"])')
+    sed "s/samples: 64/samples: $N/" "$TMP/c.space" > "$TMP/cr.space"
+    { echo "run_id,response"; "$SOBOL" sample "$TMP/cr.space" | tail -n +2 \
+      | awk -F, '{printf "%d,%.6f\n", NR, 3*$2 + $3*$3}'; } > "$TMP/cr.csv"
+    w2=$("$SOBOL" analyze "$TMP/cr.space" "$TMP/cr.csv" --json 2>/dev/null \
+         | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%.6f" % max(max(i["s1_hi"]-i["s1_lo"], i["st_hi"]-i["st_lo"]) for i in d["indices"]))')
+    same=$(python3 -c "import sys; print(abs(float(sys.argv[1])-float(sys.argv[2])) < 1e-4)" "$w" "$w2")
+    [ "$same" = "True" ] && ok "converge: the reported N reproduces the run" \
+        || bad "converge: the reported N reproduces the run" "$w vs $w2"
+else
+    skip "converge: the reported N reproduces the run"
+fi
+
 echo
 echo "sobol CLI tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

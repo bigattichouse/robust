@@ -52,6 +52,29 @@ decomposition (`V_ij = V_i·V_j` for a product function, so every pair has a
 closed form): worst error 0.005 at N=16384.
 
 
+## `converge` — stop guessing `samples:`
+
+```sh
+sobol converge model.space ./run.sh --target-ci 0.1 [--max-samples N]
+```
+
+Doubles `samples:` and re-analyses until every Sᵢ **and** S_Tᵢ interval is
+narrower than the target, then names the N to write into the `.space`. Both
+indices are checked: S_T can stay wide while Sᵢ has settled, and a total index
+you cannot bound is exactly the one you must not act on.
+
+Doubling suits this design. A quasi-random sequence is uniform over aligned
+blocks of 2ᵐ points, so starting from a power of two and doubling keeps the
+alignment that `make validate` check G measures the value of — the property the
+non-power-of-two note warns about losing.
+
+Hitting the cap **exits non-zero**. Variance shares that poorly determined
+should not be ranked, let alone acted on.
+
+Under `sampling: lhs` the draw depends on the RNG stream rather than N alone,
+so the reported N reproduces the run only with the seed that is already in the
+`.space`. The output says so.
+
 ## `--json` — the machine-readable contract
 
 ```sh

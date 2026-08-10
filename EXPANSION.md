@@ -219,7 +219,7 @@ optimum matches closed form; a dominated point never appears in the front.
 |---|---|---|---|
 | **E0** | ✓ `second_order` **implemented**, not merely rejected. **M5 complete** (second-order ✓, Joe-Kuo sequence ✓). M6 built (`ofat`, `grid`); confirmation checker and M7 pending. | — | |
 | **E1** | ~ `pareto`, `regress`, `uq`, Morris μ\* CIs, `--keep-share` and the cut-gap diagnostic all ✓ **built**. **One left: the Pareto chart of effects**, which has nowhere to live until `report` exists. Recorded as COMPLETE here until 2026-08-09; it was not. | E0 | |
-| **E2** | ~ `--target-ci` sequential convergence. `morris converge` ✓ **BUILT**; the sobol half pending. | E1 (CIs) | |
+| **E2** ✓ **BUILT** | `--target-ci` sequential convergence: `morris converge` and `sobol converge`. | E1 (CIs) | Intervals must narrow as the budget doubles, the reported r/N must reproduce the run, and a capped run must exit non-zero. |
 | **E3** | ~ ~~`morris --groups` + recursive splitting~~ ✓ both built and measured. **Pending: `pawn` tool, `morris analyze --dgsm`**, (optional) eFAST cross-check. | E1 | |
 | **E4** | `rsm` tool + `robust funnel --optimize`. | E1 (LSQ), M6 | |
 | **E5** | `noise:` factors, crossed designs, S/N analysis. **The namesake** — nothing in the toolkit does robustness-to-noise today, and this is the largest single piece of unbuilt method. | E4 | |
