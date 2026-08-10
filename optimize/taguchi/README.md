@@ -326,12 +326,84 @@ Optimize ingredient proportions and cooking parameters (temperature, time, ingre
 ### Scientific Experiments
 Design experiments with multiple controlled variables efficiently
 
+## `--json` — the machine-readable contract
+
+`generate`, `analyze` and `effects` take `--json`. **If you are driving this
+tool from a program, use it.** The text tables are a display; they will keep
+changing, and a parser built on them will keep breaking.
+
+```sh
+taguchi generate experiment.tgu --json
+taguchi analyze  experiment.tgu results.csv --minimize --json
+taguchi effects  experiment.tgu results.csv --json
+```
+
+`generate --json` gives the design as data — `factors` is an ordered list and
+each run's `values` is in that same order, so nothing has to be matched by a
+name you might have mis-scraped:
+
+```json
+{ "tool": "taguchi", "command": "generate", "schema": 1,
+  "run_count": 9, "factor_count": 2, "factors": ["temp", "ph"],
+  "runs": [ {"run_id": 1, "values": ["cold", "low"],
+             "settings": {"temp": "cold", "ph": "low"}} ] }
+```
+
+`analyze --json` gives the effects **and the recommendation**:
+
+```json
+{ "tool": "taguchi", "command": "analyze", "schema": 1,
+  "metric": "response", "objective": "maximize", "factor_count": 2,
+  "effects": [
+    {"factor": "temp", "range": 20,
+     "levels": [{"level": 1, "value": "cold", "mean": 12},
+                {"level": 2, "value": "warm", "mean": 22},
+                {"level": 3, "value": "hot",  "mean": 32}]}
+  ],
+  "recommendation": {
+    "text": "temp=level_3, ph=level_3",
+    "settings": [{"factor": "temp", "level": 3, "value": "hot", "mean": 32}]
+  } }
+```
+
+Notes:
+
+- **Each recommended setting carries its `value`.** The text form names a level
+  *index* (`temp=level_3`) and the table never printed what level 3 was, so the
+  recommendation — the whole deliverable — could not be applied without going
+  back to the `.tgu` by hand. `text` is kept alongside, and a test pins the two
+  in agreement so they cannot drift.
+- **`effects` is in definition order**, not sorted by importance — it is the
+  order `levels` is indexed in. Sort on `range` for the ranking.
+- **`schema`** is bumped when a key is renamed or removed, never for an
+  addition. Refuse a schema you do not know rather than misreading it.
+- Level means are separate numbers at full precision, not the `L1=12.000,
+  L2=22.000` cell the table prints.
+
+### Why this exists
+
+The Python binding parsed the human output — `Run 1: a=1, b=2` split on `", "`
+and `"="`, and the effects table matched with `\s*(\w+)\s+([\d.]+)\s+(.+)`,
+both skipping any line that did not match. `\w+` does not match a factor named
+`kv-type`, so **that factor was silently dropped from the analysis**: no error,
+no warning, no gap in the output — just one fewer factor than you had.
+
+That is the same failure that cost a downstream tool hours of GPU time when
+`morris analyze` changed a column's formatting. It matters more here: morris
+decides which factors to drop, so a bad parse costs a wider sweep; `taguchi`
+produces the design and the recommendation, so a partial parse corrupts the
+answer rather than the effort.
+
 ## Language Bindings
 
 Pre-built examples for:
 - **Python**: ctypes interface with comprehensive examples
 - **Node.js**: ffi-napi interface with callback patterns
 - **Other Languages**: Any language with C FFI support
+
+Bindings that shell out to the CLI should call it with `--json`. Bindings that
+link the library can use `taguchi_def_get_factor_level()` to turn a
+`taguchi_recommend_optimal()` level index into the value it names.
 
 ## Build and Installation
 

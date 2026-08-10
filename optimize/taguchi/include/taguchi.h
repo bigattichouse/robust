@@ -148,6 +148,34 @@ size_t taguchi_def_get_factor_count(const taguchi_experiment_def_t *def);
  */
 const char *taguchi_def_get_factor_name(const taguchi_experiment_def_t *def, size_t index);
 
+/**
+ * Get the number of levels a factor declares.
+ *
+ * @param def Experiment definition
+ * @param index Factor index (0-based)
+ * @return Level count, or 0 if the index is out of range
+ */
+size_t taguchi_def_get_factor_level_count(const taguchi_experiment_def_t *def,
+                                          size_t index);
+
+/**
+ * Get a factor's level VALUE by index.
+ *
+ * The counterpart to taguchi_recommend_optimal, which names the best level as
+ * an INDEX ("A=level_3"). Without this a caller holding a recommendation has
+ * no way to turn it into a setting it can apply, short of re-parsing the .tgu
+ * itself -- so the recommendation, which is the whole deliverable, was the one
+ * output that could not be acted on programmatically.
+ *
+ * @param def Experiment definition
+ * @param factor_index Factor index (0-based)
+ * @param level_index Level index (0-based; taguchi_recommend_optimal's
+ *        "level_N" is 1-based, so subtract one)
+ * @return Level value (do not free), or NULL if either index is out of range
+ */
+const char *taguchi_def_get_factor_level(const taguchi_experiment_def_t *def,
+                                         size_t factor_index, size_t level_index);
+
 /*
  * ============================================================================
  * Generation API

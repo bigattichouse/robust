@@ -122,6 +122,25 @@ const char *taguchi_def_get_factor_name(const taguchi_experiment_def_t *def, siz
     return def->internal_def.factors[index].name;
 }
 
+size_t taguchi_def_get_factor_level_count(const taguchi_experiment_def_t *def,
+                                          size_t index) {
+    if (!def) return 0;
+    if (index >= def->internal_def.factor_count) return 0;
+
+    return def->internal_def.factors[index].level_count;
+}
+
+const char *taguchi_def_get_factor_level(const taguchi_experiment_def_t *def,
+                                         size_t factor_index, size_t level_index) {
+    if (!def) return NULL;
+    if (factor_index >= def->internal_def.factor_count) return NULL;
+
+    const Factor *f = &def->internal_def.factors[factor_index];
+    if (level_index >= f->level_count) return NULL;
+
+    return f->values[level_index];
+}
+
 void taguchi_free_definition(taguchi_experiment_def_t *def) {
     if (def) {
         free_experiment_def(&def->internal_def);

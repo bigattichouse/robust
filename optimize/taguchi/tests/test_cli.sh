@@ -49,6 +49,34 @@ expect_match() {
 }
 
 # ---------------------------------------------------------------- fixtures
+# ---- machine-readable output ---------------------------------------------
+#
+# generate and analyze were prose, and were being scraped. The Python binding
+# split `Run 1: a=1, b=2` on ", " and "=", and matched the effects table with
+# \s*(\w+)\s+([\d.]+)\s+(.+) -- both skipping any line that did not match.
+# \w+ does not match a factor named `kv-type`, so that factor was silently
+# dropped from the analysis. These check the documents with a real parser, and
+# check the tables still hold the shape a positional reader needs.
+#
+# Without python3 the strict checks SKIP LOUDLY. A check that reports success
+# without running is how the morris break shipped.
+HAVE_PY=0
+command -v python3 >/dev/null 2>&1 && HAVE_PY=1
+skip() { echo "  SKIP: $1  (no python3)"; }
+
+json_ok() { local l="$1"; shift; "$@" >"$TMP/j.out" 2>"$TMP/j.err"
+    [ "$HAVE_PY" -eq 1 ] || { skip "$l"; return; }
+    if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$TMP/j.out" 2>"$TMP/j.pe"
+    then ok "$l"; else bad "$l" "$(head -1 "$TMP/j.pe")"; fi; }
+
+json_is() { local want="$1" expr="$2" l="$3"; shift 3; "$@" >"$TMP/j.out" 2>"$TMP/j.err"
+    [ "$HAVE_PY" -eq 1 ] || { skip "$l"; return; }
+    local got
+    got=$(python3 -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+print(eval(sys.argv[2]))' "$TMP/j.out" "$expr" 2>"$TMP/j.pe")
+    [ "$got" = "$want" ] && ok "$l" || bad "$l" "got '${got:-$(head -1 "$TMP/j.pe")}', wanted '$want'"; }
+
 cat > "$TMP/exp.tgu" <<'EOF'
 factors:
   temp: cold, warm, hot
@@ -181,6 +209,150 @@ expect_exit 1 "unknown --metric exits 1" \
     $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --metric nonexistent
 expect_match "not found" "unknown --metric says so" \
     $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --metric nonexistent
+
+# ---------------------------------------------------------------- --json
+#
+# A factor name the binding's \w+ regex cannot match. This is the live case:
+# `kv-type` was dropped from the effects table with no error and no gap.
+cat > "$TMP/hyphen.tgu" <<'EOF'
+factors:
+  batch: 1, 8
+  kv-type: q4_0, q8_0
+  threads: 4, 8
+array: L4
+EOF
+{ echo "run_id,response"; for i in 1 2 3 4; do echo "$i,-$((10*i - 2)).0"; done; } > "$TMP/hyphen.csv"
+
+# A response with a real GRADIENT.
+#
+# results.csv above is perfectly balanced -- every level mean comes out at
+# exactly 20.000 and every range at 0 -- so maximize and minimize pick the same
+# level and any test of the recommendation passes no matter what the code does.
+# Verified: flipping max to min in the recommendation left that suite green.
+# This one is monotone in both factors, so the two objectives must disagree.
+cat > "$TMP/grad.csv" <<'EOF'
+run_id,response
+1,11
+2,12
+3,13
+4,21
+5,22
+6,23
+7,31
+8,32
+9,33
+EOF
+
+# generate --json: the DESIGN. A missing run is not a design.
+json_ok "generate --json parses" $TAGUCHI generate "$TMP/exp.tgu" --json
+json_is "9" "d['run_count']" "generate --json reports the L9 run count" \
+    $TAGUCHI generate "$TMP/exp.tgu" --json
+json_is "9" "len(d['runs'])" "generate --json emits every run" \
+    $TAGUCHI generate "$TMP/exp.tgu" --json
+json_is "True" "all(len(r['values']) == d['factor_count'] for r in d['runs'])" \
+    "generate --json: every run has a value for every factor" \
+    $TAGUCHI generate "$TMP/exp.tgu" --json
+json_is "True" "[r['run_id'] for r in d['runs']] == list(range(1, 10))" \
+    "generate --json: run ids are 1..N with no gaps" \
+    $TAGUCHI generate "$TMP/exp.tgu" --json
+json_is "True" "all(list(r['settings'].values()) == r['values'] for r in d['runs'])" \
+    "generate --json: settings and values agree" \
+    $TAGUCHI generate "$TMP/exp.tgu" --json
+json_is "True" "all(set(r['settings']) == set(d['factors']) for r in d['runs'])" \
+    "generate --json: settings key on the declared factors" \
+    $TAGUCHI generate "$TMP/exp.tgu" --json
+# Orthogonality, the property the design exists for: every factor takes every
+# level an equal number of times.
+json_is "True" "all(len(set(len([r for r in d['runs'] if r['settings'][f] == v]) for v in set(r['settings'][f] for r in d['runs']))) == 1 for f in d['factors'])" \
+    "generate --json: every factor is balanced across its levels" \
+    $TAGUCHI generate "$TMP/exp.tgu" --json
+json_is "1" "d['schema']" "generate --json carries a schema version" \
+    $TAGUCHI generate "$TMP/exp.tgu" --json
+
+# effects --json
+json_ok "effects --json parses" \
+    $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --json
+json_is "True" "all(isinstance(e['range'], (int, float)) for e in d['effects'])" \
+    "effects --json: range is a number, not a string" \
+    $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --json
+json_is "True" "all(isinstance(l['mean'], (int, float)) for e in d['effects'] for l in e['levels'])" \
+    "effects --json: level means are separate numbers, not one glued cell" \
+    $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --json
+json_is "True" "all(l['value'] is not None for e in d['effects'] for l in e['levels'])" \
+    "effects --json: each level carries its VALUE, not just its index" \
+    $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --json
+json_is "True" "all(abs(e['range'] - (max(l['mean'] for l in e['levels']) - min(l['mean'] for l in e['levels']))) < 1e-9 for e in d['effects'])" \
+    "effects --json: range equals max-min of the level means it reports" \
+    $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --json
+
+# The live silent-drop: a hyphenated factor must survive into the document.
+json_is "3" "len(d['effects'])" "effects --json keeps a factor named with a hyphen" \
+    $TAGUCHI effects "$TMP/hyphen.tgu" "$TMP/hyphen.csv" --json
+json_is "True" "'kv-type' in [e['factor'] for e in d['effects']]" \
+    "effects --json names the hyphenated factor" \
+    $TAGUCHI effects "$TMP/hyphen.tgu" "$TMP/hyphen.csv" --json
+# Negative means are ordinary and must not be lost to a digits-only parse.
+json_is "True" "any(l['mean'] < 0 for e in d['effects'] for l in e['levels'])" \
+    "effects --json carries negative level means" \
+    $TAGUCHI effects "$TMP/hyphen.tgu" "$TMP/hyphen.csv" --json
+
+# analyze --json: the recommendation is the deliverable.
+json_ok "analyze --json parses" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/results.csv" --json
+json_is "maximize" "d['objective']" "analyze --json states the objective" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --json
+json_is "minimize" "d['objective']" "analyze --json: --minimize is recorded" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --minimize --json
+json_is "True" "all(s['value'] is not None for s in d['recommendation']['settings'])" \
+    "analyze --json: the recommendation carries values, not just level indices" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --json
+json_is "True" "len(d['recommendation']['settings']) == d['factor_count']" \
+    "analyze --json: every factor gets a recommended setting" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --json
+# Maximizing must pick each factor's best level mean; minimizing its worst.
+json_is "True" "all(s['mean'] == max(l['mean'] for e in d['effects'] if e['factor']==s['factor'] for l in e['levels']) for s in d['recommendation']['settings'])" \
+    "analyze --json: maximizing picks the highest level mean" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --json
+json_is "True" "all(s['mean'] == min(l['mean'] for e in d['effects'] if e['factor']==s['factor'] for l in e['levels']) for s in d['recommendation']['settings'])" \
+    "analyze --json: minimizing picks the lowest level mean" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --minimize --json
+
+# The structured recommendation and the library's own string are two renderings
+# of one decision. If they ever disagree, one of them is lying to somebody.
+json_is "True" "d['recommendation']['text'] == ', '.join('%s=level_%d' % (s['factor'], s['level']) for s in d['recommendation']['settings'])" \
+    "analyze --json: structured settings agree with the recommendation text" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --json
+json_is "True" "d['recommendation']['text'] == ', '.join('%s=level_%d' % (s['factor'], s['level']) for s in d['recommendation']['settings'])" \
+    "analyze --json: they agree when minimizing too" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --minimize --json
+
+json_is "['hot', 'high']" "[s['value'] for s in d['recommendation']['settings']]" \
+    "analyze --json: maximizing a monotone response picks the top level" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --json
+json_is "['cold', 'low']" "[s['value'] for s in d['recommendation']['settings']]" \
+    "analyze --json: minimizing the same response picks the bottom level" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/grad.csv" --minimize --json
+
+# A value carrying a quote must be escaped, not interpolated.
+cat > "$TMP/quote.tgu" <<'EOF'
+factors:
+  a: pl"ain, other
+  b: x, y
+array: L4
+EOF
+json_ok "generate --json escapes a quote in a level value" \
+    $TAGUCHI generate "$TMP/quote.tgu" --json
+json_is "True" "any('pl\"ain' in r['values'] for r in d['runs'])" \
+    "generate --json round-trips a quoted level value" \
+    $TAGUCHI generate "$TMP/quote.tgu" --json
+
+# Unknown options must not be ignored into a human table at exit 0.
+expect_exit 1 "generate rejects an unknown option" \
+    $TAGUCHI generate "$TMP/exp.tgu" --format json
+expect_exit 1 "effects rejects an unknown option" \
+    $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --format json
+expect_exit 1 "analyze rejects an unknown option" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/results.csv" --format json
 
 # ---------------------------------------------------------------- summary
 echo

@@ -5,13 +5,20 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Helper function to escape JSON strings */
+/*
+ * Escape a string for embedding in a JSON document.
+ *
+ * The worst case is a control character, which becomes six bytes (\u00XX),
+ * NOT two. This allocated len*2+1 and passed any control character through
+ * RAW -- which both under-allocates and emits a byte JSON forbids, so a level
+ * value carrying a stray \x01 produced a document no parser would accept.
+ * Nothing in the .tgu parser rejects those bytes, so the input was reachable.
+ */
 char *escape_json_string(const char *input) {
     if (!input) return NULL;
-    
+
     size_t len = strlen(input);
-    // In worst case, we might need to escape every character
-    char *escaped = xmalloc(len * 2 + 1); // Give extra space for escapes
+    char *escaped = xmalloc(len * 6 + 1);   /* exact worst case: every char -> \u00XX */
     size_t pos = 0;
     
     for (size_t i = 0; i < len; i++) {
@@ -45,7 +52,15 @@ char *escape_json_string(const char *input) {
                 escaped[pos++] = 't';
                 break;
             default:
-                escaped[pos++] = input[i];
+                if ((unsigned char)input[i] < 0x20) {
+                    /* Bounded: the allocation above reserves six bytes per
+                     * input character, so this cannot truncate. */
+                    int w = snprintf(escaped + pos, len * 6 + 1 - pos,
+                                     "\\u%04x", (unsigned char)input[i]);
+                    if (w > 0) pos += (size_t)w;
+                } else {
+                    escaped[pos++] = input[i];
+                }
                 break;
         }
     }

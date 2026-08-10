@@ -148,6 +148,21 @@ Three things came out of it, and they are the general lesson:
   print the human table and exit 0 — the same silent-wrong-answer shape. Both
   tools now reject an option they do not know.
 
+The same report came back for `taguchi`, and there the parse was already
+losing data. Its Python binding scraped `generate` and `effects`, matching the
+effects table with `\s*(\w+)\s+([\d.]+)\s+(.+)` and skipping non-matching
+lines — and `\w+` does not match a factor named `kv-type`, so that factor was
+dropped from the analysis with no error and no gap in the output. `generate`,
+`analyze` and `effects` take `--json` now, and the recommendation carries each
+level's VALUE rather than only the index `taguchi_recommend_optimal` names.
+
+Two things that made those tests weak, both fixed: the CLI fixture's responses
+were perfectly balanced (every level mean exactly 20.000, every range 0), so
+maximize and minimize picked the same level and the recommendation logic was
+untested — flipping max to min left the suite green. And `escape_json_string`
+allocated `len*2+1` while a control character needs six bytes, passing those
+bytes through raw.
+
 Related, found while fixing it: `regress --json` and `uq --json` interpolated
 factor and metric names raw. The `.space` parser rejects only control
 characters, and `--metric` is argv, so one quote produced a document no parser

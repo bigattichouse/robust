@@ -7,25 +7,81 @@
 #include <getopt.h>
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include "include/taguchi.h"
+#include "serializer.h"      /* escape_json_string */
 
 /* Forward declaration — defined below after parse_csv_results */
 static char *read_file_dynamic(const char *filename);
+
+/*
+ * ============================================================================
+ * The machine-readable contract: --json on generate, effects and analyze.
+ *
+ * These three outputs were prose, and they were being scraped. The Python
+ * binding split `Run 1: a=1, b=2` on ", " and "=", and matched the effects
+ * table with \s*(\w+)\s+([\d.]+)\s+(.+) -- both skipping any line that did
+ * not match, which is the silent-drop behaviour that let a formatting change
+ * to `morris analyze` cost hours of GPU time before anyone noticed.
+ *
+ * Measured, not hypothesised: \w+ does not match a factor named `kv-type`, so
+ * that factor was being dropped from the effects table with no error, no
+ * warning and no gap in the output. Two of three factors parsed; the analysis
+ * silently lost the second-most-important one.
+ *
+ * More is at stake here than in morris. Morris decides which factors to drop,
+ * so a bad parse costs a wider sweep. taguchi produces the DESIGN and the
+ * RECOMMENDATION -- a partial parse corrupts the answer rather than the
+ * effort.
+ *
+ * Same rules as morris and sobol: the tables are a display, these keys are the
+ * interface, `schema` is bumped on a rename or removal and never on an
+ * addition, and diagnostics stay on stderr in both modes.
+ * ============================================================================
+ */
+#define TAGUCHI_JSON_SCHEMA 1
+
+/* Print `s` as a quoted JSON string. escape_json_string is the library's one
+ * escaper, shared rather than reimplemented here. */
+static void json_str(const char *s) {
+    char *e = escape_json_string(s ? s : "");
+    printf("\"%s\"", e ? e : "");
+    free(e);
+}
+
+/*
+ * A JSON number, or `null` when the value is not finite. JSON has no NaN or
+ * Infinity literal, so printf's bare `nan` would make one odd cell cost the
+ * consumer the whole document.
+ *
+ * %.10g, not the %.3f the tables print. A level mean rounded to three decimals
+ * is a different number, and this output exists to be computed on.
+ */
+static void json_num(double v) {
+    if (isfinite(v)) printf("%.10g", v);
+    else             printf("null");
+}
 
 static void print_usage(const char *program_name) {
     fprintf(stderr, 
         "Usage: %s [OPTIONS] <command> [ARGS]\n"
         "\n"
         "Commands:\n"
-        "  generate <file.tgu>     Generate experiment runs\n"
-        "  run <file.tgu> <script> Execute experiments with external script\n"
-        "  analyze <file.tgu> <results.csv> Analyze experimental results\n"
-        "  effects <file.tgu> <results.csv> Calculate main effects\n"
-        "  validate <file.tgu>     Validate experiment definition\n"
-        "  suggest-array <file.tgu> Suggest optimal orthogonal array\n"
-        "  list-arrays             List available orthogonal arrays\n"
-        "  --help                  Show this help message\n"
-        "  --version               Show version information\n"
+        "  generate <file.tgu> [--json]     Generate experiment runs\n"
+        "  run <file.tgu> <script>          Execute experiments with a script\n"
+        "  analyze <file.tgu> <results.csv> [--metric N] [--minimize] [--json]\n"
+        "                                   Main effects + optimal configuration\n"
+        "  effects <file.tgu> <results.csv> [--metric N] [--json]\n"
+        "                                   Main effects only\n"
+        "  validate <file.tgu>              Validate experiment definition\n"
+        "  suggest-array <file.tgu>         Suggest optimal orthogonal array\n"
+        "  list-arrays                      List available orthogonal arrays\n"
+        "  --help                           Show this help message\n"
+        "  --version                        Show version information\n"
+        "\n"
+        "--json gives machine-readable output on generate, analyze and effects.\n"
+        "The tables are a display and will keep changing; --json is the contract,\n"
+        "versioned by a `schema` key. Parse that, not the tables.\n"
         "\n"
         "Examples:\n"
         "  %s generate experiment.tgu\n"
@@ -82,7 +138,17 @@ static int cmd_generate(int argc, char *argv[]) {
     }
     
     const char *filename = argv[1];
-    
+    int as_json = 0;
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--json") == 0) as_json = 1;
+        else {
+            /* Rejected, not ignored: a caller asking for a mode this build
+             * lacks must not receive the human table and exit 0. */
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+            return 1;
+        }
+    }
+
     // Read the file
     char *content = read_file_dynamic(filename);
     if (!content) return 1;
@@ -106,13 +172,56 @@ static int cmd_generate(int argc, char *argv[]) {
         return 1;
     }
     
+    size_t factor_count = taguchi_def_get_factor_count(def);
+
+    if (as_json) {
+        /*
+         * The design, as data. `Run 1: a=1, b=2` needed splitting on ", " and
+         * then on "=", which silently loses any run whose line does not match
+         * -- and a design with a missing run is not a design.
+         *
+         * `factors` is an ordered list, and each run's `values` is in that same
+         * order, so a consumer never has to key off a name it might have
+         * mis-scraped. `settings` carries the same thing keyed by name, for
+         * callers that would rather look factors up.
+         */
+        printf("{\n");
+        printf("  \"tool\": \"taguchi\",\n");
+        printf("  \"command\": \"generate\",\n");
+        printf("  \"schema\": %d,\n", TAGUCHI_JSON_SCHEMA);
+        printf("  \"run_count\": %zu,\n", count);
+        printf("  \"factor_count\": %zu,\n", factor_count);
+        printf("  \"factors\": [");
+        for (size_t f = 0; f < factor_count; f++) {
+            if (f) printf(", ");
+            json_str(taguchi_def_get_factor_name(def, f));
+        }
+        printf("],\n");
+        printf("  \"runs\": [\n");
+        for (size_t i = 0; i < count; i++) {
+            printf("    {\"run_id\": %zu, \"values\": [",
+                   taguchi_run_get_id(runs[i]));
+            for (size_t f = 0; f < factor_count; f++) {
+                if (f) printf(", ");
+                json_str(taguchi_run_get_value(runs[i],
+                                               taguchi_def_get_factor_name(def, f)));
+            }
+            printf("], \"settings\": {");
+            for (size_t f = 0; f < factor_count; f++) {
+                const char *fn = taguchi_def_get_factor_name(def, f);
+                if (f) printf(", ");
+                json_str(fn);
+                printf(": ");
+                json_str(taguchi_run_get_value(runs[i], fn));
+            }
+            printf("}}%s\n", i + 1 < count ? "," : "");
+        }
+        printf("  ]\n}\n");
+    } else {
     // Print runs with factor details
     printf("Generated %zu experiment runs:\n", count);
     for (size_t i = 0; i < count; i++) {
         printf("Run %zu: ", taguchi_run_get_id(runs[i]));
-
-        // Get factor count from the original definition to know how many to print
-        size_t factor_count = taguchi_def_get_factor_count(def);
 
         // Print each factor-value pair
         for (size_t f = 0; f < factor_count; f++) {
@@ -126,6 +235,7 @@ static int cmd_generate(int argc, char *argv[]) {
             }
         }
         printf("\n");
+    }
     }
     
     // Cleanup
@@ -507,6 +617,78 @@ static int parse_csv_results(const char *filename, const char *metric_name,
     return 0;
 }
 
+/*
+ * Map an effect back to its factor in the definition BY NAME.
+ *
+ * The effects array happens to come back in definition order today, so
+ * effects[i] could index the definition directly -- but that couples the
+ * level VALUES printed against an effect to an ordering nothing guarantees,
+ * and a mismatch would label each level with another factor's value while
+ * still producing a perfectly well-formed document. Silently wrong beats
+ * loudly broken only for the person who ships it.
+ */
+static size_t def_index_of(const taguchi_experiment_def_t *def, const char *name) {
+    size_t n = taguchi_def_get_factor_count(def);
+    for (size_t i = 0; i < n; i++) {
+        const char *fn = taguchi_def_get_factor_name(def, i);
+        if (fn && name && strcmp(fn, name) == 0) return i;
+    }
+    return (size_t)-1;
+}
+
+/* A level value, or JSON null when the effect names a factor the definition
+ * does not have -- which should be impossible, and is therefore worth
+ * reporting as null rather than crashing or mislabelling. */
+static void json_level_value(const taguchi_experiment_def_t *def,
+                             const char *factor_name, size_t level_index) {
+    size_t fi = def_index_of(def, factor_name);
+    const char *v = (fi == (size_t)-1)
+                  ? NULL : taguchi_def_get_factor_level(def, fi, level_index);
+    if (v) json_str(v);
+    else   printf("null");
+}
+
+/*
+ * The main-effects table, as data. Shared by `effects` and `analyze` so the
+ * two cannot drift.
+ *
+ * `effects` is in DEFINITION order, which is the order level_means is indexed
+ * in and the order the .tgu declares -- not sorted by importance. Sort on
+ * `range` if you want the ranking; the order here is the one other fields are
+ * keyed to.
+ *
+ * Each level carries its index, its VALUE, and its mean. The table printed
+ * "L1=-13.000, L2=-33.000": the means glued together in one column, and the
+ * level values absent entirely, so a reader could not tell what L1 was without
+ * going back to the .tgu.
+ */
+static void print_effects_json(const taguchi_experiment_def_t *def,
+                               taguchi_main_effect_t **effects,
+                               size_t effect_count) {
+    printf("  \"effects\": [\n");
+    for (size_t i = 0; i < effect_count; i++) {
+        const char *name = taguchi_effect_get_factor(effects[i]);
+        size_t level_count = 0;
+        const double *means = taguchi_effect_get_level_means(effects[i], &level_count);
+
+        printf("    {\"factor\": ");
+        json_str(name);
+        printf(", \"range\": ");
+        json_num(taguchi_effect_get_range(effects[i]));
+        printf(", \"levels\": [");
+        for (size_t lv = 0; lv < level_count; lv++) {
+            if (lv) printf(", ");
+            printf("{\"level\": %zu, \"value\": ", lv + 1);
+            json_level_value(def, name, lv);
+            printf(", \"mean\": ");
+            json_num(means[lv]);
+            printf("}");
+        }
+        printf("]}%s\n", i + 1 < effect_count ? "," : "");
+    }
+    printf("  ]");
+}
+
 static int cmd_effects(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Error: effects command requires .tgu file and results CSV\n");
@@ -517,12 +699,14 @@ static int cmd_effects(int argc, char *argv[]) {
     const char *tgu_file = argv[1];
     const char *csv_file = argv[2];
     const char *metric_name = "response";
+    int as_json = 0;
 
-    /* Parse optional --metric flag */
-    for (int i = 3; i < argc - 1; i++) {
-        if (strcmp(argv[i], "--metric") == 0) {
-            metric_name = argv[i + 1];
-            break;
+    for (int i = 3; i < argc; i++) {
+        if (strcmp(argv[i], "--metric") == 0 && i + 1 < argc) metric_name = argv[++i];
+        else if (strcmp(argv[i], "--json") == 0) as_json = 1;
+        else {
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+            return 1;
         }
     }
 
@@ -560,6 +744,17 @@ static int cmd_effects(int argc, char *argv[]) {
         return 1;
     }
 
+    if (as_json) {
+        printf("{\n");
+        printf("  \"tool\": \"taguchi\",\n");
+        printf("  \"command\": \"effects\",\n");
+        printf("  \"schema\": %d,\n", TAGUCHI_JSON_SCHEMA);
+        printf("  \"metric\": ");
+        json_str(metric_name);
+        printf(",\n  \"factor_count\": %zu,\n", effect_count);
+        print_effects_json(def, effects, effect_count);
+        printf("\n}\n");
+    } else {
     /* Print main effects table */
     printf("Main Effects for metric: %s\n", metric_name);
     printf("%-20s %8s   Level Means\n", "Factor", "Range");
@@ -577,6 +772,7 @@ static int cmd_effects(int argc, char *argv[]) {
             printf("L%zu=%.3f", lv + 1, means[lv]);
         }
         printf("\n");
+    }
     }
 
     taguchi_free_effects(effects, effect_count);
@@ -597,12 +793,19 @@ static int cmd_analyze(int argc, char *argv[]) {
     const char *metric_name = "response";
     bool higher_is_better = true;
 
+    int as_json = 0;
+
     /* Parse optional flags */
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--metric") == 0 && i + 1 < argc) {
             metric_name = argv[++i];
         } else if (strcmp(argv[i], "--minimize") == 0) {
             higher_is_better = false;
+        } else if (strcmp(argv[i], "--json") == 0) {
+            as_json = 1;
+        } else {
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+            return 1;
         }
     }
 
@@ -638,6 +841,75 @@ static int cmd_analyze(int argc, char *argv[]) {
         taguchi_free_result_set(results);
         taguchi_free_definition(def);
         return 1;
+    }
+
+    /*
+     * The recommendation is the deliverable, and it was the least usable thing
+     * in the output: taguchi_recommend_optimal names the best LEVEL INDEX
+     * ("batch=level_1"), and the CLI never printed what level_1 was. A reader
+     * had to map indices back through the .tgu by hand. In --json each
+     * recommended setting carries the index, the VALUE, and the mean it won
+     * on, so it can be applied directly.
+     *
+     * `text` is the library's own string, emitted alongside the structured
+     * form. Two renderings of one decision: a test pins them in agreement, so
+     * a divergence fails the build instead of reaching a consumer.
+     */
+    char recommendation[1024];
+    int have_rec = taguchi_recommend_optimal((const taguchi_main_effect_t **)effects,
+                                             effect_count, higher_is_better,
+                                             recommendation, sizeof(recommendation)) == 0;
+
+    if (as_json) {
+        printf("{\n");
+        printf("  \"tool\": \"taguchi\",\n");
+        printf("  \"command\": \"analyze\",\n");
+        printf("  \"schema\": %d,\n", TAGUCHI_JSON_SCHEMA);
+        printf("  \"metric\": ");
+        json_str(metric_name);
+        printf(",\n  \"objective\": \"%s\",\n",
+               higher_is_better ? "maximize" : "minimize");
+        printf("  \"factor_count\": %zu,\n", effect_count);
+        print_effects_json(def, effects, effect_count);
+        printf(",\n");
+
+        if (!have_rec) {
+            printf("  \"recommendation\": null\n");
+        } else {
+            printf("  \"recommendation\": {\n");
+            printf("    \"text\": ");
+            json_str(recommendation);
+            printf(",\n    \"settings\": [\n");
+            for (size_t i = 0; i < effect_count; i++) {
+                size_t level_count = 0;
+                const double *means =
+                    taguchi_effect_get_level_means(effects[i], &level_count);
+                if (level_count == 0) continue;
+
+                /* Same rule the library applies: the best level mean, highest
+                 * or lowest according to the objective. */
+                size_t best = 0;
+                for (size_t lv = 1; lv < level_count; lv++) {
+                    int better = higher_is_better ? (means[lv] > means[best])
+                                                  : (means[lv] < means[best]);
+                    if (better) best = lv;
+                }
+                printf("      {\"factor\": ");
+                json_str(taguchi_effect_get_factor(effects[i]));
+                printf(", \"level\": %zu, \"value\": ", best + 1);
+                json_level_value(def, taguchi_effect_get_factor(effects[i]), best);
+                printf(", \"mean\": ");
+                json_num(means[best]);
+                printf("}%s\n", i + 1 < effect_count ? "," : "");
+            }
+            printf("    ]\n  }\n");
+        }
+        printf("}\n");
+
+        taguchi_free_effects(effects, effect_count);
+        taguchi_free_result_set(results);
+        taguchi_free_definition(def);
+        return 0;
     }
 
     /* Print effects summary */
@@ -663,9 +935,7 @@ static int cmd_analyze(int argc, char *argv[]) {
     }
 
     /* Print recommendation */
-    char recommendation[1024];
-    if (taguchi_recommend_optimal((const taguchi_main_effect_t **)effects, effect_count,
-                                   higher_is_better, recommendation, sizeof(recommendation)) == 0) {
+    if (have_rec) {
         printf("\nOptimal Configuration: %s\n", recommendation);
     }
 
