@@ -490,11 +490,12 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 # Skipped LOUDLY without pytest. A check that reports success without running
 # is worse than no check -- see the note on the valgrind stage.
 test-bindings: $(TAGUCHI_BIN)
-	@if python3 -c 'import pytest' >/dev/null 2>&1; then \
+	@if python3 -c 'import pytest, pytest_asyncio' >/dev/null 2>&1; then \
 	  TAGUCHI_CLI=$(abspath $(TAGUCHI_BIN)) python3 -m pytest -q \
 	    optimize/taguchi/bindings/python/tests; \
 	else \
-	  echo "SKIP: python binding contract tests (python3 -m pytest unavailable)"; \
+	  echo "SKIP: python binding tests (need pytest and pytest-asyncio:"; \
+	  echo "      pip install -e 'optimize/taguchi/bindings/python[test]')"; \
 	fi
 
 test-all: test

@@ -6,6 +6,15 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 
+# What the test suite needs, declared rather than assumed.
+#
+# pytest-asyncio was not listed, and the async tests only ran where it happened
+# to be installed: green locally, "async def functions are not natively
+# supported" on a clean CI runner. A dependency that works by luck is not a
+# dependency, it is a coincidence.
+[project.optional-dependencies]
+test = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"

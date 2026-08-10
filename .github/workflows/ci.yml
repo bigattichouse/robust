@@ -23,8 +23,13 @@ jobs:
       # missing. Installing first means those stages actually cover the
       # binding -- the ASan one in particular runs it against the sanitized
       # binary, which is where a path assumption in these tests surfaced.
-      - name: Install pytest (for the binding contract tests)
-        run: python3 -m pip install --quiet pytest
+      - name: Install the binding's test dependencies
+        # The dependencies only, NOT the package: installing taguchi-bindings
+        # would put a copy in site-packages that could shadow the source tree,
+        # and testing a stale copy of the thing you just changed is the exact
+        # trap the default-goal and stale-binary fixes exist for. The set is
+        # declared in the binding's pyproject.toml [test] extra; keep in sync.
+        run: python3 -m pip install --quiet pytest pytest-asyncio
 
       - name: Build (libdoe + morris/sobol/robust/pareto + taguchi)
         run: make all
