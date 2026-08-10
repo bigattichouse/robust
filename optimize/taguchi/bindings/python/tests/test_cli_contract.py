@@ -356,6 +356,74 @@ class TestCliJsonContract:
         assert "unknown option" in out.stderr.lower()
 
 
+class TestFromTguDoesNotEatYourFile:
+    """`Experiment.from_tgu(path)` must not delete the file it was handed.
+
+    cleanup() unlinked whatever _tgu_path named, and from_tgu pointed that at
+    the CALLER's file, so
+
+        with Experiment.from_tgu("my_experiment.tgu") as exp:
+            ...
+
+    destroyed the input on the way out of the with-block. Silent, immediate,
+    and unrecoverable. Ownership is tracked now rather than assumed.
+    """
+
+    TGU = "factors:\n  a: 1, 2\n  b: 1, 2\narray: L4\n"
+
+    def _write(self, tmp_path):
+        p = tmp_path / "mine.tgu"
+        p.write_text(self.TGU)
+        return p
+
+    def test_enhanced_layer_leaves_it_alone(self, tmp_path):
+        from taguchi import Experiment as Enhanced
+        p = self._write(tmp_path)
+        with Enhanced.from_tgu(str(p)):
+            pass
+        assert p.exists(), "from_tgu deleted the caller's file"
+
+    def test_original_layer_leaves_it_alone(self, tmp_path):
+        from taguchi.experiment import Experiment as Original
+        p = self._write(tmp_path)
+        with Original.from_tgu(str(p)):
+            pass
+        assert p.exists(), "from_tgu deleted the caller's file"
+
+    def test_a_temp_file_it_created_is_still_cleaned_up(self, tmp_path):
+        """The other half of the contract: don't fix the leak by leaking."""
+        import os
+        from taguchi.experiment import Experiment as Original
+        exp = Original()
+        exp.add_factor("x", ["1", "2"])
+        exp.add_factor("y", ["1", "2"])
+        path = exp.get_tgu_path()
+        assert os.path.exists(path)
+        exp.cleanup()
+        assert not os.path.exists(path), "its own temp file was left behind"
+
+
+class TestArrayDiscovery:
+
+    def test_mixed_level_arrays_are_visible(self):
+        """L18 is mixed-level, so the old scraping regex -- which required a
+        NUMBER before "levels" -- never matched it. The binding reported 19 of
+        the tool's 20 arrays, and get_array_info("L18") raised "not found"."""
+        from taguchi.core import Taguchi
+        t = Taguchi()
+        names = t.list_arrays()
+        assert "L18" in names
+        info = t.get_array_info("L18")
+        assert info["rows"] == 18
+        assert info["levels"] is None, "mixed-level must be null, not 0"
+
+    def test_suggest_array_survives_a_mixed_level_entry(self):
+        """Including L18 broke suggest_array, which compared levels
+        numerically against None. Loud, but it had to be handled."""
+        from taguchi.core import Taguchi
+        assert Taguchi().suggest_array(num_factors=3, max_levels=3).startswith("L")
+
+
 class TestExportedErrorActuallyCatches:
     """`from taguchi import TaguchiError` has to catch what the library raises.
 

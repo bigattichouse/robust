@@ -123,7 +123,12 @@ class TestAnalyzerEnhanced:
         analyzer.add_result(1, 0.95)
         analyzer.add_result(2, 0.87)
         analyzer.add_result(3, 0.92)
-        analyzer.add_result(99, 0.80)  # Non-existent run
+        # add_result rejects an unknown run id outright, so the only way to
+        # reach validate()'s extra-results branch is to plant the state
+        # directly -- the same bypass test_validate_invalid_result_values uses
+        # below. The branch is real code and worth covering; the guard in
+        # add_result is also right and should not be weakened to suit a test.
+        analyzer._results[99] = 0.80  # Bypass add_result validation
         
         errors = analyzer.validate()
         assert any("Results provided for non-existent runs: [99]" in error for error in errors)

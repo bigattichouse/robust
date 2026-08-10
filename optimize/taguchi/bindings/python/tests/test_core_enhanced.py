@@ -7,7 +7,7 @@ import os
 import subprocess
 import tempfile
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from pathlib import Path
 
 from taguchi.config import TaguchiConfig
@@ -47,13 +47,18 @@ class TestTaguchiEnhanced:
             assert taguchi._config.debug_mode is True
             assert taguchi._config.cli_timeout == 60
     
-    def test_init_backward_compatibility(self):
+    def test_init_backward_compatibility(self, tmp_path):
         """Test backward compatibility with cli_path parameter."""
         with patch.object(Taguchi, '_find_cli', return_value='/usr/bin/taguchi'):
-            taguchi = Taguchi(cli_path='/custom/path')
+            # A real file: config validation checks the path exists, so a
+            # hardcoded system path fails on any machine without that install.
+            custom = tmp_path / "custom_taguchi"
+            custom.write_text("#!/bin/sh\nexit 0\n")
+            custom.chmod(0o755)
+            taguchi = Taguchi(cli_path=str(custom))
             
             # Should override config
-            assert taguchi._config.cli_path == '/custom/path'
+            assert taguchi._config.cli_path == str(custom)
     
     def test_find_cli_environment_variable(self):
         """Test CLI discovery via environment variable."""
@@ -380,10 +385,13 @@ class TestAsyncTaguchi:
         async_taguchi = AsyncTaguchi(config=config)
         
         # Mock process that will be killed
+        # AsyncMock for wait(): the code does `await process.wait()` after
+        # killing a timed-out process, and awaiting a plain Mock's None return
+        # raises TypeError -- which surfaced as the timeout test failing for a
+        # reason that had nothing to do with timeouts.
         mock_process = Mock()
         mock_process.kill = Mock()
-        mock_process.wait = MagicMock()
-        mock_process.wait.return_value = None
+        mock_process.wait = AsyncMock(return_value=None)
         
         with patch('asyncio.create_subprocess_exec', return_value=mock_process):
             with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError):
@@ -402,16 +410,42 @@ class TestAsyncTaguchi:
         config = TaguchiConfig(cli_path=mock_cli_binary)
         async_taguchi = AsyncTaguchi(config=config)
         
-        mock_output = """
-        Available orthogonal arrays:
-        L9    (9 runs, 4 cols, 3 levels)
-        L16   (16 runs, 5 cols, 4 levels)
-        """
-        
+        # The --json document, not the human table. L18 is here deliberately:
+        # a mixed-level array, which the old regex could not match.
+        mock_output = """{
+  "tool": "taguchi",
+  "command": "list-arrays",
+  "schema": 1,
+  "arrays": [
+    {
+      "name": "L9",
+      "runs": 9,
+      "columns": 4,
+      "levels": 3,
+      "mixed_levels": false
+    },
+    {
+      "name": "L16",
+      "runs": 16,
+      "columns": 5,
+      "levels": 4,
+      "mixed_levels": false
+    },
+    {
+      "name": "L18",
+      "runs": 18,
+      "columns": 8,
+      "levels": null,
+      "mixed_levels": true
+    }
+  ]
+}"""
+
         with patch.object(async_taguchi, '_run_command_async', return_value=mock_output):
             arrays = await async_taguchi.list_arrays_async()
             assert 'L9' in arrays
             assert 'L16' in arrays
+            assert 'L18' in arrays
     
     @pytest.mark.asyncio
     async def test_generate_runs_async(self, mock_cli_binary):

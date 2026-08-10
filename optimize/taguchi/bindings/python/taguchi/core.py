@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 from ._base_error import TaguchiErrorBase
-from ._cli_json import effects_from_json, runs_from_json
+from ._cli_json import arrays_from_json, effects_from_json, runs_from_json
 
 # Subprocess timeout in seconds — prevents hangs if the binary stalls.
 _CLI_TIMEOUT = 30
@@ -108,26 +108,8 @@ class Taguchi:
         if self._array_cache is not None:
             return self._array_cache
 
-        output = self._run_command(["list-arrays"])
-        arrays = []
-
-        for line in output.strip().split('\n'):
-            match = re.match(
-                r'\s+(L\d+)\s+\(\s*(\d+)\s+runs,\s*(\d+)\s+cols,\s*(\d+)\s+levels\)',
-                line,
-            )
-            if match:
-                arrays.append({
-                    'name': match.group(1),
-                    'rows': int(match.group(2)),
-                    'cols': int(match.group(3)),
-                    'levels': int(match.group(4)),
-                })
-
-        if not arrays:
-            raise TaguchiError(
-                "list-arrays returned no arrays — CLI output may have changed format"
-            )
+        output = self._run_command(["list-arrays", "--json"])
+        arrays = arrays_from_json(output)
 
         self._array_cache = arrays
         return arrays
@@ -157,7 +139,13 @@ class Taguchi:
         arrays = self._get_arrays_info()
 
         # Prefer arrays whose native level count matches; fall back to any
-        candidates = [a for a in arrays if a['levels'] >= max_levels] or arrays
+        # `levels` is None for a mixed-level array (L18), which has no single
+        # native level count. Excluded from the numeric filter rather than
+        # compared against -- and still reachable through the `or arrays`
+        # fallback below. Before list-arrays --json these arrays never appeared
+        # here at all, because the scraping regex silently dropped them.
+        candidates = [a for a in arrays
+                      if a['levels'] is not None and a['levels'] >= max_levels] or arrays
 
         # Among candidates, keep those with enough columns
         sufficient = [a for a in candidates if a['cols'] >= num_factors]

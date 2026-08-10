@@ -273,8 +273,29 @@ just environment coupling:
 - Fixtures scoped inside one test class, so a second class's four tests errored
   on a missing fixture instead of running.
 
-The remaining 13 are concentrated in the "enhanced" layer's async and mocking
-paths. They are the argument for the item below, not for more repair.
+Working the list down further took it to **8**, and turned up two more real
+defects — both of the same silent-loss family as everything else this session:
+
+- **`Experiment.from_tgu(path)` deleted the caller's file.** `cleanup()`
+  unlinked whatever `_tgu_path` named, and `from_tgu` pointed that at the file
+  it was handed, so `with Experiment.from_tgu("my_experiment.tgu"): ...`
+  destroyed the input on the way out of the block. Silent, immediate,
+  unrecoverable, and present in BOTH layers. Ownership is tracked now rather
+  than inferred from "the path is set".
+- **The binding could not see L18.** `_get_arrays_info` scraped with a regex
+  requiring a NUMBER before "levels"; a mixed-level array prints "mixed", so
+  L18 never matched. `list_arrays()` returned 19 of 20 and
+  `get_array_info("L18")` raised "not found" — the one array designed for
+  mixed-level factors was unreachable. Both layers read `list-arrays --json`
+  now, and `levels` is null for mixed rather than 0.
+
+Also: `CommandExecutionError` never escaped `_run_command`. `raise error` sat
+inside the `try`, so the following `except Exception` caught and rewrapped it
+as a plain `TaguchiError` — `exit_code` and `stderr` discarded, and
+`except CommandExecutionError` never matching.
+
+The remaining 8 are the enhanced layer's async mocks and validation semantics.
+They are the argument for the item below, not for more repair.
 
 **The duplicated "enhanced" layer is the standing liability.**
 `core.py`/`core_enhanced.py`, `analyzer.py`/`analyzer_enhanced.py`,

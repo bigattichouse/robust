@@ -133,6 +133,13 @@ class Experiment:
         self._factors: Dict[str, List[str]] = {}
         self._runs: Optional[List[Dict]] = None
         self._tgu_path: Optional[str] = None
+        # Whether THIS experiment created the .tgu and may therefore delete it.
+        # from_tgu() points _tgu_path at a file the CALLER owns, and cleanup()
+        # used to unlink whatever _tgu_path named -- so
+        #     with Experiment.from_tgu("my_experiment.tgu"): ...
+        # destroyed the user's input file on the way out. Ownership has to be
+        # tracked, not assumed from "the path is set".
+        self._owns_tgu: bool = False
         self._validation_cache: Optional[List[str]] = None
 
     # ------------------------------------------------------------------
@@ -179,20 +186,22 @@ class Experiment:
             available_arrays = self._taguchi._get_arrays_info()
             compatible_arrays = [
                 a for a in available_arrays 
-                if a['cols'] >= num_factors and a['levels'] >= max_levels
+                if a['cols'] >= num_factors and a['levels'] is not None
+                and a['levels'] >= max_levels
             ]
             
             if not compatible_arrays:
                 # Find best partial matches for better error message
                 by_cols = [a for a in available_arrays if a['cols'] >= num_factors]
-                by_levels = [a for a in available_arrays if a['levels'] >= max_levels]
+                by_levels = [a for a in available_arrays
+                             if a['levels'] is not None and a['levels'] >= max_levels]
                 
                 if not by_cols and not by_levels:
                     errors.append(
                         f"No available array supports {num_factors} factors with "
                         f"{max_levels} levels. Maximum available: "
                         f"{max(a['cols'] for a in available_arrays)} factors, "
-                        f"{max(a['levels'] for a in available_arrays)} levels."
+                        f"{max(a['levels'] for a in available_arrays if a['levels'] is not None)} levels."
                     )
                 elif not by_cols:
                     max_cols = max(a['cols'] for a in available_arrays)
@@ -201,7 +210,8 @@ class Experiment:
                         f"(maximum available: {max_cols})"
                     )
                 elif not by_levels:
-                    max_level_support = max(a['levels'] for a in available_arrays)
+                    max_level_support = max(a['levels'] for a in available_arrays
+                                            if a['levels'] is not None)
                     errors.append(
                         f"No available array supports {max_levels} levels "
                         f"(maximum available: {max_level_support})"
@@ -223,7 +233,7 @@ class Experiment:
                         f"columns but {num_factors} factors were defined"
                     )
                 
-                if array_info['levels'] < max_levels:
+                if array_info['levels'] is not None and array_info['levels'] < max_levels:
                     errors.append(
                         f"Array {self._array_type} supports only {array_info['levels']} "
                         f"levels but {max_levels} levels were used"
@@ -339,16 +349,18 @@ class Experiment:
             with os.fdopen(fd, 'w') as f:
                 f.write(self._generate_tgu())
             self._tgu_path = path
+            self._owns_tgu = True      # we made it, so we may delete it
         return self._tgu_path
 
     def cleanup(self) -> None:
         """Delete any temporary .tgu file created by this experiment."""
-        if self._tgu_path and os.path.exists(self._tgu_path):
+        if self._owns_tgu and self._tgu_path and os.path.exists(self._tgu_path):
             try:
                 os.unlink(self._tgu_path)
             except OSError:
                 pass
         self._tgu_path = None
+        self._owns_tgu = False
 
     # ------------------------------------------------------------------
     # Public generation API
@@ -483,8 +495,10 @@ class Experiment:
             content = f.read()
 
         exp = cls(taguchi=taguchi, config=config)
-        # Point directly at the source file — no temp file needed
+        # Point directly at the source file — no temp file needed, and the
+        # CALLER owns it, so cleanup() must not delete it.
         exp._tgu_path = path
+        exp._owns_tgu = False
 
         factors: Dict[str, List[str]] = {}
         in_factors = False

@@ -30,12 +30,44 @@ class TestBackwardCompatibility:
         
         # Mock list-arrays output
         mock_cli.return_value.returncode = 0
-        mock_cli.return_value.stdout = """
-Available orthogonal arrays:
-  L9    (9 runs, 4 cols, 3 levels)
-  L16   (16 runs, 5 cols, 4 levels)
-  L25   (25 runs, 6 cols, 5 levels)
-"""
+        # The --json document list_arrays reads now. It used to be the human
+        # table, whose regex required a NUMBER before "levels" and so dropped
+        # the mixed-level array entirely -- L18 is in this fixture on purpose.
+        mock_cli.return_value.stdout = """{
+  "tool": "taguchi",
+  "command": "list-arrays",
+  "schema": 1,
+  "arrays": [
+    {
+      "name": "L9",
+      "runs": 9,
+      "columns": 4,
+      "levels": 3,
+      "mixed_levels": false
+    },
+    {
+      "name": "L16",
+      "runs": 16,
+      "columns": 5,
+      "levels": 4,
+      "mixed_levels": false
+    },
+    {
+      "name": "L18",
+      "runs": 18,
+      "columns": 8,
+      "levels": null,
+      "mixed_levels": true
+    },
+    {
+      "name": "L25",
+      "runs": 25,
+      "columns": 6,
+      "levels": 5,
+      "mixed_levels": false
+    }
+  ]
+}"""
         mock_cli.return_value.stderr = ""
         
         return mock_cli

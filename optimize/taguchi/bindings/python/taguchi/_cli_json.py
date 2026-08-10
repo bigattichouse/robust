@@ -150,3 +150,38 @@ def effects_from_json(stdout: str) -> List[Dict[str, Any]]:
             "taguchi effects --json declared %s factors but listed %d"
             % (declared, len(out)))
     return out
+
+
+def arrays_from_json(stdout: str) -> List[Dict[str, Any]]:
+    """`taguchi list-arrays --json` -> [{'name','rows','cols','levels',...}].
+
+    The scraping version matched
+
+        \\s+(L\\d+)\\s+\\(\\s*(\\d+)\\s+runs,\\s*(\\d+)\\s+cols,\\s*(\\d+)\\s+levels\\)
+
+    which requires a NUMBER before "levels". A mixed-level array prints
+    "mixed" there, so L18 never matched and the binding reported 19 of the 20
+    arrays the tool has -- and `get_array_info("L18")` raised "not found". A
+    user with mixed-level factors could not reach the one array designed for
+    them. Nothing errored; the list was simply shorter.
+
+    `levels` is None for a mixed-level array, and `mixed_levels` says so, so
+    the two cases stay distinguishable instead of collapsing onto 0.
+    """
+    doc = _load(stdout, "list-arrays")
+    arrays = doc.get("arrays")
+    if not isinstance(arrays, list):
+        raise _error("taguchi list-arrays --json has no 'arrays' array")
+
+    out: List[Dict[str, Any]] = []
+    for a in arrays:
+        out.append({
+            "name": a["name"],
+            "rows": a.get("runs"),
+            "cols": a.get("columns"),
+            "levels": a.get("levels"),
+            "mixed_levels": bool(a.get("mixed_levels")),
+        })
+    if not out:
+        raise _error("taguchi list-arrays --json listed no arrays")
+    return out

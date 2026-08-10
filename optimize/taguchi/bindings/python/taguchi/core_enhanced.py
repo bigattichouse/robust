@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
 
-from ._cli_json import effects_from_json, runs_from_json
+from ._cli_json import arrays_from_json, effects_from_json, runs_from_json
 from .config import TaguchiConfig, ConfigManager
 from .errors import (
     TaguchiError, BinaryDiscoveryError, CommandExecutionError,
@@ -233,6 +233,19 @@ class Taguchi:
                 
                 raise timeout_error
             
+            except TaguchiError:
+                # Already one of ours -- let it out with its fields intact.
+                #
+                # `raise error` for a CommandExecutionError happens INSIDE this
+                # try block, so the generic handler below caught it and rewrapped
+                # it as a plain TaguchiError. exit_code, stderr and the rest were
+                # discarded on the way, and a caller doing
+                #   except CommandExecutionError as e: ... e.exit_code
+                # got neither the type nor the field. The wrapper is for
+                # genuinely unexpected exceptions, not for the errors this
+                # function raises on purpose.
+                raise
+
             except Exception as e:
                 # Unexpected error - wrap it
                 error = TaguchiError(
@@ -357,51 +370,20 @@ class Taguchi:
 
     # Existing API methods with enhanced error handling
     def _get_arrays_info(self) -> List[Dict]:
-        """Return cached array metadata with enhanced error handling."""
+        """Return cached array metadata, read from `list-arrays --json`.
+
+        The regex this replaced required a NUMBER before "levels", so the
+        mixed-level array L18 never matched and the binding reported 19 of 20.
+        See arrays_from_json.
+        """
         if self._array_cache is not None:
             return self._array_cache
 
-        try:
-            output = self._run_command(["list-arrays"], operation="array_listing")
-            arrays = []
+        output = self._run_command(["list-arrays", "--json"], operation="array_listing")
+        arrays = arrays_from_json(output)
 
-            for line in output.strip().split('\n'):
-                match = re.match(
-                    r'\s+(L\d+)\s+\(\s*(\d+)\s+runs,\s*(\d+)\s+cols,\s*(\d+)\s+levels\)',
-                    line,
-                )
-                if match:
-                    arrays.append({
-                        'name': match.group(1),
-                        'rows': int(match.group(2)),
-                        'cols': int(match.group(3)),
-                        'levels': int(match.group(4)),
-                    })
-
-            if not arrays:
-                raise TaguchiError(
-                    "list-arrays returned no arrays — CLI output may have changed format",
-                    operation="array_listing",
-                    suggestions=[
-                        "Verify CLI installation is complete",
-                        "Check CLI version compatibility",
-                        "Review CLI build configuration",
-                    ],
-                    diagnostic_info={"raw_output": output},
-                )
-
-            self._array_cache = arrays
-            return arrays
-        
-        except TaguchiError:
-            raise  # Re-raise enhanced errors as-is
-        except Exception as e:
-            raise TaguchiError(
-                f"Unexpected error getting array information: {e}",
-                operation="array_listing",
-                suggestions=["Check CLI installation and permissions"],
-            )
-
+        self._array_cache = arrays
+        return arrays
     def list_arrays(self) -> List[str]:
         """List all available orthogonal array names."""
         return [a['name'] for a in self._get_arrays_info()]
@@ -436,7 +418,9 @@ class Taguchi:
             arrays = self._get_arrays_info()
 
             # Prefer arrays whose native level count matches; fall back to any
-            candidates = [a for a in arrays if a['levels'] >= max_levels] or arrays
+            # See core.py: mixed-level arrays report levels=None.
+            candidates = [a for a in arrays
+                          if a['levels'] is not None and a['levels'] >= max_levels] or arrays
 
             # Among candidates, keep those with enough columns
             sufficient = [a for a in candidates if a['cols'] >= num_factors]
@@ -600,20 +584,9 @@ class AsyncTaguchi:
             )
     
     async def list_arrays_async(self) -> List[str]:
-        """List arrays asynchronously."""
-        output = await self._run_command_async(["list-arrays"], "array_listing")
-        arrays = []
-        
-        for line in output.strip().split('\n'):
-            match = re.match(
-                r'\s+(L\d+)\s+\(\s*(\d+)\s+runs,\s*(\d+)\s+cols,\s*(\d+)\s+levels\)',
-                line,
-            )
-            if match:
-                arrays.append(match.group(1))
-        
-        return arrays
-    
+        """List arrays asynchronously, via `list-arrays --json`."""
+        output = await self._run_command_async(["list-arrays", "--json"], "array_listing")
+        return [a["name"] for a in arrays_from_json(output)]
     async def generate_runs_async(self, tgu_path: str) -> List[Dict[str, Any]]:
         """Generate runs asynchronously."""
         # For simplicity, delegate to sync version in thread pool

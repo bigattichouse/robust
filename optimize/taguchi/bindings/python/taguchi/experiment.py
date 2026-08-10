@@ -51,6 +51,13 @@ class Experiment:
         self._factors: Dict[str, List[str]] = {}
         self._runs: Optional[List[Dict]] = None
         self._tgu_path: Optional[str] = None
+        # Whether THIS experiment created the .tgu and may therefore delete it.
+        # from_tgu() points _tgu_path at a file the CALLER owns, and cleanup()
+        # used to unlink whatever _tgu_path named -- so
+        #     with Experiment.from_tgu("my_experiment.tgu"): ...
+        # destroyed the user's input file on the way out. Ownership has to be
+        # tracked, not assumed from "the path is set".
+        self._owns_tgu: bool = False
 
     # ------------------------------------------------------------------
     # Public mutation API
@@ -103,16 +110,18 @@ class Experiment:
             with os.fdopen(fd, 'w') as f:
                 f.write(self._generate_tgu())
             self._tgu_path = path
+            self._owns_tgu = True      # we made it, so we may delete it
         return self._tgu_path
 
     def cleanup(self) -> None:
         """Delete any temporary .tgu file created by this experiment."""
-        if self._tgu_path and os.path.exists(self._tgu_path):
+        if self._owns_tgu and self._tgu_path and os.path.exists(self._tgu_path):
             try:
                 os.unlink(self._tgu_path)
             except OSError:
                 pass
         self._tgu_path = None
+        self._owns_tgu = False
 
     # ------------------------------------------------------------------
     # Public generation API
@@ -175,8 +184,10 @@ class Experiment:
             content = f.read()
 
         exp = cls()
-        # Point directly at the source file — no temp file needed
+        # Point directly at the source file — no temp file needed, and the
+        # CALLER owns it, so cleanup() must not delete it.
         exp._tgu_path = path
+        exp._owns_tgu = False
 
         factors: Dict[str, List[str]] = {}
         in_factors = False

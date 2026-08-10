@@ -374,6 +374,9 @@ class TestErrorInheritance:
             assert error_str.strip()  # Should not be just whitespace
             
             # All should mention what went wrong
+            # "not find" as well as "not found": BinaryDiscoveryError says
+            # "Could not find taguchi CLI binary", which is perfectly clear.
+            # The message was right and the word list was wrong.
             assert any(word in error_str.lower() for word in [
-                "error", "failed", "invalid", "timeout", "not found"
+                "error", "failed", "invalid", "timeout", "not found", "not find"
             ])
