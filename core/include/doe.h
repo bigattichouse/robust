@@ -48,6 +48,10 @@ extern "C" {
 #define DOE_MAX_SAMPLES       1048576u   /* Sobol N  (2^20) */
 #define DOE_MAX_TRAJECTORIES    10000u   /* Morris r        */
 #define DOE_MAX_GRID_LEVELS        64u   /* Morris p        */
+/* Largest .space file doe_space_parse_file will read into memory. A file with
+ * the maximum 1024 factors is ~100 KB; this leaves ~40x headroom and stops a
+ * directory (whose ftell reports LONG_MAX) reaching malloc. */
+#define DOE_MAX_SPACE_BYTES  4194304u    /* 4 MiB           */
 
 /* Overflow-checked size_t multiply: returns 1 and sets *out = a*b, or 0 if the
  * product would overflow. Use before every count-based allocation. */

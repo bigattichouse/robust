@@ -368,6 +368,13 @@ fuzz: | $(BUILD)
 COVFLAGS = --coverage -O0 -g -DDOE_COVERAGE
 
 coverage:
+	@# Clear the previous run's counters first. .gcda files ACCUMULATE across
+	@# runs by design, so without this a coverage report mixes executions of
+	@# code that no longer exists -- and after a header edit that moves a
+	@# static inline, gcovr fails outright ("function on multiple lines").
+	@# Removing .gcda resets counters without forcing a recompile (.gcno,
+	@# written at compile time, is what pairs with the objects).
+	@find build/cov -name '*.gcda' -delete 2>/dev/null || true
 	$(MAKE) BUILD=build/cov CFLAGS="-Wall -Wextra -std=c99 -pedantic $(COVFLAGS)" \
 	        LDFLAGS="-lm --coverage" run-tests
 	@mkdir -p build/coverage

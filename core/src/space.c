@@ -467,6 +467,25 @@ int doe_space_parse_file(const char *path, doe_space_t *space, char *err) {
         snprintf(err, DOE_ERR_SIZE, "cannot size '%s'", path);
         return -1;
     }
+    /*
+     * Bound the read before allocating it (SECURITY.md H1: cap the parameter,
+     * do not discover the problem at the allocation).
+     *
+     * `fopen` on a DIRECTORY succeeds on Linux, and ftell then reports
+     * LONG_MAX -- so this used to attempt a 9-exabyte malloc and report "out
+     * of memory", which is true of the allocation and useless about the cause.
+     * A .space with the maximum 1024 factors is on the order of 100 KB, so
+     * this cap has ~40x headroom over anything legitimate and turns a
+     * misleading diagnosis into an accurate one.
+     */
+    if ((unsigned long)sz > DOE_MAX_SPACE_BYTES) {
+        fclose(f);
+        snprintf(err, DOE_ERR_SIZE,
+                 "'%s' is %ld bytes, over the %u-byte limit for a .space file "
+                 "(is it a directory, or the wrong file?)",
+                 path, sz, (unsigned)DOE_MAX_SPACE_BYTES);
+        return -1;
+    }
     rewind(f);
 
     char *buf = malloc((size_t)sz + 1);

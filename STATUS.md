@@ -26,7 +26,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 **Green across every mode.** Zero build warnings under
 `-Wall -Wextra -Werror -std=c99 -pedantic`; nine test binaries plus five shell
 suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
-`make validate` 8/8. Coverage **85.6% lines / 98.2% functions**.
+`make validate` 8/8. Coverage **88.3% lines / 98.7% functions**.
 
 **No known defects.**
 
@@ -169,6 +169,22 @@ space with nothing in the output to say so. A mistyped top-level key
 (`arry: L9`) did the same to `array:`, leaving auto-selection to pick something
 else. Both are errors now. When adding a parser branch, ask what happens to
 input that matches none of them.
+
+**`make coverage` used to mix runs.** `.gcda` counters *accumulate* by design,
+so before 2026-08-09 a report blended the current run with executions of code
+that no longer existed — and after a header edit that moves a `static inline`,
+gcovr failed outright ("function on multiple lines"). The target now deletes
+`.gcda` first, which resets counters without forcing a recompile. If a coverage
+number ever looks implausibly good, suspect this before believing it.
+
+**Coverage pointed at the right file, not the easy one.** The three worst files
+were `sobol.c` (61%), `space.c` (78%) and `csv.c` (81%) — and the uncovered
+lines were almost entirely *rejection paths* plus, in sobol's case, the whole
+success path of `sobol_analyze_pairs`. The second-order estimator was pinned
+only by `make validate` check F, which `make coverage` does not run, so the
+numbers users see for `second_order: true` had no unit test behind them at all.
+Now 90% / 91% / 98%. Chasing the percentage would have found none of that;
+reading *which lines* were missing found all of it.
 
 **A validation suite must drive the shipped code.** Check B originally tested
 its own reimplementation of group μ\*, which proves nothing about what users

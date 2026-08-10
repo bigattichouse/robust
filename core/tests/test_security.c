@@ -10,6 +10,281 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>   /* getpid, for the scratch file name */
+
+/*
+ * Every distinct way a factor definition can be malformed.
+ *
+ * These branches existed with no test behind them: `space.c` sat at 78% and
+ * the missing lines were almost all rejection paths. A rejection path that is
+ * never exercised is exactly where a "clean error" quietly becomes a crash or
+ * an unterminated buffer, because nothing ever looks at it.
+ *
+ * Each case asserts the same three things the invariant promises: non-zero
+ * return, a NUL-terminated error inside DOE_ERR_SIZE, and no crash.
+ */
+static int check_rejected(const char *spec, const char *want_substr) {
+    doe_space_t sp;
+    char err[DOE_ERR_SIZE];
+    memset(err, 'A', sizeof err);          /* no terminator to start with */
+    if (doe_space_parse(spec, &sp, err) == 0) {
+        printf("\n    accepted but should not have: <<%s>>\n", spec);
+        return 0;
+    }
+    if (memchr(err, '\0', DOE_ERR_SIZE) == NULL) {
+        printf("\n    error not NUL-terminated within DOE_ERR_SIZE\n");
+        return 0;
+    }
+    if (want_substr && !strstr(err, want_substr)) {
+        printf("\n    error '%s' does not mention '%s'\n", err, want_substr);
+        return 0;
+    }
+    return 1;
+}
+
+static int test_space_rejects_malformed_factors(void) {
+    char buf[8192];
+
+    /* more levels than the pool holds (DOE_MAX_LEVELS) */
+    size_t off = (size_t)snprintf(buf, sizeof buf, "factors:\n  a: v0");
+    for (int i = 1; i <= DOE_MAX_LEVELS && off < sizeof buf - 16; i++)
+        off += (size_t)snprintf(buf + off, sizeof buf - off, ", v%d", i);
+    snprintf(buf + off, sizeof buf - off, "\n");
+    CHECK(check_rejected(buf, "too many values"));
+
+    /* a factor with nothing after the colon */
+    CHECK(check_rejected("factors:\n  a:\n", "no values"));
+
+    /* one level is not a choice, so it cannot be a categorical factor */
+    CHECK(check_rejected("factors:\n  a: solo cat\n", ">= 2 levels"));
+
+    /* an explicit scale marker with the wrong number of bounds */
+    CHECK(check_rejected("factors:\n  a: 1, 2, 3 log\n", "two numeric bounds"));
+    CHECK(check_rejected("factors:\n  a: 1, 2, 3 linear\n", "two numeric bounds"));
+
+    /* a level value longer than the pool slot */
+    {
+        char lvl[DOE_MAX_VALUE + 8];
+        memset(lvl, 'z', DOE_MAX_VALUE + 1);
+        lvl[DOE_MAX_VALUE + 1] = '\0';
+        snprintf(buf, sizeof buf, "factors:\n  a: ok, %s\n", lvl);
+        CHECK(check_rejected(buf, "too long"));
+    }
+
+    /* more categorical factors than the level pool has slots for */
+    off = (size_t)snprintf(buf, sizeof buf, "factors:\n");
+    for (int i = 0; i <= DOE_MAX_CATEGORICAL && off < sizeof buf - 32; i++)
+        off += (size_t)snprintf(buf + off, sizeof buf - off, "  c%d: p, q\n", i);
+    CHECK(check_rejected(buf, "categorical"));
+    return 1;
+}
+
+/*
+ * The same for `groups:`. Groups must PARTITION the factors -- an overlap
+ * moves a factor twice in one step and an omission never screens it -- so
+ * every one of these is a correctness failure, not a style complaint.
+ */
+static int test_space_rejects_malformed_groups(void) {
+    char buf[8192];
+
+    CHECK(check_rejected("factors:\n  a: 0,1\n  b: 0,1\n"
+                         "groups:\n  g1: a\n  g1: b\n", "duplicate group"));
+    CHECK(check_rejected("factors:\n  a: 0,1\n  b: 0,1\n"
+                         "groups:\n  g1: a\n  g2: nosuch\n", "nosuch"));
+    CHECK(check_rejected("factors:\n  a: 0,1\n  b: 0,1\n"
+                         "groups:\n  g1: a, , b\n", "empty member"));
+    CHECK(check_rejected("factors:\n  a: 0,1\n  b: 0,1\n"
+                         "groups:\n  g1:\n", "no members"));
+
+    /* a group name past DOE_MAX_NAME */
+    {
+        char name[DOE_MAX_NAME + 8];
+        memset(name, 'g', DOE_MAX_NAME + 1);
+        name[DOE_MAX_NAME + 1] = '\0';
+        snprintf(buf, sizeof buf, "factors:\n  a: 0,1\ngroups:\n  %s: a\n", name);
+        CHECK(check_rejected(buf, "too long"));
+    }
+
+    /* more groups than DOE_MAX_GROUPS */
+    {
+        size_t off = (size_t)snprintf(buf, sizeof buf, "factors:\n");
+        for (int i = 0; i <= DOE_MAX_GROUPS && off < sizeof buf - 32; i++)
+            off += (size_t)snprintf(buf + off, sizeof buf - off, "  f%d: 0,1\n", i);
+        off += (size_t)snprintf(buf + off, sizeof buf - off, "groups:\n");
+        for (int i = 0; i <= DOE_MAX_GROUPS && off < sizeof buf - 32; i++)
+            off += (size_t)snprintf(buf + off, sizeof buf - off, "  g%d: f%d\n", i, i);
+        CHECK(check_rejected(buf, "too many groups"));
+    }
+    return 1;
+}
+
+/*
+ * doe_space_parse_file — a public entry point that had NO coverage at all.
+ *
+ * The directory case is the interesting one. fopen() on a directory SUCCEEDS
+ * on Linux and ftell() then reports LONG_MAX, so before the size cap this
+ * reached malloc with 9 exabytes and reported "out of memory" -- accurate
+ * about the allocation, useless about the cause. It is now bounded before the
+ * allocation (SECURITY.md H1) and says what is actually wrong.
+ */
+static int test_space_parse_file_paths(void) {
+    doe_space_t sp;
+    char err[DOE_ERR_SIZE];
+    char path[256];
+    snprintf(path, sizeof path, "build/test_space_%ld.space", (long)getpid());
+
+    /* a real file round-trips and yields the same thing the string parser does */
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("factors:\n  x: 0.0, 10.0\n  y: a, b, c\nseed: 77\nsamples: 64\n", f);
+    fclose(f);
+
+    CHECK(doe_space_parse_file(path, &sp, err) == 0);
+    CHECK(sp.factor_count == 2);
+    CHECK(sp.seed == 77 && sp.samples == 64);
+    CHECK(sp.factors[0].scale == DOE_LINEAR);
+    CHECK(sp.factors[1].scale == DOE_CATEGORICAL && sp.factors[1].level_count == 3);
+    remove(path);
+
+    /* a parse error in a file is still a parse error, and still located */
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("factors:\n  x: 0,1\n  y: 5.0, 1.0\n", f);
+    fclose(f);
+    CHECK(doe_space_parse_file(path, &sp, err) != 0);
+    CHECK(strstr(err, "line 3:") != NULL);
+    remove(path);
+
+    /* missing file */
+    CHECK(doe_space_parse_file("build/definitely_not_here.space", &sp, err) != 0);
+    CHECK(strstr(err, "cannot open") != NULL);
+
+    /* a directory: clean error naming the real problem, no giant allocation */
+    memset(err, 'A', sizeof err);
+    CHECK(doe_space_parse_file("build", &sp, err) != 0);
+    CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);
+    CHECK(strstr(err, "limit") != NULL);
+
+    /* NULL guards (H3) */
+    CHECK(doe_space_parse_file(NULL, &sp, err) != 0);
+    CHECK(doe_space_parse_file(path, NULL, err) != 0);
+    return 1;
+}
+
+/*
+ * The results CSV is the third trust boundary (SECURITY.md's threat model
+ * table) and its rejection paths were the least exercised of the three: an
+ * adversarial or merely broken results file reaches doe_csv_read_metric before
+ * anything else looks at it.
+ *
+ * Every case here is one a real run produces -- a crashed model writing a
+ * partial row, a script printing "NaN", a metric column that moved -- so each
+ * must be a located, bounded error rather than a silently wrong response
+ * vector feeding the estimators.
+ */
+static int csv_rejected(const char *body, const char *metric,
+                        size_t max_rows, const char *want_substr) {
+    char path[256];
+    snprintf(path, sizeof path, "build/test_csv_%ld.csv", (long)getpid());
+    FILE *f = fopen(path, "w");
+    if (!f) { printf("\n    cannot create %s\n", path); return 0; }
+    fputs(body, f);
+    fclose(f);
+
+    double resp[16];
+    for (size_t i = 0; i < 16; i++) resp[i] = -999.0;
+    size_t got = 0;
+    char err[DOE_ERR_SIZE];
+    memset(err, 'A', sizeof err);
+
+    int rc = doe_csv_read_metric(path, metric, resp, max_rows, &got, err);
+    remove(path);
+
+    if (rc == 0) { printf("\n    accepted but should not have: <<%s>>\n", body); return 0; }
+    if (memchr(err, '\0', DOE_ERR_SIZE) == NULL) {
+        printf("\n    error not NUL-terminated within DOE_ERR_SIZE\n"); return 0;
+    }
+    if (want_substr && !strstr(err, want_substr)) {
+        printf("\n    error '%s' does not mention '%s'\n", err, want_substr); return 0;
+    }
+    return 1;
+}
+
+static int test_csv_rejects_broken_results(void) {
+    /* a metric column that is not in the header */
+    CHECK(csv_rejected("run_id,yield\n1,3.0\n", "throughput", 4, "not in CSV header"));
+
+    /* no header at all, and a metric that therefore cannot be located */
+    CHECK(csv_rejected("1,3.0\n2,4.0\n", "yield", 4, "no header"));
+
+    /* a truncated row — the classic half-written line from a crashed model */
+    CHECK(csv_rejected("run_id,a,yield\n1,5,3.0\n2\n", "yield", 4, "column"));
+
+    /* run_id that is not a number, or is out of range */
+    CHECK(csv_rejected("run_id,yield\nabc,3.0\n", "yield", 4, "invalid run_id"));
+    CHECK(csv_rejected("run_id,yield\n0,3.0\n", "yield", 4, "invalid run_id"));
+    CHECK(csv_rejected("run_id,yield\n99,3.0\n", "yield", 4, "exceeds run count"));
+
+    /* a metric value that is not a number, or is not finite (H5) */
+    CHECK(csv_rejected("run_id,yield\n1,not_a_number\n", "yield", 4, "invalid value"));
+    CHECK(csv_rejected("run_id,yield\n1,nan\n", "yield", 4, "non-finite"));
+    CHECK(csv_rejected("run_id,yield\n1,inf\n", "yield", 4, "non-finite"));
+
+    /* a file with a header and no data rows at all */
+    CHECK(csv_rejected("run_id,yield\n", "yield", 4, "no data rows"));
+
+    /* a file that does not exist */
+    {
+        double resp[4]; size_t got = 0; char err[DOE_ERR_SIZE];
+        CHECK(doe_csv_read_metric("build/no_such_results.csv", "yield",
+                                  resp, 4, &got, err) != 0);
+        CHECK(strstr(err, "cannot open") != NULL);
+    }
+    return 1;
+}
+
+/*
+ * And the reads that must SUCCEED, because a reader that rejects everything
+ * would pass every test above. In particular a blank metric cell is skipped,
+ * not an error: that is how a partially-completed run is meant to be read.
+ */
+static int test_csv_reads_valid_results(void) {
+    char path[256];
+    snprintf(path, sizeof path, "build/test_csv_ok_%ld.csv", (long)getpid());
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    /* out of order, a gap at run 3, and the metric in the third column */
+    fputs("run_id,setting,yield\n"
+          "2,x,20.5\n"
+          "1,y,10.25\n"
+          "3,z,\n"
+          "4,w,40\n", f);
+    fclose(f);
+
+    double resp[4];
+    for (size_t i = 0; i < 4; i++) resp[i] = -999.0;
+    size_t got = 0;
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_csv_read_metric(path, "yield", resp, 4, &got, err) == 0);
+    CHECK(got == 3);                       /* the blank cell is skipped */
+    CHECK(resp[0] == 10.25);               /* keyed by run_id, not file order */
+    CHECK(resp[1] == 20.5);
+    CHECK(resp[2] == -999.0);              /* untouched, so the caller can tell */
+    CHECK(resp[3] == 40.0);
+
+    /* the "response" metric is the documented default and needs no header */
+    remove(path);
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("1,7.5\n2,8.5\n", f);
+    fclose(f);
+    for (size_t i = 0; i < 4; i++) resp[i] = -999.0;
+    CHECK(doe_csv_read_metric(path, "response", resp, 4, &got, err) == 0);
+    CHECK(got == 2 && resp[0] == 7.5 && resp[1] == 8.5);
+
+    remove(path);
+    return 1;
+}
 
 /* H3 — NULL inputs return an error, never dereference. */
 static int test_null_inputs(void) {
@@ -212,6 +487,11 @@ static int test_space_allows_utf8(void) {
 
 int main(void) {
     printf("security / adversarial-input tests\n");
+    RUN_TEST(test_space_rejects_malformed_factors);
+    RUN_TEST(test_space_rejects_malformed_groups);
+    RUN_TEST(test_space_parse_file_paths);
+    RUN_TEST(test_csv_rejects_broken_results);
+    RUN_TEST(test_csv_reads_valid_results);
     RUN_TEST(test_null_inputs);
     RUN_TEST(test_param_caps);
     RUN_TEST(test_size_mul_ok);

@@ -101,8 +101,8 @@ splitting), `sobol` (Sᵢ/S_Tᵢ with bootstrap CIs and second-order pairs),
 `pareto`, `regress`, `uq`, and the `robust` funnel.
 
 All suites pass under `-Werror`, valgrind and ASan/UBSan, with adversarial-input
-coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 85.6%
-lines / 98.2% functions.
+coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 88.3%
+lines / 98.7% functions.
 
 **Claims are validated too, not just code.** [`validation/`](validation/README.md)
 reproduces the published results this project relies on against closed-form

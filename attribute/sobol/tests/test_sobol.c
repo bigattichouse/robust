@@ -408,6 +408,208 @@ static int test_qr_design_ignores_seed(void) {
     return 1;
 }
 
+/* ------------------------------------------------------- second order ----
+ * The pair estimator's success path had NO suite coverage: the existing test
+ * only checked design sizing and the missing-flag guard, and `make validate`
+ * check F (which does run it) is not part of `make coverage`. So the numbers
+ * users see for `second_order: true` were pinned only by a target nobody runs
+ * in CI's coverage step. These tests drive the real estimator against a model
+ * whose interaction is known in closed form.
+ *
+ *   Y = X0 * X1,  X ~ U[0,1] independent
+ *     E[Y] = 1/4,  E[Y^2] = 1/9,  V = 1/9 - 1/16 = 7/144
+ *     E[Y|X0=x] = x/2  =>  V_0 = Var(X0/2) = (1/4)(1/12) = 3/144, same for V_1
+ *     V_01 = V - V_0 - V_1 = 1/144
+ *   so  S_0 = S_1 = 3/7  and  S_01 = 1/7  exactly.
+ */
+static int test_second_order_matches_closed_form(void) {
+    const char *spec =
+        "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n"
+        "seed: 5\nsamples: 2048\nsecond_order: true\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(spec, &sp, err) == 0);
+
+    sobol_design_t d;
+    CHECK(sobol_design_build(&sp, &d, err) == 0);
+    double *y = malloc(d.npoints * sizeof *y);
+    CHECK(y != NULL);
+    double u[DOE_MAX_FACTORS];
+    for (size_t i = 0; i < d.npoints; i++) { sobol_point(&d, i, u); y[i] = u[0] * u[1]; }
+
+    sobol_pair_t *pr = NULL; size_t np = 0;
+    CHECK(sobol_analyze_pairs(&sp, y, d.npoints, &pr, &np, err) == 0);
+    CHECK(np == 1);
+    CHECK(pr[0].ia == 0 && pr[0].ib == 1);
+    CHECK(strcmp(pr[0].a, "x0") == 0 && strcmp(pr[0].b, "x1") == 0);
+    CHECK(fabs(pr[0].s2 - 1.0 / 7.0) < 0.005);          /* the interaction alone */
+    /* closed_ij is S_0 + S_1 + S_01 = 7/7 = 1 for this model */
+    CHECK(fabs(pr[0].closed - 1.0) < 0.01);
+
+    sobol_index_t *ix = NULL; size_t ni = 0;
+    CHECK(sobol_analyze(&sp, y, d.npoints, &ix, &ni, err) == 0);
+    CHECK(fabs(ix[0].s1 - 3.0 / 7.0) < 0.005);
+    CHECK(fabs(ix[1].s1 - 3.0 / 7.0) < 0.005);
+
+    free(pr); free(ix); free(y); sobol_design_free(&d);
+    return 1;
+}
+
+/*
+ * The other half of the claim: a purely ADDITIVE model must report no
+ * interaction. An estimator that always returns something positive would pass
+ * the test above and still be useless, because the question `second_order:`
+ * exists to answer is "is there an interaction at all?".
+ *
+ *   Y = 3*X0 + 5*X1  =>  V = (9 + 25)/12,  S_0 = 9/34, S_1 = 25/34, S_01 = 0.
+ */
+static int test_second_order_is_zero_on_an_additive_model(void) {
+    const char *spec =
+        "factors:\n  x0: 0.0, 1.0\n  x1: 0.0, 1.0\n"
+        "seed: 11\nsamples: 2048\nsecond_order: true\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(spec, &sp, err) == 0);
+
+    sobol_design_t d;
+    CHECK(sobol_design_build(&sp, &d, err) == 0);
+    double *y = malloc(d.npoints * sizeof *y);
+    CHECK(y != NULL);
+    double u[DOE_MAX_FACTORS];
+    for (size_t i = 0; i < d.npoints; i++) {
+        sobol_point(&d, i, u);
+        y[i] = 3.0 * u[0] + 5.0 * u[1];
+    }
+
+    sobol_pair_t *pr = NULL; size_t np = 0;
+    CHECK(sobol_analyze_pairs(&sp, y, d.npoints, &pr, &np, err) == 0);
+    CHECK(fabs(pr[0].s2) < 0.005);                      /* no interaction */
+
+    sobol_index_t *ix = NULL; size_t ni = 0;
+    CHECK(sobol_analyze(&sp, y, d.npoints, &ix, &ni, err) == 0);
+    CHECK(fabs(ix[0].s1 -  9.0 / 34.0) < 0.005);
+    CHECK(fabs(ix[1].s1 - 25.0 / 34.0) < 0.005);
+
+    free(pr); free(ix); free(y); sobol_design_free(&d);
+    return 1;
+}
+
+/*
+ * Pair block p maps to factors (ia, ib). Getting that map wrong attributes a
+ * real interaction to the WRONG pair -- a wrong answer that looks entirely
+ * plausible, since the magnitudes are all still there. Checked by enumeration:
+ * every unordered pair exactly once, ia < ib, names matching the indices.
+ */
+static int test_second_order_enumerates_every_pair_once(void) {
+    const size_t k = 5, expect = 5 * 4 / 2;
+    const char *spec =
+        "factors:\n  a: 0,1\n  b: 0,1\n  c: 0,1\n  d: 0,1\n  e: 0,1\n"
+        "seed: 2\nsamples: 8\nsecond_order: true\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(spec, &sp, err) == 0);
+
+    sobol_design_t d;
+    CHECK(sobol_design_build(&sp, &d, err) == 0);
+    double *y = malloc(d.npoints * sizeof *y);
+    CHECK(y != NULL);
+    double u[DOE_MAX_FACTORS];
+    for (size_t i = 0; i < d.npoints; i++) {
+        sobol_point(&d, i, u);
+        y[i] = u[0] + 2 * u[1] + 3 * u[2] + 4 * u[3] + 5 * u[4];
+    }
+
+    sobol_pair_t *pr = NULL; size_t np = 0;
+    CHECK(sobol_analyze_pairs(&sp, y, d.npoints, &pr, &np, err) == 0);
+    CHECK(np == expect);
+
+    int seen[5][5];
+    memset(seen, 0, sizeof seen);
+    for (size_t p = 0; p < np; p++) {
+        CHECK(pr[p].ia < pr[p].ib);           /* unordered, canonical order */
+        CHECK(pr[p].ib < k);
+        CHECK(seen[pr[p].ia][pr[p].ib] == 0); /* no pair twice */
+        seen[pr[p].ia][pr[p].ib] = 1;
+        /* the reported names must be the factors the indices point at */
+        CHECK(strcmp(pr[p].a, sp.factors[pr[p].ia].name) == 0);
+        CHECK(strcmp(pr[p].b, sp.factors[pr[p].ib].name) == 0);
+    }
+    for (size_t i = 0; i < k; i++)
+        for (size_t j = i + 1; j < k; j++)
+            CHECK(seen[i][j] == 1);           /* and none missing */
+
+    free(pr); free(y); sobol_design_free(&d);
+    return 1;
+}
+
+/*
+ * The A_B^(ij) design block itself: row m must equal A's row m except columns
+ * ia and ib, which come from B. If sobol_point built these rows wrongly the
+ * estimator above would still return numbers -- they would just be answers to
+ * a different question.
+ */
+static int test_second_order_block_swaps_exactly_two_columns(void) {
+    const char *spec =
+        "factors:\n  a: 0,1\n  b: 0,1\n  c: 0,1\n  d: 0,1\n"
+        "seed: 9\nsamples: 32\nsecond_order: true\n";
+    doe_space_t sp; char err[DOE_ERR_SIZE];
+    CHECK(doe_space_parse(spec, &sp, err) == 0);
+
+    sobol_design_t d;
+    CHECK(sobol_design_build(&sp, &d, err) == 0);
+    size_t k = d.k, n = d.n, npairs = k * (k - 1) / 2;
+
+    double u[DOE_MAX_FACTORS];
+    for (size_t p = 0; p < npairs; p++) {
+        /* recover (ia, ib) for this block the same way the analyzer does */
+        size_t ia = 0, ib = 1, seen_pairs = 0, i = 0;
+        while (i < k) {
+            size_t here = k - 1 - i;
+            if (p < seen_pairs + here) { ia = i; ib = i + 1 + (p - seen_pairs); break; }
+            seen_pairs += here; i++;
+        }
+        for (size_t row = 0; row < n; row++) {
+            sobol_point(&d, (k + 2 + p) * n + row, u);
+            for (size_t j = 0; j < k; j++) {
+                if (j == ia || j == ib) CHECK(u[j] == d.B[row * k + j]);
+                else                    CHECK(u[j] == d.A[row * k + j]);
+            }
+        }
+    }
+    sobol_design_free(&d);
+    return 1;
+}
+
+/* The pair path's own refusals — each must be a clean, bounded error. */
+static int test_second_order_error_paths(void) {
+    char err[DOE_ERR_SIZE];
+    doe_space_t sp;
+    sobol_pair_t *pr = NULL; size_t np = 0;
+
+    /* fewer responses than the design needs */
+    CHECK(doe_space_parse("factors:\n  a: 0,1\n  b: 0,1\n"
+                          "samples: 16\nsecond_order: true\n", &sp, err) == 0);
+    double small[8] = {0};
+    CHECK(sobol_analyze_pairs(&sp, small, 8, &pr, &np, err) != 0);
+    CHECK(strstr(err, "need") != NULL);
+
+    /* a single factor has no pairs to report */
+    CHECK(doe_space_parse("factors:\n  a: 0,1\n"
+                          "samples: 8\nsecond_order: true\n", &sp, err) == 0);
+    double one[64];
+    for (size_t i = 0; i < 64; i++) one[i] = (double)i;
+    CHECK(sobol_analyze_pairs(&sp, one, 64, &pr, &np, err) != 0);
+    CHECK(strstr(err, "at least 2 factors") != NULL);
+
+    /* a constant response makes every share undefined, in this path too */
+    CHECK(doe_space_parse("factors:\n  a: 0,1\n  b: 0,1\n"
+                          "samples: 8\nsecond_order: true\n", &sp, err) == 0);
+    double flat[256];
+    for (size_t i = 0; i < 256; i++) flat[i] = 2.5;
+    memset(err, 'A', sizeof err);
+    CHECK(sobol_analyze_pairs(&sp, flat, 256, &pr, &np, err) != 0);
+    CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);     /* bounded + terminated */
+    CHECK(strstr(err, "variance") != NULL);
+    return 1;
+}
+
 int main(void) {
     printf("sobol tests\n");
     RUN_TEST(test_second_order_design_and_guard);
@@ -422,5 +624,10 @@ int main(void) {
     RUN_TEST(test_qr_halves_coincide_only_at_rows_0_and_1);
     RUN_TEST(test_qr_factor_cap_errors_not_falls_back);
     RUN_TEST(test_qr_design_ignores_seed);
+    RUN_TEST(test_second_order_matches_closed_form);
+    RUN_TEST(test_second_order_is_zero_on_an_additive_model);
+    RUN_TEST(test_second_order_enumerates_every_pair_once);
+    RUN_TEST(test_second_order_block_swaps_exactly_two_columns);
+    RUN_TEST(test_second_order_error_paths);
     return TEST_SUMMARY();
 }

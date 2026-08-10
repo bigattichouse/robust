@@ -60,7 +60,7 @@ Enforced by:
 - `make coverage` — line/branch coverage over the suites (gcovr, or raw gcov
   as a fallback). Baseline at 2026-08-06: **84.2% lines, 95.5% functions** over a
   denominator that now includes every CLI binary (it previously counted only
-  libraries, which flattered it). **85.6% / 98.2% at 2026-08-09.** Use it
+  libraries, which flattered it). **88.3% / 98.7% at 2026-08-09.** Use it
   before claiming something is tested.
 - CI (`.github/workflows/ci.yml`) runs build → test-all → test-asan → fuzz →
   validate on every push/PR, **and a second job that builds and tests with
@@ -68,6 +68,28 @@ Enforced by:
   rejects an increment-only variable that GCC 13 accepts (PR #1), so CI was
   green while a future toolchain was already broken. clang diagnoses that
   class today.
+
+### Rejection paths are now tested, not just written (2026-08-09)
+
+`make coverage` showed the three parsers at 61% / 78% / 81%, and the missing
+lines were overwhelmingly the *error* branches — the ones this document's
+invariant is about. A rejection path with no test behind it is exactly where a
+"clean error" quietly becomes a crash or an unterminated buffer, because
+nothing ever looks at it.
+
+Added, each asserting the full invariant (non-zero return, NUL-terminated error
+inside `DOE_ERR_SIZE`, no crash): every malformed-factor branch, every
+malformed-`groups:` branch, `doe_space_parse_file`'s path handling, and the
+results CSV's rejections (absent metric column, no header, truncated row, bad
+or out-of-range `run_id`, non-numeric and non-finite values, no data rows).
+`sobol.c` 61% → 90%, `space.c` 78% → 91%, `csv.c` 81% → 98%.
+
+**H1 extended while doing it.** `fopen` on a DIRECTORY succeeds on Linux and
+`ftell` then reports `LONG_MAX`, so `doe_space_parse_file` was attempting a
+9-exabyte `malloc` and reporting "out of memory" — true of the allocation,
+useless about the cause. The size is now bounded *before* the allocation
+(`DOE_MAX_SPACE_BYTES`, 4 MiB against a ~100 KB worst-case legitimate file) and
+the error names the real problem.
 
 ### The .tgu parser no longer drops lines in silence (2026-08-09)
 
