@@ -15,7 +15,9 @@ from taguchi.config import TaguchiConfig, ConfigManager
 from taguchi.core_enhanced import Taguchi, AsyncTaguchi
 from taguchi.experiment_enhanced import Experiment
 from taguchi.analyzer_enhanced import Analyzer
-from taguchi.errors import TaguchiError, BinaryDiscoveryError
+from taguchi.errors import (
+    TaguchiError, BinaryDiscoveryError, ValidationError,
+)
 
 
 class TestBackwardCompatibility:
@@ -157,15 +159,18 @@ Available orthogonal arrays:
                     optimal = analyzer.recommend_optimal()
                     assert "temp" in optimal
     
-    def test_original_constructor_signatures(self):
+    def test_original_constructor_signatures(self, tmp_path):
         """Test that original constructor signatures still work."""
         with patch('shutil.which', return_value='/usr/bin/taguchi'):
             # Original Taguchi constructor
             taguchi1 = Taguchi()
-            taguchi2 = Taguchi(cli_path="/custom/path")
+            custom = tmp_path / "custom_taguchi"
+            custom.write_text("#!/bin/sh\nexit 0\n")
+            custom.chmod(0o755)
+            taguchi2 = Taguchi(cli_path=str(custom))
             
             assert taguchi1._config.cli_path is None
-            assert taguchi2._config.cli_path == "/custom/path"
+            assert taguchi2._config.cli_path == str(custom)
             
             # Original Experiment constructor
             exp1 = Experiment()

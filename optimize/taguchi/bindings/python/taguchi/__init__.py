@@ -47,6 +47,7 @@ Async Support:
 """
 
 # Import original modules for backward compatibility
+from ._base_error import TaguchiErrorBase
 from .core import Taguchi as _OriginalTaguchi, TaguchiError as _OriginalTaguchiError
 from .experiment import Experiment as _OriginalExperiment  
 from .analyzer import Analyzer as _OriginalAnalyzer
@@ -63,12 +64,18 @@ from .analyzer_enhanced import Analyzer
 
 # For backward compatibility, make sure the enhanced error inherits from original
 # This ensures existing exception handling continues to work
-class BackwardCompatibleTaguchiError(TaguchiError, _OriginalTaguchiError):
-    """Backward compatible TaguchiError that inherits from both old and new."""
-    pass
+# Both layers' TaguchiError now derive from one base, so the exported name is
+# an ANCESTOR of everything raised rather than a descendant of both.
+#
+# It used to be `class BackwardCompatibleTaguchiError(TaguchiError,
+# _OriginalTaguchiError)`, which reads like it covers both and covers neither:
+# `except` matches a class or its ancestors, so a subclass of both catches
+# nothing either one raises. `from taguchi import TaguchiError` could not catch
+# a single error this package produced.
+BackwardCompatibleTaguchiError = TaguchiErrorBase   # name kept for callers
 
 # Replace the enhanced TaguchiError with backward compatible version
-TaguchiError = BackwardCompatibleTaguchiError
+TaguchiError = TaguchiErrorBase
 
 # Version info
 __version__ = "1.6.0"  # Incremented for enhanced features

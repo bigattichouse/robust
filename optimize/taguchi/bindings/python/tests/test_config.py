@@ -31,17 +31,23 @@ class TestTaguchiConfig:
         assert config.min_cli_version is None
         assert config.output_format_version == "1.0"
     
-    def test_custom_config(self):
+    def test_custom_config(self, tmp_path):
         """Test custom configuration values."""
+        # A real file, created here. This asserted /usr/bin/taguchi existed,
+        # which fails on any machine without a system install -- and validation
+        # checks the path, so the test could not even construct the object.
+        fake_cli = tmp_path / "taguchi"
+        fake_cli.write_text("#!/bin/sh\nexit 0\n")
+        fake_cli.chmod(0o755)
         config = TaguchiConfig(
-            cli_path="/usr/bin/taguchi",
+            cli_path=str(fake_cli),
             cli_timeout=60,
             max_retries=3,
             debug_mode=True,
             environment_variables={"TEST": "value"}
         )
         
-        assert config.cli_path == "/usr/bin/taguchi"
+        assert config.cli_path == str(fake_cli)
         assert config.cli_timeout == 60
         assert config.max_retries == 3
         assert config.debug_mode is True
@@ -131,10 +137,14 @@ class TestTaguchiConfig:
                 assert config.min_cli_version == "1.5.0"
                 assert config.output_format_version == "2.0"
     
-    def test_to_dict(self):
+    def test_to_dict(self, tmp_path):
         """Test configuration serialization."""
+        # See test_custom_config: a real file here, not a system install.
+        fake_cli = tmp_path / "taguchi"
+        fake_cli.write_text("#!/bin/sh\nexit 0\n")
+        fake_cli.chmod(0o755)
         config = TaguchiConfig(
-            cli_path="/usr/bin/taguchi",
+            cli_path=str(fake_cli),
             cli_timeout=60,
             debug_mode=True,
             environment_variables={"TEST": "value"}
@@ -142,7 +152,7 @@ class TestTaguchiConfig:
         
         config_dict = config.to_dict()
         
-        assert config_dict["cli_path"] == "/usr/bin/taguchi"
+        assert config_dict["cli_path"] == str(fake_cli)
         assert config_dict["cli_timeout"] == 60
         assert config_dict["debug_mode"] is True
         assert config_dict["environment_variables"] == {"TEST": "value"}

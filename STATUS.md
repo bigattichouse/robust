@@ -229,10 +229,38 @@ the analysis silently. All four now go through one reader,
 `xfail(strict=True)` cases in `test_cli_contract.py` are plain passing tests
 again, which is the switch's acceptance criterion met.
 
-Coverage of the binding is **84% by line but 33% enforced** — the whole suite
-covers 84%, only `test_cli_contract.py` gates the build. That gap, not the
-84%, is what let the `kv-type` drop ship. Making the other 33 checks hermetic
-is the follow-up that closes it.
+Coverage of the binding is **84% by line but only partly enforced** — the whole
+suite covers 84%, and `test_cli_contract.py` is what gates the build. That gap,
+not the 84%, is what let the `kv-type` drop ship.
+
+Working through the non-hermetic checks took the suite from **37 broken
+(33 failures + 4 errors) to 13**, and turned up four real defects rather than
+just environment coupling:
+
+- **`from taguchi import TaguchiError` caught nothing the library raised.** The
+  package exported `class BackwardCompatibleTaguchiError(TaguchiError,
+  _OriginalTaguchiError)` — a SUBCLASS of both layers' error types. `except`
+  matches a class or its ancestors, so a subclass of both catches neither. Both
+  now derive from one base (`_base_error.py`) and the export is that base.
+- **`core_enhanced.py` had its own stale binary discovery**, missing the
+  umbrella `build/bin/` path and reading a different env var
+  (`TAGUCHI_CLI_PATH` vs `TAGUCHI_CLI`). Same defect as `core.py`, missed
+  because the logic exists twice.
+- **`TAGUCHI_DEBUG=1` and `=yes` silently did nothing** — the parser tested
+  `.lower() == "true"` only.
+- Fixtures scoped inside one test class, so a second class's four tests errored
+  on a missing fixture instead of running.
+
+The remaining 13 are concentrated in the "enhanced" layer's async and mocking
+paths. They are the argument for the item below, not for more repair.
+
+**The duplicated "enhanced" layer is the standing liability.**
+`core.py`/`core_enhanced.py`, `analyzer.py`/`analyzer_enhanced.py`,
+`experiment.py`/`experiment_enhanced.py`, and until now two unrelated
+`TaguchiError` classes. The CLI-scraping bug lived in FOUR places because of
+it, the discovery bug in two, and the error hierarchy was unusable. Every
+defect here is found and fixed two or four times. Collapsing the layers is the
+highest-value structural change left in the binding.
 
 **The build had no header dependencies until 2026-08-06.** Editing `doe.h`
 rebuilt some objects and not others, and the link silently combined two struct

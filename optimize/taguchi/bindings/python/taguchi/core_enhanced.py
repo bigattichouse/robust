@@ -88,10 +88,16 @@ class Taguchi:
         """Find the taguchi CLI binary with enhanced error reporting."""
         possible_paths: List[str] = []
         
-        # 1. Environment variable (highest priority)
-        cli_path_env = os.getenv("TAGUCHI_CLI_PATH")
-        if cli_path_env:
-            possible_paths.append(cli_path_env)
+        # 1. Environment variable (highest priority).
+        #
+        # TAGUCHI_CLI as well as TAGUCHI_CLI_PATH: core.py reads the former and
+        # this layer read only the latter, so pinning a binary for a test run
+        # worked for one half of the package and not the other. One variable
+        # should configure the whole thing.
+        for var in ("TAGUCHI_CLI_PATH", "TAGUCHI_CLI"):
+            cli_path_env = os.getenv(var)
+            if cli_path_env:
+                possible_paths.append(cli_path_env)
         
         # 2. Explicit configuration
         if self._config.cli_path:
@@ -100,6 +106,13 @@ class Taguchi:
         # 3. Relative paths from package location
         current_dir = Path(__file__).parent
         possible_paths.extend([
+            # <repo>/build/bin/taguchi FIRST: where the umbrella Makefile puts
+            # every tool. The paths below it are from when taguchi built itself
+            # with a sub-make; those files survive in older trees, so searching
+            # them first meant preferring a STALE binary to the one just built.
+            # Same defect as core.py had -- fixed there, missed here, because
+            # the discovery logic exists twice.
+            str(current_dir.parents[4] / "build" / "bin" / "taguchi"),
             str(current_dir.parent / "taguchi_cli"),  # For autoresearch integration
             str(current_dir.parent.parent.parent / "build" / "taguchi"),
             str(current_dir.parent.parent / "build" / "taguchi"),

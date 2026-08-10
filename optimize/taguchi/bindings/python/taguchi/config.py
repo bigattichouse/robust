@@ -12,6 +12,22 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 
 
+# Accepted spellings of "on" for a boolean environment variable.
+#
+# This used to test `.lower() == "true"`, so TAGUCHI_DEBUG=1 and =yes silently
+# did nothing -- the two spellings a person is most likely to reach for. A flag
+# that ignores you without saying so is the same failure mode as the rest of
+# this session, in miniature.
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in _TRUE_VALUES
+
+
 @dataclass
 class TaguchiConfig:
     """
@@ -82,7 +98,7 @@ class TaguchiConfig:
             max_retries=int(os.getenv("TAGUCHI_MAX_RETRIES", "0")),
             retry_delay=float(os.getenv("TAGUCHI_RETRY_DELAY", "1.0")),
             retry_backoff_multiplier=float(os.getenv("TAGUCHI_RETRY_BACKOFF", "2.0")),
-            debug_mode=os.getenv("TAGUCHI_DEBUG", "false").lower() == "true",
+            debug_mode=_env_flag("TAGUCHI_DEBUG"),
             log_commands=os.getenv("TAGUCHI_LOG_COMMANDS", "false").lower() == "true",
             log_command_output=os.getenv("TAGUCHI_LOG_OUTPUT", "false").lower() == "true",
             working_directory=os.getenv("TAGUCHI_WORKING_DIR"),

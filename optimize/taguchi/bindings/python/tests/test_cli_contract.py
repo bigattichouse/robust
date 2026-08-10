@@ -356,6 +356,52 @@ class TestCliJsonContract:
         assert "unknown option" in out.stderr.lower()
 
 
+class TestExportedErrorActuallyCatches:
+    """`from taguchi import TaguchiError` has to catch what the library raises.
+
+    It did not. The package exported
+    `class BackwardCompatibleTaguchiError(TaguchiError, _OriginalTaguchiError)`
+    -- a SUBCLASS of both layers' error types. `except` matches a class or its
+    ANCESTORS, so a subclass of both catches neither, and the documented name
+    could not catch a single error this package produced.
+    """
+
+    def test_it_is_an_ancestor_of_both_layers(self):
+        import taguchi
+        import taguchi.core
+        import taguchi.errors
+        assert issubclass(taguchi.core.TaguchiError, taguchi.TaguchiError)
+        assert issubclass(taguchi.errors.TaguchiError, taguchi.TaguchiError)
+
+    def test_it_catches_the_enhanced_layer_in_practice(self):
+        """The failure a user actually hits: the documented import, the
+        documented call, and an `except` that has to fire."""
+        import taguchi
+        with pytest.raises(taguchi.TaguchiError):
+            taguchi.Experiment().generate()      # no factors defined
+
+    def test_it_catches_the_specific_subclasses(self):
+        import taguchi
+        for name in ("BinaryDiscoveryError", "CommandExecutionError",
+                     "ValidationError"):
+            assert issubclass(getattr(taguchi, name), taguchi.TaguchiError), name
+
+
+class TestEnvironmentFlags:
+
+    def test_common_spellings_of_true_are_honoured(self, monkeypatch):
+        """TAGUCHI_DEBUG=1 and =yes did nothing: the parser tested
+        `.lower() == "true"` only, so the two spellings a person reaches for
+        first were silently ignored."""
+        from taguchi.config import TaguchiConfig
+        for value in ("1", "yes", "on", "true", "TRUE", "True"):
+            monkeypatch.setenv("TAGUCHI_DEBUG", value)
+            assert TaguchiConfig.from_environment().debug_mode is True, value
+        for value in ("0", "no", "off", "false", "FALSE", ""):
+            monkeypatch.setenv("TAGUCHI_DEBUG", value)
+            assert TaguchiConfig.from_environment().debug_mode is False, value
+
+
 class TestBinaryDiscovery:
 
     def test_does_not_pick_the_stale_legacy_sibling(self, cli):

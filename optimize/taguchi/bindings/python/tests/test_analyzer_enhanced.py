@@ -14,41 +14,47 @@ from taguchi.analyzer_enhanced import Analyzer
 from taguchi.errors import TaguchiError, ValidationError
 
 
+# Module scope, not class scope.
+#
+# These lived inside TestAnalyzerEnhanced, so TestAnalyzerIntegration below
+# could not see them and its four tests ERRORED on a missing fixture rather
+# than running. pytest does not share fixtures across classes.
+@pytest.fixture
+def mock_taguchi():
+    """Create a mock Taguchi instance for testing."""
+    mock = Mock(spec=Taguchi)
+    # Stubs effects_json, not effects: the analyzer reads the CLI's --json
+    # output now. The scraped table this used to return is the format that
+    # dropped a factor named `kv-type` on the floor.
+    mock.effects_json.return_value = [
+        {"factor": "temp", "range": 0.050,
+         "level_means": [1.020, 1.070, 1.030],
+         "level_values": ["cold", "warm", "hot"]},
+        {"factor": "pressure", "range": 0.030,
+         "level_means": [1.040, 1.010],
+         "level_values": ["low", "high"]},
+    ]
+    return mock
+
+@pytest.fixture
+def mock_experiment():
+    """Create a mock Experiment instance for testing."""
+    mock = Mock(spec=Experiment)
+    mock.generate.return_value = [
+        {"run_id": 1, "factors": {"temp": "low", "pressure": "low"}},
+        {"run_id": 2, "factors": {"temp": "medium", "pressure": "high"}},
+        {"run_id": 3, "factors": {"temp": "high", "pressure": "low"}},
+    ]
+    mock.factors = {
+        "temp": ["low", "medium", "high"],
+        "pressure": ["low", "high"]
+    }
+    mock.get_tgu_path.return_value = "/tmp/test.tgu"
+    return mock
+
+
 class TestAnalyzerEnhanced:
     """Test the enhanced Analyzer class."""
-    
-    @pytest.fixture
-    def mock_taguchi(self):
-        """Create a mock Taguchi instance for testing."""
-        mock = Mock(spec=Taguchi)
-        # Stubs effects_json, not effects: the analyzer reads the CLI's --json
-        # output now. The scraped table this used to return is the format that
-        # dropped a factor named `kv-type` on the floor.
-        mock.effects_json.return_value = [
-            {"factor": "temp", "range": 0.050,
-             "level_means": [1.020, 1.070, 1.030],
-             "level_values": ["cold", "warm", "hot"]},
-            {"factor": "pressure", "range": 0.030,
-             "level_means": [1.040, 1.010],
-             "level_values": ["low", "high"]},
-        ]
-        return mock
-    
-    @pytest.fixture
-    def mock_experiment(self):
-        """Create a mock Experiment instance for testing."""
-        mock = Mock(spec=Experiment)
-        mock.generate.return_value = [
-            {"run_id": 1, "factors": {"temp": "low", "pressure": "low"}},
-            {"run_id": 2, "factors": {"temp": "medium", "pressure": "high"}},
-            {"run_id": 3, "factors": {"temp": "high", "pressure": "low"}},
-        ]
-        mock.factors = {
-            "temp": ["low", "medium", "high"],
-            "pressure": ["low", "high"]
-        }
-        mock.get_tgu_path.return_value = "/tmp/test.tgu"
-        return mock
     
     def test_init_default(self, mock_experiment, mock_taguchi):
         """Test default initialization."""
@@ -386,8 +392,8 @@ class TestAnalyzerEnhanced:
         expected = 1.0 + 0.070 + 0.040  # Overall mean + temp effect + pressure effect
         assert prediction["predicted_response"] == expected
         assert prediction["contributions"]["overall_mean"] == 1.0
-        assert prediction["contributions"]["temp"] == 0.070
-        assert prediction["contributions"]["pressure"] == 0.040
+        assert prediction["contributions"]["temp"] == pytest.approx(0.070)
+        assert prediction["contributions"]["pressure"] == pytest.approx(0.040)
         assert prediction["factor_settings"] == {"temp": "medium", "pressure": "low"}
     
     def test_predict_response_invalid_level(self, mock_experiment, mock_taguchi):
@@ -404,7 +410,7 @@ class TestAnalyzerEnhanced:
         
         # Should include error message for invalid level
         assert "Level 'invalid_level' not found" in prediction["contributions"]["temp"]
-        assert prediction["contributions"]["pressure"] == 0.040  # Still valid
+        assert prediction["contributions"]["pressure"] == pytest.approx(0.040)  # Still valid
     
     def test_summary(self, mock_experiment, mock_taguchi):
         """Test summary generation."""

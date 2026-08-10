@@ -10,14 +10,20 @@ import re
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
+from ._base_error import TaguchiErrorBase
 from ._cli_json import effects_from_json, runs_from_json
 
 # Subprocess timeout in seconds — prevents hangs if the binary stalls.
 _CLI_TIMEOUT = 30
 
 
-class TaguchiError(Exception):
-    """Exception raised for Taguchi library errors."""
+class TaguchiError(TaguchiErrorBase):
+    """Exception raised for Taguchi library errors.
+
+    Derives from the shared base so `from taguchi import TaguchiError` -- which
+    is that base -- catches it. It did not, before: the exported name was a
+    subclass of this one, and a subclass catches nothing.
+    """
     pass
 
 
