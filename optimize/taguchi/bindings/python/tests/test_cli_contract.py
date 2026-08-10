@@ -231,32 +231,73 @@ class TestSignificantFactors:
 
 
 # --------------------------------------------------------------------------
-# Known-broken TODAY. These are the switch's acceptance criteria.
-#
-# strict=True: if one starts passing, the suite FAILS until the marker is
-# removed. A fixed bug that nobody notices is how a test suite drifts out of
-# describing the code.
+# Formerly broken: a factor named `kv-type` was dropped from the analysis
+# because analyzer.py matched the name with \w+. These were
+# xfail(strict=True) until the binding moved onto --json; they are plain
+# tests now, which is the switch's acceptance criterion met.
 # --------------------------------------------------------------------------
 
-class TestKnownGapsInTheTextParser:
+class TestHyphenatedFactorSurvives:
 
-    @pytest.mark.xfail(strict=True, reason="analyzer.py:86 matches the factor "
-                                           "name with \\w+, which does not match "
-                                           "'kv-type', so the factor is dropped "
-                                           "silently. Fixed by moving to --json.")
-    def test_hyphenated_factor_reaches_main_effects(self, tmp_path):
-        _, an = build_analyzer(tmp_path, HYPHEN_TGU,
-                               {1: -8.0, 2: -18.0, 3: -28.0, 4: -38.0})
+    RESP = {1: -8.0, 2: -18.0, 3: -28.0, 4: -38.0}
+
+    def test_reaches_main_effects(self, tmp_path):
+        _, an = build_analyzer(tmp_path, HYPHEN_TGU, self.RESP)
         assert [e["factor"] for e in an.main_effects()] == [
             "batch", "kv-type", "threads"]
 
-    @pytest.mark.xfail(strict=True, reason="same \\w+ drop: the factor never "
-                                           "reaches the recommendation, so the "
-                                           "answer silently omits a setting.")
-    def test_hyphenated_factor_reaches_the_recommendation(self, tmp_path):
-        exp, an = build_analyzer(tmp_path, HYPHEN_TGU,
-                                 {1: -8.0, 2: -18.0, 3: -28.0, 4: -38.0})
+    def test_reaches_the_recommendation(self, tmp_path):
+        exp, an = build_analyzer(tmp_path, HYPHEN_TGU, self.RESP)
         assert set(an.recommend_optimal()) == set(exp.factors)
+
+    def test_its_effect_is_measured_not_zeroed(self, tmp_path):
+        """Dropping it and reporting it as inert are different failures, and
+        only one of them is visible. Pin the real number."""
+        _, an = build_analyzer(tmp_path, HYPHEN_TGU, self.RESP)
+        kv = [e for e in an.main_effects() if e["factor"] == "kv-type"][0]
+        assert kv["range"] > 0
+
+
+# --------------------------------------------------------------------------
+# The JSON reader refuses what the scraping parsers used to skip.
+# --------------------------------------------------------------------------
+
+class TestReaderIsStrict:
+
+    def test_non_json_output_says_what_arrived(self):
+        """The likely cause is a binary predating --json, which ignored the
+        flag and printed the table at exit 0. The message has to name that,
+        not surface a bare JSONDecodeError."""
+        from taguchi._cli_json import runs_from_json
+        with pytest.raises(Exception) as exc:
+            runs_from_json("Generated 9 experiment runs:\nRun 1: temp=cold\n")
+        assert "did not return JSON" in str(exc.value)
+
+    def test_a_short_run_list_is_an_error_not_a_smaller_design(self):
+        from taguchi._cli_json import runs_from_json
+        doc = '{"schema": 1, "run_count": 9, "runs": ' \
+              '[{"run_id": 1, "values": [], "settings": {}}]}'
+        with pytest.raises(Exception) as exc:
+            runs_from_json(doc)
+        assert "declared 9 runs but listed 1" in str(exc.value)
+
+    def test_a_future_schema_is_refused(self):
+        from taguchi._cli_json import runs_from_json
+        with pytest.raises(Exception) as exc:
+            runs_from_json('{"schema": 99, "runs": []}')
+        assert "schema" in str(exc.value)
+
+    def test_the_error_is_catchable_from_both_hierarchies(self):
+        """This package has two distinct TaguchiError classes and the original
+        and enhanced layers each catch a different one. The reader is shared,
+        so what it raises must satisfy both."""
+        from taguchi._cli_json import runs_from_json
+        from taguchi.core import TaguchiError as CoreError
+        from taguchi.errors import TaguchiError as ErrorsError
+        assert CoreError is not ErrorsError
+        for klass in (CoreError, ErrorsError):
+            with pytest.raises(klass):
+                runs_from_json("not json")
 
 
 # --------------------------------------------------------------------------

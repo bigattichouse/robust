@@ -21,10 +21,17 @@ class TestAnalyzerEnhanced:
     def mock_taguchi(self):
         """Create a mock Taguchi instance for testing."""
         mock = Mock(spec=Taguchi)
-        mock.effects.return_value = """
-        temp    0.050   L1=1.020, L2=1.070, L3=1.030
-        pressure 0.030   L1=1.040, L2=1.010
-        """
+        # Stubs effects_json, not effects: the analyzer reads the CLI's --json
+        # output now. The scraped table this used to return is the format that
+        # dropped a factor named `kv-type` on the floor.
+        mock.effects_json.return_value = [
+            {"factor": "temp", "range": 0.050,
+             "level_means": [1.020, 1.070, 1.030],
+             "level_values": ["cold", "warm", "hot"]},
+            {"factor": "pressure", "range": 0.030,
+             "level_means": [1.040, 1.010],
+             "level_values": ["low", "high"]},
+        ]
         return mock
     
     @pytest.fixture
@@ -279,7 +286,10 @@ class TestAnalyzerEnhanced:
     
     def test_main_effects_no_parseable_output(self, mock_experiment, mock_taguchi):
         """Test main effects with unparseable output."""
-        mock_taguchi.effects.return_value = "Invalid output format"
+        # An empty effects list is what "nothing parseable" looks like now:
+        # the reader raises on malformed JSON rather than returning a partial
+        # list, so the analyzer's own empty-result check is what this covers.
+        mock_taguchi.effects_json.return_value = []
         
         analyzer = Analyzer(mock_experiment, taguchi=mock_taguchi)
         analyzer.add_result(1, 0.95)
@@ -290,7 +300,10 @@ class TestAnalyzerEnhanced:
             analyzer.main_effects()
         
         assert "no parseable output" in str(exc_info.value)
-        assert "raw_output" in exc_info.value.diagnostic_info
+        # was "raw_output": there is no raw text to report now. The JSON
+        # reader raises on anything malformed, so reaching this branch means a
+        # well-formed document that simply carried no effects.
+        assert exc_info.value.diagnostic_info["effects_returned"] == 0
     
     def test_recommend_optimal_higher_is_better(self, mock_experiment, mock_taguchi):
         """Test optimal recommendation with higher is better."""

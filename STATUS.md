@@ -222,13 +222,17 @@ found on 2026-08-10:
 So `make test-bindings` runs **only** `tests/test_cli_contract.py`, which is
 hermetic and does gate the build. Making the other 22 hermetic is the follow-up.
 
-**The binding still parses the human tables.** `core.py:168` and
-`analyzer.py:86` scrape `generate` and `effects`; `\w+` in the effects regex
-does not match a factor named `kv-type`, so that factor is silently dropped
-from the analysis. The CLI has `--json` now, but the binding has not moved onto
-it — that is the next change, and `test_cli_contract.py` exists to make it
-safe. The two broken cases are `xfail(strict=True)` there, so they fail the
-build if they start passing and cannot be quietly left behind.
+**The binding reads `--json` now.** It scraped the human tables in four
+places, and `\w+` in the effects regex dropped a factor named `kv-type` from
+the analysis silently. All four now go through one reader,
+`taguchi/_cli_json.py`, which raises where the scrapers skipped. The two
+`xfail(strict=True)` cases in `test_cli_contract.py` are plain passing tests
+again, which is the switch's acceptance criterion met.
+
+Coverage of the binding is **84% by line but 33% enforced** — the whole suite
+covers 84%, only `test_cli_contract.py` gates the build. That gap, not the
+84%, is what let the `kv-type` drop ship. Making the other 33 checks hermetic
+is the follow-up that closes it.
 
 **The build had no header dependencies until 2026-08-06.** Editing `doe.h`
 rebuilt some objects and not others, and the link silently combined two struct

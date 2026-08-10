@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
+from ._cli_json import effects_from_json, runs_from_json
+
 # Subprocess timeout in seconds — prevents hangs if the binary stalls.
 _CLI_TIMEOUT = 30
 
@@ -167,7 +169,7 @@ class Taguchi:
         Returns a list of dicts: [{'run_id': int, 'factors': {name: value}}, ...]
         """
         if os.path.exists(tgu_path):
-            output = self._run_command(["generate", tgu_path])
+            output = self._run_command(["generate", tgu_path, "--json"])
         else:
             # Treat the argument as raw .tgu content
             with tempfile.NamedTemporaryFile(
@@ -176,35 +178,29 @@ class Taguchi:
                 f.write(tgu_path)
                 temp_path = f.name
             try:
-                output = self._run_command(["generate", temp_path])
+                output = self._run_command(["generate", temp_path, "--json"])
             finally:
                 os.unlink(temp_path)
 
-        runs = []
-        for line in output.strip().split("\n"):
-            if not line.startswith("Run "):
-                continue
-            parts = line.split(": ", 1)
-            if len(parts) < 2:
-                continue
-            try:
-                run_id = int(parts[0][4:].strip())
-            except ValueError:
-                continue
-            factors: Dict[str, str] = {}
-            for pair in parts[1].split(", "):
-                if "=" in pair:
-                    key, _, value = pair.partition("=")
-                    factors[key.strip()] = value.strip()
-            runs.append({"run_id": run_id, "factors": factors})
-
-        return runs
+        return runs_from_json(output)
 
     def analyze(self, tgu_path: str, results_csv: str, metric: str = "response") -> str:
         """Run full analysis with main effects and optimal recommendations."""
         return self._run_command(
             ["analyze", tgu_path, results_csv, "--metric", metric]
         )
+
+    def effects_json(self, tgu_path: str, results_csv: str,
+                     metric: str = "response") -> List[Dict[str, Any]]:
+        """Main effects as data: [{'factor', 'range', 'level_means',
+        'level_values'}, ...].
+
+        This is what `Analyzer.main_effects()` reads. `effects()` below still
+        returns the human table, because that is what a caller printing a
+        report wants -- but nothing should PARSE it.
+        """
+        return effects_from_json(self._run_command(
+            ["effects", tgu_path, results_csv, "--metric", metric, "--json"]))
 
     def effects(self, tgu_path: str, results_csv: str, metric: str = "response") -> str:
         """Calculate and return the main effects table."""

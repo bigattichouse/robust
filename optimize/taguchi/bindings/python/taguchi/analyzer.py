@@ -71,7 +71,16 @@ class Analyzer:
         return tgu_path, self._csv_path
 
     def _parse_effects(self, output: str) -> List[Dict]:
-        """
+        r"""
+        LEGACY: parse the main-effects table from the CLI's HUMAN output.
+
+        No longer on the live path -- main_effects() reads `effects --json` via
+        Taguchi.effects_json(). Kept because callers and tests still reach for
+        it, and because it documents what went wrong: the regex below matches a
+        factor name with \w+, which does not match `kv-type`, so that factor
+        was dropped from the analysis silently. Do not put this back in front
+        of the JSON reader.
+
         Parse the main-effects table from CLI output.
 
         Expected line format:
@@ -135,10 +144,9 @@ class Analyzer:
         """
         if self._effects is None:
             tgu_path, csv_path = self._ensure_files()
-            output = self._taguchi.effects(
+            self._effects = self._taguchi.effects_json(
                 tgu_path, csv_path, metric=self._metric_name
             )
-            self._effects = self._parse_effects(output)
             if not self._effects:
                 raise TaguchiError(
                     "effects command produced no parseable output. "

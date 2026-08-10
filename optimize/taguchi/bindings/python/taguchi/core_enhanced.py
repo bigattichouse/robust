@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
 
+from ._cli_json import effects_from_json, runs_from_json
 from .config import TaguchiConfig, ConfigManager
 from .errors import (
     TaguchiError, BinaryDiscoveryError, CommandExecutionError,
@@ -471,39 +472,9 @@ class Taguchi:
                 file_path = temp_path
                 operation = "experiment_generation_from_content"
 
-            output = self._run_command(["generate", file_path], operation=operation)
-
-            runs = []
-            for line in output.strip().split("\n"):
-                if not line.startswith("Run "):
-                    continue
-                parts = line.split(": ", 1)
-                if len(parts) < 2:
-                    continue
-                try:
-                    run_id = int(parts[0][4:].strip())
-                except ValueError:
-                    continue
-                factors: Dict[str, str] = {}
-                for pair in parts[1].split(", "):
-                    if "=" in pair:
-                        key, _, value = pair.partition("=")
-                        factors[key.strip()] = value.strip()
-                runs.append({"run_id": run_id, "factors": factors})
-
-            if not runs:
-                raise TaguchiError(
-                    "No runs generated from .tgu file",
-                    operation=operation,
-                    suggestions=[
-                        "Check .tgu file format and syntax",
-                        "Verify factors are properly defined",
-                        "Ensure the file contains valid factor definitions",
-                    ],
-                    diagnostic_info={"tgu_content_sample": tgu_path[:500] if len(tgu_path) < 1000 else "file_path"},
-                )
-
-            return runs
+            output = self._run_command(["generate", file_path, "--json"],
+                                       operation=operation)
+            return runs_from_json(output)
         
         except TaguchiError:
             raise  # Re-raise enhanced errors
@@ -526,6 +497,13 @@ class Taguchi:
             ["analyze", tgu_path, results_csv, "--metric", metric],
             operation="full_analysis"
         )
+
+    def effects_json(self, tgu_path: str, results_csv: str,
+                     metric: str = "response") -> List[Dict[str, Any]]:
+        """Main effects as data. See Taguchi.effects_json in core.py."""
+        return effects_from_json(self._run_command(
+            ["effects", tgu_path, results_csv, "--metric", metric, "--json"],
+            operation="main_effects_json"))
 
     def effects(self, tgu_path: str, results_csv: str, metric: str = "response") -> str:
         """Calculate and return the main effects table.""" 

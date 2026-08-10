@@ -373,10 +373,9 @@ class Analyzer:
         
         if self._effects is None:
             tgu_path, csv_path = self._ensure_files()
-            output = self._taguchi.effects(
+            self._effects = self._taguchi.effects_json(
                 tgu_path, csv_path, metric=self._metric_name
             )
-            self._effects = self._parse_effects(output)
             if not self._effects:
                 raise TaguchiError(
                     "effects command produced no parseable output. "
@@ -388,7 +387,12 @@ class Analyzer:
                         "Ensure CLI is functioning properly",
                     ],
                     diagnostic_info={
-                        "raw_output": output,
+                        # Was "raw_output": the human table this used to
+                        # scrape. There is no raw text to report now -- the
+                        # JSON reader raises on anything malformed, so
+                        # reaching here means a well-formed document with no
+                        # effects in it.
+                        "effects_returned": 0,
                         "results_count": len(self._results),
                         "metric_name": self._metric_name,
                     }

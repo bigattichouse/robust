@@ -64,11 +64,54 @@ Available orthogonal arrays:
                 # Mock generate command output
                 generate_mock = Mock()
                 generate_mock.returncode = 0
-                generate_mock.stdout = """
-Run 1: temp=low, pressure=low
-Run 2: temp=medium, pressure=high
-Run 3: temp=high, pressure=low
-"""
+                # The CLI's --json document, which is what generate_runs
+                # reads now. It used to scrape `Run 1: temp=low, ...`.
+                generate_mock.stdout = """{
+  "tool": "taguchi",
+  "command": "generate",
+  "schema": 1,
+  "run_count": 3,
+  "factor_count": 2,
+  "factors": [
+    "temp",
+    "pressure"
+  ],
+  "runs": [
+    {
+      "run_id": 1,
+      "values": [
+        "low",
+        "low"
+      ],
+      "settings": {
+        "temp": "low",
+        "pressure": "low"
+      }
+    },
+    {
+      "run_id": 2,
+      "values": [
+        "medium",
+        "high"
+      ],
+      "settings": {
+        "temp": "medium",
+        "pressure": "high"
+      }
+    },
+    {
+      "run_id": 3,
+      "values": [
+        "high",
+        "low"
+      ],
+      "settings": {
+        "temp": "high",
+        "pressure": "low"
+      }
+    }
+  ]
+}"""
                 generate_mock.stderr = ""
                 
                 with patch('subprocess.run', side_effect=[mock_cli_with_output.return_value, generate_mock]):
@@ -303,7 +346,10 @@ class TestDependencyInjectionIntegration:
             {"run_id": 1, "factors": {"temp": "low", "pressure": "low"}},
             {"run_id": 2, "factors": {"temp": "high", "pressure": "high"}},
         ]
-        mock_taguchi.effects.return_value = "temp    0.050   L1=1.020, L2=1.070"
+        mock_taguchi.effects_json.return_value = [
+            {"factor": "temp", "range": 0.050, "level_means": [1.020, 1.070],
+             "level_values": ["cold", "hot"]},
+        ]
         
         # Create experiment with injected Taguchi
         exp = Experiment(taguchi=mock_taguchi)
