@@ -97,10 +97,20 @@ is free to evolve without breaking anything downstream.
 
 ## Driving these tools from another program
 
-Every stage that produces a design, a ranking or a recommendation takes
-**`--json`** — `morris analyze`, `sobol analyze`, `taguchi generate`,
-`taguchi analyze`, `taguchi effects`, `regress`, `uq` — and that is the
-interface. The text tables are a display for
+**Every command that emits a design, a ranking, a measurement or a
+recommendation takes `--json`**, and that is the interface:
+
+| stage | commands |
+|---|---|
+| screen | `morris analyze`, `morris bifurcate` |
+| attribute | `sobol analyze` |
+| resolve | `ofat`, `grid` |
+| optimize | `taguchi generate`, `taguchi analyze`, `taguchi effects` |
+| analyze | `regress`, `uq` |
+| orchestrate | `robust screen`, `robust funnel` (`--json PATH`, or `-` for stdout) |
+
+`morris sample`, `sobol sample` and the `pareto` commands already emit CSV by
+design, and `validate` answers with its exit status. The text tables are a display for
 people; they are laid out to stay positionally parseable, but they will keep
 changing, and a program that parses them will keep breaking. The JSON documents
 carry a `schema` number that is bumped only when a key is renamed or removed,

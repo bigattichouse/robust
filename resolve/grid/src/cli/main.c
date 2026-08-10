@@ -28,9 +28,15 @@
 
 #define MAXG 3
 
+/*
+ * The machine-readable contract; see screen/morris/src/cli/main.c for why it
+ * exists. Bumped on a rename or removal, never on an addition.
+ */
+#define GRID_JSON_SCHEMA 1
+
 static void usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s <file.space> <script> --factors A,B[,C] [--levels N] [--base lo|mid|hi]\n"
+        "Usage: %s <file.space> <script> --factors A,B[,C] [--levels N] [--base lo|mid|hi] [--json]\n"
         "\n"
         "  Runs the full factorial over 2 or 3 named factors, holding the rest\n"
         "  at the base point. Every combination is executed, so the interaction\n"
@@ -38,7 +44,8 @@ static void usage(const char *prog) {
         "\n"
         "  --factors A,B[,C]  2 or 3 factors to cross (required)\n"
         "  --levels N         levels per factor, 2..8 (default 3)\n"
-        "  --base lo|mid|hi   where to hold the others (default mid)\n",
+        "  --base lo|mid|hi   where to hold the others (default mid)\n"
+"  --json             machine-readable output (stable contract)\n",
         prog);
 }
 
@@ -73,6 +80,7 @@ int main(int argc, char **argv) {
     size_t levels = 3;
     double base_u = 0.5;
     const char *base_name = "mid";
+    int as_json = 0;
 
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--factors") == 0 && i + 1 < argc) flist = argv[++i];
@@ -86,7 +94,8 @@ int main(int argc, char **argv) {
             else if (strcmp(base_name, "mid") == 0) base_u = 0.5;
             else if (strcmp(base_name, "hi") == 0)  base_u = 1.0;
             else { fprintf(stderr, "Error: --base must be lo, mid or hi\n"); return 2; }
-        } else { fprintf(stderr, "Error: unknown option '%s'\n", argv[i]); usage(argv[0]); return 2; }
+        } else if (strcmp(argv[i], "--json") == 0) { as_json = 1; }
+        else { fprintf(stderr, "Error: unknown option '%s'\n", argv[i]); usage(argv[0]); return 2; }
     }
     if (!flist) { fprintf(stderr, "Error: --factors is required\n"); usage(argv[0]); return 2; }
 
@@ -152,9 +161,14 @@ int main(int argc, char **argv) {
     run_ctx_t ctx; memset(&ctx, 0, sizeof ctx);
     ctx.sp = &sp; ctx.u = u; ctx.k = k;
 
-    printf("Full factorial over");
-    for (size_t g = 0; g < ng; g++) printf(" %s%s", sp.factors[idx[g]].name, g + 1 < ng ? " x" : "");
-    printf(" — %zu runs at %zu levels, others held at %s\n\n", npoints, levels, base_name);
+    /* Progress goes to stderr under --json: it is printed before the runs
+     * execute, so on stdout it would sit above the document. */
+    FILE *prog = as_json ? stderr : stdout;
+    fprintf(prog, "Full factorial over");
+    for (size_t g = 0; g < ng; g++)
+        fprintf(prog, " %s%s", sp.factors[idx[g]].name, g + 1 < ng ? " x" : "");
+    fprintf(prog, " — %zu runs at %zu levels, others held at %s\n\n",
+            npoints, levels, base_name);
 
     if (doe_run_capture(&sp, "GRID", script, npoints, val_of, &ctx, y, err) != 0) {
         fprintf(stderr, "Error: %s\n", err);
@@ -162,6 +176,114 @@ int main(int argc, char **argv) {
     }
 
     char vb[DOE_MAX_VALUE];
+
+    /*
+     * The interaction statistics, computed ONCE regardless of how they are
+     * rendered. Two renderers each doing their own arithmetic is how a table
+     * and a document come to disagree about the same experiment.
+     */
+    double ma = 0.0, mb = 0.0, max_dev = 0.0, ss_int = 0.0, ss_tot = 0.0, biggest = 0.0;
+    int interacts = 0;
+    if (ng == 2) {
+        double grand = 0.0;
+        for (size_t i = 0; i < npoints; i++) grand += y[i];
+        grand /= (double)npoints;
+
+        double rowm[8] = {0}, colm[8] = {0};
+        for (size_t a = 0; a < levels; a++)
+            for (size_t b = 0; b < levels; b++) {
+                rowm[a] += y[b * levels + a];
+                colm[b] += y[b * levels + a];
+            }
+        for (size_t i = 0; i < levels; i++) {
+            rowm[i] /= (double)levels;
+            colm[i] /= (double)levels;
+        }
+
+        for (size_t a = 0; a < levels; a++)
+            for (size_t b = 0; b < levels; b++) {
+                double additive = rowm[a] + colm[b] - grand;
+                double dev = y[b * levels + a] - additive;
+                if (fabs(dev) > max_dev) max_dev = fabs(dev);
+                ss_int += dev * dev;
+                double d = y[b * levels + a] - grand;
+                ss_tot += d * d;
+            }
+
+        double row_lo = rowm[0], row_hi = rowm[0], col_lo = colm[0], col_hi = colm[0];
+        for (size_t i = 1; i < levels; i++) {
+            if (rowm[i] < row_lo) row_lo = rowm[i];
+            if (rowm[i] > row_hi) row_hi = rowm[i];
+            if (colm[i] < col_lo) col_lo = colm[i];
+            if (colm[i] > col_hi) col_hi = colm[i];
+        }
+        ma = row_hi - row_lo;
+        mb = col_hi - col_lo;
+        biggest = (ma > mb) ? ma : mb;
+        interacts = biggest > 0.0 && max_dev / biggest > 0.1;
+    }
+
+    if (as_json) {
+        /*
+         * Every run with its factor values and response, plus the interaction
+         * verdict as a field. `interacts` is the answer this tool exists to
+         * give -- a consumer should not have to re-derive it from a threshold
+         * it has to know about.
+         */
+        char nb[DOE_JSON_NUM], sb[DOE_JSON_STR(DOE_MAX_NAME)];
+        printf("{\n");
+        printf("  \"tool\": \"grid\",\n");
+        printf("  \"command\": \"factorial\",\n");
+        printf("  \"schema\": %d,\n", GRID_JSON_SCHEMA);
+        printf("  \"factors\": [");
+        for (size_t g = 0; g < ng; g++) {
+            if (g) printf(", ");
+            printf("%s", doe_json_string(sp.factors[idx[g]].name, sb, sizeof sb));
+        }
+        printf("],\n");
+        printf("  \"base\": \"%s\",\n", base_name);
+        printf("  \"levels\": %zu,\n", levels);
+        printf("  \"runs\": %zu,\n", npoints);
+        printf("  \"points\": [\n");
+        for (size_t r = 0; r < npoints; r++) {
+            printf("    {\"run_id\": %zu, \"values\": [", r + 1);
+            for (size_t g = 0; g < ng; g++) {
+                char vjb[DOE_JSON_STR(DOE_MAX_VALUE)];
+                if (g) printf(", ");
+                printf("%s", doe_json_string(
+                    doe_factor_value(&sp, idx[g], u[r * k + idx[g]], vb, sizeof vb),
+                    vjb, sizeof vjb));
+            }
+            printf("], \"response\": %s}%s\n",
+                   doe_json_number(y[r], nb, sizeof nb), r + 1 < npoints ? "," : "");
+        }
+        printf("  ],\n");
+        if (ng != 2) {
+            /* Only the two-factor case has a defined interaction here. */
+            printf("  \"interaction\": null\n");
+        } else {
+            printf("  \"main_effects\": [");
+            printf("{\"factor\": %s, \"effect\": %s}, ",
+                   doe_json_string(sp.factors[idx[0]].name, sb, sizeof sb),
+                   doe_json_number(ma, nb, sizeof nb));
+            printf("{\"factor\": %s, \"effect\": %s}],\n",
+                   doe_json_string(sp.factors[idx[1]].name, sb, sizeof sb),
+                   doe_json_number(mb, nb, sizeof nb));
+            printf("  \"interaction\": {\n");
+            printf("    \"max_departure_from_additivity\": %s,\n",
+                   doe_json_number(max_dev, nb, sizeof nb));
+            printf("    \"share_of_total_variation\": %s,\n",
+                   ss_tot > 0.0 ? doe_json_number(ss_int / ss_tot, nb, sizeof nb) : "null");
+            printf("    \"relative_to_larger_main_effect\": %s,\n",
+                   biggest > 0.0 ? doe_json_number(max_dev / biggest, nb, sizeof nb) : "null");
+            printf("    \"interacts\": %s\n", interacts ? "true" : "false");
+            printf("  }\n");
+        }
+        printf("}\n");
+        free(u); free(y);
+        return 0;
+    }
+
     if (ng == 2) {
         /* Print the response surface as a table: rows = A, columns = B. */
         printf("%-16s", sp.factors[idx[0]].name);
@@ -178,45 +300,9 @@ int main(int argc, char **argv) {
         }
 
         /*
-         * Interaction = departure from additivity. If the two factors acted
-         * independently, every cell would equal row effect + column effect -
-         * grand mean. How far it does not is the interaction, exactly.
+         * Interaction = departure from additivity, computed above so this
+         * table and --json report the same numbers.
          */
-        double grand = 0.0;
-        for (size_t i = 0; i < npoints; i++) grand += y[i];
-        grand /= (double)npoints;
-
-        double rowm[8] = {0}, colm[8] = {0};
-        for (size_t a = 0; a < levels; a++) {
-            for (size_t b = 0; b < levels; b++) {
-                rowm[a] += y[b * levels + a];
-                colm[b] += y[b * levels + a];
-            }
-        }
-        for (size_t i = 0; i < levels; i++) { rowm[i] /= (double)levels; colm[i] /= (double)levels; }
-
-        double max_dev = 0.0, ss_int = 0.0, ss_tot = 0.0;
-        for (size_t a = 0; a < levels; a++)
-            for (size_t b = 0; b < levels; b++) {
-                double additive = rowm[a] + colm[b] - grand;
-                double dev = y[b * levels + a] - additive;
-                if (fabs(dev) > max_dev) max_dev = fabs(dev);
-                ss_int += dev * dev;
-                double d = y[b * levels + a] - grand;
-                ss_tot += d * d;
-            }
-
-        double row_range = rowm[0], row_hi = rowm[0], col_range = colm[0], col_hi = colm[0];
-        for (size_t i = 1; i < levels; i++) {
-            if (rowm[i] < row_range) row_range = rowm[i];
-            if (rowm[i] > row_hi)    row_hi = rowm[i];
-            if (colm[i] < col_range) col_range = colm[i];
-            if (colm[i] > col_hi)    col_hi = colm[i];
-        }
-
-        double ma = row_hi - row_range, mb = col_hi - col_range;
-        double biggest = (ma > mb) ? ma : mb;
-
         printf("\nMain effect of %-14s %.6g\n", sp.factors[idx[0]].name, ma);
         printf("Main effect of %-14s %.6g\n", sp.factors[idx[1]].name, mb);
         printf("Interaction (max departure from additivity): %.6g\n", max_dev);
@@ -235,7 +321,7 @@ int main(int argc, char **argv) {
          * y = a + b + 0.2ab the interaction is a quarter of each main effect,
          * plainly worth knowing, yet only 7.7% of total variation.
          */
-        if (biggest > 0.0 && max_dev / biggest > 0.1)
+        if (interacts)
             printf("\nThese two DO interact. Their main effects are not additive, so\n"
                    "optimising them independently will not find the joint optimum --\n"
                    "read the table, not the two ranges.\n");

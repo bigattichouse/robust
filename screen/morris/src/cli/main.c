@@ -28,7 +28,7 @@ static void usage(const char *prog) {
         "screening: r*(G+1) runs instead of r*(k+1), ranked by the absolute\n"
         "group effect. The file decides, so the design and the analysis cannot\n"
         "disagree.\n"
-        "  bifurcate <file.space> <script> [--keep-share S]\n"
+        "  bifurcate <file.space> <script> [--keep-share S] [--json]\n"
         "                                        Screen groups, drop, split, repeat\n"
         "  validate <file.space>                 Check the .space definition\n"
         "  --version                             Show version\n",
@@ -181,112 +181,6 @@ static int cmp_mu_star(const void *a, const void *b) {
     return 0;
 }
 
-/* ---- bifurcate: screen, drop, split, repeat ---- */
-
-typedef struct {
-    const char        *script;
-    const doe_space_t *sp;
-    const double      *u;
-    size_t             k;
-    char               buf[DOE_MAX_VALUE];
-} bif_ctx_t;
-
-static const char *bif_value(void *vctx, size_t row, size_t col) {
-    bif_ctx_t *c = (bif_ctx_t *)vctx;
-    return doe_factor_value(c->sp, col, c->u[row * c->k + col],
-                            c->buf, sizeof c->buf);
-}
-
-static int bif_eval(void *ctx, const doe_space_t *sp, const double *u,
-                    size_t npoints, size_t k, double *responses, char *err) {
-    bif_ctx_t *c = (bif_ctx_t *)ctx;
-    c->sp = sp; c->u = u; c->k = k;
-    return doe_run_capture(sp, "MORRIS", c->script, npoints,
-                           bif_value, c, responses, err);
-}
-
-static int cmd_bifurcate(const char *path, const char *script, double keep_share) {
-    doe_space_t sp;
-    if (load_space(path, &sp) != 0) return 1;
-
-    morris_bifurcate_opts_t opts;
-    memset(&opts, 0, sizeof opts);
-    opts.keep_share = keep_share;
-
-    /*
-     * Cost first. A screening method whose price you learn afterwards is not
-     * usable for planning an expensive experiment, which is the entire point
-     * of screening. The worst case assumes every group survives and splits
-     * every round -- so it can exceed per-factor screening. Bifurcation is a
-     * bet that importance is concentrated; when it is not, screening every
-     * factor directly is cheaper.
-     */
-    size_t worst = morris_bifurcate_budget(&sp, &opts);
-    size_t flat  = sp.trajectories * (sp.factor_count + 1);
-    printf("Bifurcating %zu factors, keep-share %.2f\n", sp.factor_count, 
-           opts.keep_share > 0 ? opts.keep_share : 0.9);
-    printf("  worst-case budget : %zu evaluations\n", worst);
-    printf("  per-factor would be: %zu\n\n", flat);
-
-    bif_ctx_t ctx;
-    memset(&ctx, 0, sizeof ctx);
-    ctx.script = script;
-
-    char err[DOE_ERR_SIZE];
-    morris_bifurcate_result_t res;
-    if (morris_bifurcate(&sp, &opts, bif_eval, &ctx, &res, err) != 0) {
-        fprintf(stderr, "Error: %s\n", err);
-        return 1;
-    }
-
-    size_t round = (size_t)-1;
-    for (size_t i = 0; i < res.trace_count; i++) {
-        if (res.trace[i].round != round) {
-            round = res.trace[i].round;
-            printf("Round %zu:\n", round + 1);
-            printf("  %-20s %12s %8s  %s\n", "group", "mu*", "members", "");
-        }
-        printf("  %-20s %12.4g %8zu  %s\n",
-               res.trace[i].group, res.trace[i].mu_star,
-               res.trace[i].member_count,
-               res.trace[i].kept ? "keep" : "drop");
-    }
-
-    printf("\n%zu survivor(s) of %zu factors, %zu round(s), %zu evaluations "
-           "(worst case was %zu):\n",
-           res.survivor_count, sp.factor_count, res.rounds_run,
-           res.evaluations, res.predicted_max);
-    for (size_t f = 0; f < sp.factor_count; f++)
-        if (res.survivors[f]) printf("  %s\n", sp.factors[f].name);
-
-    if (res.low_trajectories) {
-        fprintf(stderr,
-            "\nWARNING: trajectories = %zu, below the %d that group screening\n"
-            "needs to be reliable. Measured on 1024 factors with 8 important ones\n"
-            "at alternating signs: at r=10, 2 of 8 were MISSED when equal-and-\n"
-            "opposite factors shared a group; at r=20 and above, none were.\n"
-            "A dropped factor is silent -- raise trajectories and re-run.\n",
-            sp.trajectories, MORRIS_BIFURCATE_MIN_TRAJECTORIES);
-    }
-
-    if (res.stopped_on_tie) {
-        fprintf(stderr,
-            "\nNote: stopped early -- the keep/drop cut fell inside a near-tie.\n"
-            "Splitting further cannot resolve it (see validation check C), so the\n"
-            "tied groups were all kept rather than chosen between arbitrarily.\n");
-    }
-
-    morris_bifurcate_free(&res);
-    return 0;
-}
-
-static int cmp_group_mu_star(const void *a, const void *b) {
-    const morris_group_effect_t *x = a, *y = b;
-    if (x->mu_star < y->mu_star) return 1;
-    if (x->mu_star > y->mu_star) return -1;
-    return 0;
-}
-
 /*
  * The machine-readable contract.
  *
@@ -362,6 +256,189 @@ static void print_groups_json(const doe_space_t *sp, const char *metric, size_t 
     printf("  \"gap_at_cut\": %s,\n", gap >= 0.0 ? JNUM(gap) : "null");
     printf("  \"cut_is_tie\": %s\n", (gap >= 0.0 && gap < 1.05) ? "true" : "false");
     printf("}\n");
+}
+
+/* ---- bifurcate: screen, drop, split, repeat ---- */
+
+typedef struct {
+    const char        *script;
+    const doe_space_t *sp;
+    const double      *u;
+    size_t             k;
+    char               buf[DOE_MAX_VALUE];
+} bif_ctx_t;
+
+static const char *bif_value(void *vctx, size_t row, size_t col) {
+    bif_ctx_t *c = (bif_ctx_t *)vctx;
+    return doe_factor_value(c->sp, col, c->u[row * c->k + col],
+                            c->buf, sizeof c->buf);
+}
+
+static int bif_eval(void *ctx, const doe_space_t *sp, const double *u,
+                    size_t npoints, size_t k, double *responses, char *err) {
+    bif_ctx_t *c = (bif_ctx_t *)ctx;
+    c->sp = sp; c->u = u; c->k = k;
+    return doe_run_capture(sp, "MORRIS", c->script, npoints,
+                           bif_value, c, responses, err);
+}
+
+/*
+ * Bifurcation's output is a DECISION -- which factors survived -- reached by a
+ * different route than `analyze`, and it was available only as prose. A
+ * consumer driving the cheap path to a survivor set had to scrape it.
+ */
+static void print_bifurcate_json(const doe_space_t *sp,
+                                 const morris_bifurcate_result_t *res,
+                                 double keep_share, size_t worst, size_t flat) {
+    printf("{\n");
+    printf("  \"tool\": \"morris\",\n");
+    printf("  \"command\": \"bifurcate\",\n");
+    printf("  \"schema\": %d,\n", MORRIS_JSON_SCHEMA);
+    printf("  \"trajectories\": %zu,\n", sp->trajectories);
+    printf("  \"keep_share\": %s,\n", JNUM(keep_share > 0 ? keep_share : 0.9));
+    printf("  \"factor_count\": %zu,\n", sp->factor_count);
+    printf("  \"rounds_run\": %zu,\n", res->rounds_run);
+    printf("  \"evaluations\": %zu,\n", res->evaluations);
+    printf("  \"predicted_max\": %zu,\n", res->predicted_max);
+    printf("  \"worst_case_budget\": %zu,\n", worst);
+    printf("  \"per_factor_budget\": %zu,\n", flat);
+    printf("  \"survivor_count\": %zu,\n", res->survivor_count);
+    printf("  \"survivors\": [");
+    {
+        int first = 1;
+        for (size_t f = 0; f < sp->factor_count; f++) {
+            if (!res->survivors[f]) continue;
+            if (!first) printf(", ");
+            first = 0;
+            printf("%s", JSTR(sp->factors[f].name));
+        }
+    }
+    printf("],\n");
+    printf("  \"dropped\": [");
+    {
+        int first = 1;
+        for (size_t f = 0; f < sp->factor_count; f++) {
+            if (res->survivors[f]) continue;
+            if (!first) printf(", ");
+            first = 0;
+            printf("%s", JSTR(sp->factors[f].name));
+        }
+    }
+    printf("],\n");
+    printf("  \"trace\": [\n");
+    for (size_t i = 0; i < res->trace_count; i++) {
+        printf("    {\"round\": %zu, \"group\": %s, \"mu_star\": %s, "
+               "\"members\": %zu, \"kept\": %s}%s\n",
+               res->trace[i].round + 1, JSTR(res->trace[i].group),
+               JNUM(res->trace[i].mu_star), res->trace[i].member_count,
+               res->trace[i].kept ? "true" : "false",
+               i + 1 < res->trace_count ? "," : "");
+    }
+    printf("  ],\n");
+    /*
+     * Both warnings are fields as well as stderr text. `low_trajectories` in
+     * particular: below the measured threshold an important factor can be
+     * DROPPED silently, and a machine consumer never reads the prose that
+     * says so.
+     */
+    printf("  \"low_trajectories\": %s,\n", res->low_trajectories ? "true" : "false");
+    printf("  \"min_trajectories\": %d,\n", MORRIS_BIFURCATE_MIN_TRAJECTORIES);
+    printf("  \"stopped_on_tie\": %s\n", res->stopped_on_tie ? "true" : "false");
+    printf("}\n");
+}
+
+static int cmd_bifurcate(const char *path, const char *script, double keep_share,
+                         int as_json) {
+    doe_space_t sp;
+    if (load_space(path, &sp) != 0) return 1;
+
+    morris_bifurcate_opts_t opts;
+    memset(&opts, 0, sizeof opts);
+    opts.keep_share = keep_share;
+
+    /*
+     * Cost first. A screening method whose price you learn afterwards is not
+     * usable for planning an expensive experiment, which is the entire point
+     * of screening. The worst case assumes every group survives and splits
+     * every round -- so it can exceed per-factor screening. Bifurcation is a
+     * bet that importance is concentrated; when it is not, screening every
+     * factor directly is cheaper.
+     */
+    size_t worst = morris_bifurcate_budget(&sp, &opts);
+    size_t flat  = sp.trajectories * (sp.factor_count + 1);
+    /* Cost goes to stderr under --json: it is printed before any evaluation
+     * runs, so on stdout it would sit above the document. */
+    FILE *pre = as_json ? stderr : stdout;
+    fprintf(pre, "Bifurcating %zu factors, keep-share %.2f\n", sp.factor_count,
+            opts.keep_share > 0 ? opts.keep_share : 0.9);
+    fprintf(pre, "  worst-case budget : %zu evaluations\n", worst);
+    fprintf(pre, "  per-factor would be: %zu\n\n", flat);
+
+    bif_ctx_t ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.script = script;
+
+    char err[DOE_ERR_SIZE];
+    morris_bifurcate_result_t res;
+    if (morris_bifurcate(&sp, &opts, bif_eval, &ctx, &res, err) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 1;
+    }
+
+    if (as_json) {
+        print_bifurcate_json(&sp, &res, opts.keep_share, worst, flat);
+        goto diagnostics;
+    }
+
+    size_t round = (size_t)-1;
+    for (size_t i = 0; i < res.trace_count; i++) {
+        if (res.trace[i].round != round) {
+            round = res.trace[i].round;
+            printf("Round %zu:\n", round + 1);
+            printf("  %-20s %12s %8s  %s\n", "group", "mu*", "members", "");
+        }
+        printf("  %-20s %12.4g %8zu  %s\n",
+               res.trace[i].group, res.trace[i].mu_star,
+               res.trace[i].member_count,
+               res.trace[i].kept ? "keep" : "drop");
+    }
+
+    printf("\n%zu survivor(s) of %zu factors, %zu round(s), %zu evaluations "
+           "(worst case was %zu):\n",
+           res.survivor_count, sp.factor_count, res.rounds_run,
+           res.evaluations, res.predicted_max);
+    for (size_t f = 0; f < sp.factor_count; f++)
+        if (res.survivors[f]) printf("  %s\n", sp.factors[f].name);
+
+diagnostics:
+    /* stderr in both modes -- a dropped factor is silent, and the warning
+     * saying so must not be the thing that gets dropped. */
+    if (res.low_trajectories) {
+        fprintf(stderr,
+            "\nWARNING: trajectories = %zu, below the %d that group screening\n"
+            "needs to be reliable. Measured on 1024 factors with 8 important ones\n"
+            "at alternating signs: at r=10, 2 of 8 were MISSED when equal-and-\n"
+            "opposite factors shared a group; at r=20 and above, none were.\n"
+            "A dropped factor is silent -- raise trajectories and re-run.\n",
+            sp.trajectories, MORRIS_BIFURCATE_MIN_TRAJECTORIES);
+    }
+
+    if (res.stopped_on_tie) {
+        fprintf(stderr,
+            "\nNote: stopped early -- the keep/drop cut fell inside a near-tie.\n"
+            "Splitting further cannot resolve it (see validation check C), so the\n"
+            "tied groups were all kept rather than chosen between arbitrarily.\n");
+    }
+
+    morris_bifurcate_free(&res);
+    return 0;
+}
+
+static int cmp_group_mu_star(const void *a, const void *b) {
+    const morris_group_effect_t *x = a, *y = b;
+    if (x->mu_star < y->mu_star) return 1;
+    if (x->mu_star > y->mu_star) return -1;
+    return 0;
 }
 
 /* Group screening: r*(G+1) runs, ranked by the absolute group effect. */
@@ -685,17 +762,22 @@ int main(int argc, char *argv[]) {
     if (strcmp(cmd, "bifurcate") == 0) {
         if (argc < 4) { fprintf(stderr, "bifurcate needs a script argument\n"); return 1; }
         double keep_share = 0.0;      /* 0 -> library default (0.9) */
-        for (int i = 4; i < argc - 1; i++) {
-            if (strcmp(argv[i], "--keep-share") == 0) {
-                keep_share = strtod(argv[i + 1], NULL);
+        int as_json = 0;
+        for (int i = 4; i < argc; i++) {
+            if (strcmp(argv[i], "--json") == 0) as_json = 1;
+            else if (strcmp(argv[i], "--keep-share") == 0 && i + 1 < argc) {
+                keep_share = strtod(argv[++i], NULL);
                 if (!(keep_share > 0.0 && keep_share <= 1.0)) {
                     fprintf(stderr, "--keep-share must be in (0, 1]\n");
                     return 1;
                 }
-                break;
+            } else {
+                fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+                usage(argv[0]);
+                return 1;
             }
         }
-        return cmd_bifurcate(path, argv[3], keep_share);
+        return cmd_bifurcate(path, argv[3], keep_share, as_json);
     }
     if (strcmp(cmd, "analyze") == 0) {
         if (argc < 4) { fprintf(stderr, "analyze needs a results.csv argument\n"); return 1; }

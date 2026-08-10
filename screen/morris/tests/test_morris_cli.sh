@@ -322,6 +322,35 @@ expect_exit 1 "bifurcate needs a script" "$MORRIS" bifurcate "$TMP/f.space"
 expect_exit 1 "bifurcate rejects a bad --keep-share" \
     "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --keep-share 5
 
+# bifurcate's output IS a decision -- which factors survived -- reached by a
+# different route than analyze, and it was prose only.
+json_ok "bifurcate --json parses" \
+    "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --json
+json_is "True" "set(d['survivors']) | set(d['dropped']) == {'a','b','c'}" \
+    "bifurcate --json accounts for every factor exactly once" \
+    "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --json
+json_is "True" "d['survivor_count'] == len(d['survivors'])" \
+    "bifurcate --json: the count matches the list" \
+    "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --json
+json_is "True" "d['evaluations'] <= d['predicted_max']" \
+    "bifurcate --json: spend never exceeds the budget predicted up front" \
+    "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --json
+# r=6 is below the measured threshold, where a factor can be dropped SILENTLY.
+# A machine consumer never reads the stderr text, so it must be a field.
+json_is "True" "d['low_trajectories']" \
+    "bifurcate --json flags a trajectory count that can drop a real factor" \
+    "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --json
+json_is "20" "d['min_trajectories']" \
+    "bifurcate --json states the threshold it judged against" \
+    "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --json
+expect_stderr "below the 20" "bifurcate warns on stderr in --json mode too" \
+    "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --json
+json_is "True" "all(k in t for t in d['trace'] for k in ('round','group','mu_star','members','kept'))" \
+    "bifurcate --json: the trace carries each round's keep/drop" \
+    "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --json
+expect_exit 1 "bifurcate rejects an unknown option" \
+    "$MORRIS" bifurcate "$TMP/f.space" "$TMP/run.sh" --format json
+
 expect_exit 1 "unknown command exits 1" "$MORRIS" not-a-command "$TMP/f.space"
 expect_exit 1 "no arguments exits 1" "$MORRIS"
 

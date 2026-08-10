@@ -252,7 +252,7 @@ TEST_BINS = $(CORE_TEST_BIN) $(RUNNER_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BI
 # same build now produces, so no special ordering is needed.
 run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN) \
            $(REGRESS_BIN) $(UQ_BIN) $(OFAT_BIN) $(GRID_BIN) $(MORRIS_BIN) \
-           $(SOBOL_BIN)
+           $(SOBOL_BIN) $(ROBUST_BIN)
 	./$(CORE_TEST_BIN)
 	./$(RUNNER_TEST_BIN)
 	./$(SEC_TEST_BIN)
@@ -268,6 +268,7 @@ run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN) \
 	@BIN=$(BIN) bash analyze/tests/test_analyze_cli.sh
 	@MORRIS=$(MORRIS_BIN) bash screen/morris/tests/test_morris_cli.sh
 	@SOBOL=$(SOBOL_BIN) bash attribute/sobol/tests/test_sobol_cli.sh
+	@ROBUST=$(ROBUST_BIN) bash orchestrate/robust/tests/test_robust_cli.sh
 
 # The valgrind stage used to be a sequence of `valgrind ... && echo clean;`
 # lines. Because each ended in `;`, only the LAST suite's exit status reached
@@ -468,6 +469,7 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 	@BIN=$(BIN) bash analyze/tests/test_analyze_cli.sh
 	@MORRIS=$(MORRIS_BIN) bash screen/morris/tests/test_morris_cli.sh
 	@SOBOL=$(SOBOL_BIN) bash attribute/sobol/tests/test_sobol_cli.sh
+	@ROBUST=$(ROBUST_BIN) bash orchestrate/robust/tests/test_robust_cli.sh
 
 test-all: test
 

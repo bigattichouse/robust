@@ -163,6 +163,15 @@ untested — flipping max to min left the suite green. And `escape_json_string`
 allocated `len*2+1` while a control character needs six bytes, passing those
 bytes through raw.
 
+Rather than wait for a third report, the remaining commands that emit a
+decision or a measurement were given the same treatment: `ofat` and `grid` (the
+CONFIRMATION stage -- a silent partial parse there means believing you
+confirmed an effect you did not), `robust screen` (whose whole output is a
+keep/drop decision, and whose `--json` was documented "funnel only" although it
+builds the same result), and `morris bifurcate`. Every command that emits a
+design, ranking, measurement or recommendation now has a machine path; `sample`
+and `pareto` were already CSV, and `validate` answers with its exit status.
+
 Related, found while fixing it: `regress --json` and `uq --json` interpolated
 factor and metric names raw. The `.space` parser rejects only control
 characters, and `--metric` is argv, so one quote produced a document no parser

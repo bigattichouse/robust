@@ -26,6 +26,8 @@ expect_exit() { local w="$1" l="$2"; shift 2; "$@" >"$TMP/o" 2>"$TMP/e"; local g
     [ "$g" -eq "$w" ] && ok "$l" || bad "$l" "exit $g, wanted $w"; }
 expect_match() { local p="$1" l="$2"; shift 2; "$@" >"$TMP/o" 2>"$TMP/e"
     grep -q -- "$p" "$TMP/o" "$TMP/e" && ok "$l" || bad "$l" "no '$p'"; }
+expect_stderr() { local p="$1" l="$2"; shift 2; "$@" >"$TMP/o" 2>"$TMP/e"
+    grep -q -- "$p" "$TMP/e" && ok "$l" || bad "$l" "stderr lacks '$p'"; }
 
 # `--json` promises a document a program can load, so check it with a parser
 # rather than grepping for a key and hoping. Skipped LOUDLY without python3 --
@@ -182,6 +184,97 @@ expect_exit 2 "grid: a factor named twice is refused" \
 expect_exit 1 "grid: unknown factor exits 1" \
     "$BIN/grid" "$TMP/m.space" "$TMP/run.sh" --factors a,nope
 expect_exit 2 "grid: --factors is required" "$BIN/grid" "$TMP/m.space" "$TMP/run.sh"
+
+# ------------------------------------------------- ofat/grid --json
+#
+# The confirmation stage. A silent partial parse here means believing you
+# confirmed an effect you did not -- which is worse than the screening case,
+# because this is the run that was supposed to settle it.
+cat > "$TMP/c.space" <<'EOF'
+factors:
+  a: 0,10
+  b: 0,10
+seed: 5
+trajectories: 4
+EOF
+cat > "$TMP/inter.sh" <<'EOF'
+#!/bin/sh
+awk -v a="${OFAT_a:-$GRID_a}" -v b="${OFAT_b:-$GRID_b}" \
+    'BEGIN{printf "%.5f\n", a + b + 0.2*a*b}'
+EOF
+chmod +x "$TMP/inter.sh"
+
+json_ok "ofat --json parses" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/inter.sh" --factor a --json
+json_is "3" "len(d['points'])" "ofat --json emits every swept level" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/inter.sh" --factor a --json
+json_is "True" "all(isinstance(p['response'], (int, float)) for p in d['points'])" \
+    "ofat --json: responses are numbers" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/inter.sh" --factor a --json
+json_is "True" "abs(d['range'] - (max(p['response'] for p in d['points']) - min(p['response'] for p in d['points']))) < 1e-9" \
+    "ofat --json: range equals max-min of the points it reports" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/inter.sh" --factor a --json
+json_is "True" "d['moved']" "ofat --json states whether the factor moved at all" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/inter.sh" --factor a --json
+json_is "5" "d['levels']" "ofat --json honours --levels" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/inter.sh" --factor a --levels 5 --json
+
+# An inert factor is the verdict that matters most, and the one a digits-only
+# parse of the table is most likely to mangle.
+cat > "$TMP/flat.sh" <<'EOF'
+#!/bin/sh
+echo 42
+EOF
+chmod +x "$TMP/flat.sh"
+json_is "False" "d['moved']" "ofat --json reports an inert factor as not moved" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/flat.sh" --factor a --json
+json_is "0" "d['range']" "ofat --json: an inert factor has zero range" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/flat.sh" --factor a --json
+expect_stderr "did NOT move the response" "ofat still warns on stderr in --json mode" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/flat.sh" --factor a --json
+
+json_ok "grid --json parses" \
+    "$BIN/grid" "$TMP/c.space" "$TMP/inter.sh" --factors a,b --json
+json_is "9" "len(d['points'])" "grid --json emits the full factorial" \
+    "$BIN/grid" "$TMP/c.space" "$TMP/inter.sh" --factors a,b --json
+json_is "True" "d['interaction']['interacts']" \
+    "grid --json: y = a + b + 0.2ab is flagged as interacting" \
+    "$BIN/grid" "$TMP/c.space" "$TMP/inter.sh" --factors a,b --json
+# The documented case: a quarter of each main effect, but only 7.7% of total
+# variation. Judged against the main effects, which is the question asked.
+json_is "True" "abs(d['interaction']['relative_to_larger_main_effect'] - 0.25) < 0.01" \
+    "grid --json: interaction is a quarter of the larger main effect" \
+    "$BIN/grid" "$TMP/c.space" "$TMP/inter.sh" --factors a,b --json
+json_is "True" "abs(d['interaction']['share_of_total_variation'] - 0.077) < 0.005" \
+    "grid --json: and only 7.7% of total variation" \
+    "$BIN/grid" "$TMP/c.space" "$TMP/inter.sh" --factors a,b --json
+# An additive model must NOT be flagged.
+cat > "$TMP/add.sh" <<'EOF'
+#!/bin/sh
+awk -v a="$GRID_a" -v b="$GRID_b" 'BEGIN{printf "%.5f\n", a + b}'
+EOF
+chmod +x "$TMP/add.sh"
+json_is "False" "d['interaction']['interacts']" \
+    "grid --json: an additive model is not flagged as interacting" \
+    "$BIN/grid" "$TMP/c.space" "$TMP/add.sh" --factors a,b --json
+# Three crossed factors have no single two-factor interaction, and the field
+# says null rather than a number that would mean something else.
+cat > "$TMP/c3.space" <<'EOF'
+factors:
+  a: 0,10
+  b: 0,10
+  c: 0,10
+seed: 5
+trajectories: 4
+EOF
+json_is "None" "d['interaction']" \
+    "grid --json: three crossed factors report a null interaction" \
+    "$BIN/grid" "$TMP/c3.space" "$TMP/add.sh" --factors a,b,c --levels 2 --json
+
+expect_exit 2 "ofat rejects an unknown option" \
+    "$BIN/ofat" "$TMP/c.space" "$TMP/inter.sh" --factor a --format json
+expect_exit 2 "grid rejects an unknown option" \
+    "$BIN/grid" "$TMP/c.space" "$TMP/inter.sh" --factors a,b --format json
 
 echo
 echo "analyze/resolve CLI tests: $pass passed, $fail failed"

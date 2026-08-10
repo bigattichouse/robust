@@ -24,9 +24,15 @@
 #include <string.h>
 #include <math.h>
 
+/*
+ * The machine-readable contract; see screen/morris/src/cli/main.c for why it
+ * exists. Bumped when a key is renamed or removed, never for an addition.
+ */
+#define OFAT_JSON_SCHEMA 1
+
 static void usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s <file.space> <script> --factor NAME [--levels N] [--base lo|mid|hi]\n"
+        "Usage: %s <file.space> <script> --factor NAME [--levels N] [--base lo|mid|hi] [--json]\n"
         "\n"
         "  Holds every other factor at the base point and sweeps NAME across\n"
         "  N levels, so the measured range is that factor's true effect there.\n"
@@ -34,7 +40,8 @@ static void usage(const char *prog) {
         "  --factor NAME  the factor to verify (required)\n"
         "  --levels N     sweep points, 2..16 (default 3: low, mid, high, which\n"
         "                 also shows curvature)\n"
-        "  --base lo|mid|hi   where to hold the others (default mid)\n",
+        "  --base lo|mid|hi   where to hold the others (default mid)\n"
+"  --json         machine-readable output (stable contract)\n",
         prog);
 }
 
@@ -69,6 +76,7 @@ int main(int argc, char **argv) {
     size_t levels = 3;
     double base_u = 0.5;
     const char *base_name = "mid";
+    int as_json = 0;
 
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--factor") == 0 && i + 1 < argc) fname = argv[++i];
@@ -82,7 +90,8 @@ int main(int argc, char **argv) {
             else if (strcmp(base_name, "mid") == 0) base_u = 0.5;
             else if (strcmp(base_name, "hi") == 0)  base_u = 1.0;
             else { fprintf(stderr, "Error: --base must be lo, mid or hi\n"); return 2; }
-        } else { fprintf(stderr, "Error: unknown option '%s'\n", argv[i]); usage(argv[0]); return 2; }
+        } else if (strcmp(argv[i], "--json") == 0) { as_json = 1; }
+        else { fprintf(stderr, "Error: unknown option '%s'\n", argv[i]); usage(argv[0]); return 2; }
     }
     if (!fname) { fprintf(stderr, "Error: --factor is required\n"); usage(argv[0]); return 2; }
 
@@ -120,44 +129,105 @@ int main(int argc, char **argv) {
     run_ctx_t ctx; memset(&ctx, 0, sizeof ctx);
     ctx.sp = &sp; ctx.u = u; ctx.k = k;
 
-    printf("OFAT confirmation of '%s' — %zu runs, others held at %s\n\n",
-           fname, levels, base_name);
+    /*
+     * Progress goes to stderr in --json mode. It is printed BEFORE the runs
+     * execute, so on stdout it would sit above the document and every parser
+     * would reject the whole thing.
+     */
+    fprintf(as_json ? stderr : stdout,
+            "OFAT confirmation of '%s' — %zu runs, others held at %s\n\n",
+            fname, levels, base_name);
     if (doe_run_capture(&sp, "OFAT", script, levels, val_of, &ctx, y, err) != 0) {
         fprintf(stderr, "Error: %s\n", err);
         free(u); free(y); return 1;
     }
 
     char vbuf[DOE_MAX_VALUE];
-    printf("%-24s %14s\n", fname, "response");
-    printf("%-24s %14s\n", "------------------------", "--------------");
     double lo = y[0], hi = y[0];
     for (size_t r = 0; r < levels; r++) {
-        printf("%-24s %14.6g\n",
-               doe_factor_value(&sp, target, u[r * k + target], vbuf, sizeof vbuf), y[r]);
         if (y[r] < lo) lo = y[r];
         if (y[r] > hi) hi = y[r];
     }
-
     double range = hi - lo;
-    printf("\nMeasured effect at this base point: %.6g (range over %zu levels)\n",
-           range, levels);
 
+    /* Curvature: is the middle where additivity would put it? Computed once,
+     * so the table and the document cannot disagree about it. */
+    double curve = 0.0;
+    int have_curve = 0;
+    if (range != 0.0 && levels >= 3) {
+        double mid_expect = 0.5 * (y[0] + y[levels - 1]);
+        curve = fabs(y[levels / 2] - mid_expect);
+        have_curve = curve > 0.1 * range;
+    }
+
+    if (as_json) {
+        /*
+         * The confirmation stage, as data. This is the run that says whether a
+         * screened effect is real, so a consumer that silently mis-parses it
+         * concludes it confirmed something it did not. `range` is the verdict;
+         * `moved` states it outright rather than leaving a float compare to
+         * the caller.
+         */
+        char nbuf[DOE_JSON_NUM], sbuf[DOE_JSON_STR(DOE_MAX_NAME)];
+        printf("{\n");
+        printf("  \"tool\": \"ofat\",\n");
+        printf("  \"command\": \"confirm\",\n");
+        printf("  \"schema\": %d,\n", OFAT_JSON_SCHEMA);
+        printf("  \"factor\": %s,\n", doe_json_string(fname, sbuf, sizeof sbuf));
+        printf("  \"base\": \"%s\",\n", base_name);
+        printf("  \"levels\": %zu,\n", levels);
+        printf("  \"runs\": %zu,\n", levels);
+        printf("  \"points\": [\n");
+        for (size_t r = 0; r < levels; r++) {
+            char vb[DOE_JSON_STR(DOE_MAX_VALUE)];
+            printf("    {\"value\": %s, \"response\": %s}%s\n",
+                   doe_json_string(doe_factor_value(&sp, target, u[r * k + target],
+                                                    vbuf, sizeof vbuf), vb, sizeof vb),
+                   doe_json_number(y[r], nbuf, sizeof nbuf),
+                   r + 1 < levels ? "," : "");
+        }
+        printf("  ],\n");
+        printf("  \"range\": %s,\n", doe_json_number(range, nbuf, sizeof nbuf));
+        printf("  \"moved\": %s,\n", range != 0.0 ? "true" : "false");
+        if (!have_curve) {
+            printf("  \"curvature\": null\n");
+        } else {
+            printf("  \"curvature\": {\"offset\": %s",
+                   doe_json_number(curve, nbuf, sizeof nbuf));
+            printf(", \"share_of_range\": %s}\n",
+                   doe_json_number(curve / range, nbuf, sizeof nbuf));
+        }
+        printf("}\n");
+    } else {
+        printf("%-24s %14s\n", fname, "response");
+        printf("%-24s %14s\n", "------------------------", "--------------");
+        for (size_t r = 0; r < levels; r++) {
+            printf("%-24s %14.6g\n",
+                   doe_factor_value(&sp, target, u[r * k + target], vbuf, sizeof vbuf),
+                   y[r]);
+        }
+        printf("\nMeasured effect at this base point: %.6g (range over %zu levels)\n",
+               range, levels);
+    }
+
+    /*
+     * The verdicts go to stderr in --json mode, not into the document's prose
+     * -- and they are NOT dropped. "this factor did not move" is the whole
+     * result when it happens, and a consumer that never reads it is exactly
+     * the reader who most needs the corresponding field (`moved`).
+     */
+    FILE *note = as_json ? stderr : stdout;
     if (range == 0.0) {
-        printf("\nThis factor did NOT move the response at all here. If a screen\n"
+        fprintf(note, "\nThis factor did NOT move the response at all here. If a screen\n"
                "reported an effect for it, that effect was aliasing or noise, not\n"
                "a main effect -- do not act on it.\n");
-    } else if (levels >= 3) {
-        /* Curvature: is the middle where additivity would put it? */
-        double mid_expect = 0.5 * (y[0] + y[levels - 1]);
-        double mid_actual = y[levels / 2];
-        double curve = fabs(mid_actual - mid_expect);
-        if (curve > 0.1 * range)
-            printf("Curvature: the mid-level sits %.6g off the straight line between\n"
-                   "the ends (%.0f%% of the range). A two-level design would have\n"
-                   "missed this; the optimum may not be at an endpoint.\n",
-                   curve, 100.0 * curve / range);
+    } else if (have_curve) {
+        fprintf(note, "Curvature: the mid-level sits %.6g off the straight line between\n"
+               "the ends (%.0f%% of the range). A two-level design would have\n"
+               "missed this; the optimum may not be at an endpoint.\n",
+               curve, 100.0 * curve / range);
     }
-    printf("\nThis is the effect AT ONE POINT. It confirms or refutes a specific\n"
+    fprintf(note, "\nThis is the effect AT ONE POINT. It confirms or refutes a specific\n"
            "claim; it does not replace a screen.\n");
 
     free(u); free(y);

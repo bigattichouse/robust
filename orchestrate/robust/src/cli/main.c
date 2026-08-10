@@ -26,7 +26,9 @@ static void usage(const char *prog) {
         "Options:\n"
         "  --keep-fraction F   keep factors with mu* >= F*max(mu*) (default %.2f)\n"
         "  --html PATH         write the HTML dashboard (funnel only)\n"
-        "  --json PATH         write JSON results (funnel only)\n"
+        "  --json PATH         write JSON results; PATH may be '-' for stdout.\n"
+        "                      Works on screen as well as funnel -- a keep/drop\n"
+        "                      list is a decision, so it needs a machine path.\n"
         "  --tgu  PATH         write a taguchi .tgu for the survivors (funnel only)\n"
         "\n"
         "The <script> reads ROBUST_<factor> env vars and prints one number.\n",
@@ -160,12 +162,35 @@ static int cmd_screen(const char *path, const char *script, const opts_t *o) {
 
     robust_result_t r = { .k = sp.factor_count, .effects = eff, .keep = keep,
                           .n_survivors = nsurv, .keep_fraction = o->keep_fraction };
-    print_morris(&r);
-    printf("\n%zu of %zu factors kept.\n", nsurv, sp.factor_count);
+    /*
+     * The keep/drop list is a DECISION, and it was available only as a table.
+     * --json was documented "funnel only" although `screen` builds the same
+     * result -- so the one command whose entire output is a decision had no
+     * machine path. It writes the same document, with an empty `sobol` array
+     * and "stage": "screen".
+     */
+    int rc = 0;
+    if (o->json) {
+        if (robust_write_json(&r, o->json, err) != 0) {
+            fprintf(stderr, "Error: %s\n", err);
+            rc = 1;
+        }
+    }
+
+    /* The table goes to stderr when the document is going to stdout, so the
+     * two never collide in a pipe. */
+    int json_to_stdout = o->json && o->json[0] == '-' && o->json[1] == '\0';
+    if (!json_to_stdout) {
+        print_morris(&r);
+        printf("\n%zu of %zu factors kept.\n", nsurv, sp.factor_count);
+        if (o->json && rc == 0) printf("Wrote JSON: %s\n", o->json);
+    } else {
+        fprintf(stderr, "%zu of %zu factors kept.\n", nsurv, sp.factor_count);
+    }
 
     free(eff);
     free(keep);
-    return 0;
+    return rc;
 }
 
 int main(int argc, char *argv[]) {

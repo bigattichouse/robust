@@ -8,11 +8,28 @@
 #include <stdio.h>
 #include <math.h>
 
+/*
+ * Bumped when a key is renamed or removed, never for an addition, so a
+ * consumer can refuse a document it does not understand rather than parse it
+ * wrongly. See screen/morris/src/cli/main.c for what that guards against.
+ */
+#define ROBUST_JSON_SCHEMA 1
+
 int robust_write_json(const robust_result_t *r, const char *path, char *err) {
-    FILE *f = fopen(path, "w");
+    /* "-" writes to stdout, so the result can be piped instead of landing in a
+     * file the caller then has to read back and delete. */
+    int to_stdout = (path && path[0] == '-' && path[1] == '\0');
+    FILE *f = to_stdout ? stdout : fopen(path, "w");
     if (!f) { snprintf(err, DOE_ERR_SIZE, "cannot write '%s'", path); return -1; }
 
-    fprintf(f, "{\n  \"keep_fraction\": %g,\n  \"n_factors\": %zu,\n  \"n_survivors\": %zu,\n",
+    /*
+     * `stage` distinguishes a full funnel from a screen-only run. Both carry a
+     * `sobol` array; on a screen it is empty, and an empty array is not the
+     * same statement as "Sobol found nothing".
+     */
+    fprintf(f, "{\n  \"schema\": %d,\n  \"stage\": \"%s\",\n",
+            ROBUST_JSON_SCHEMA, r->n_indices > 0 ? "funnel" : "screen");
+    fprintf(f, "  \"keep_fraction\": %g,\n  \"n_factors\": %zu,\n  \"n_survivors\": %zu,\n",
             r->keep_fraction, r->k, r->n_survivors);
 
     fprintf(f, "  \"morris\": [\n");
@@ -35,7 +52,8 @@ int robust_write_json(const robust_result_t *r, const char *path, char *err) {
     }
     fprintf(f, "  ]\n}\n");
 
-    fclose(f);
+    if (to_stdout) fflush(f);
+    else           fclose(f);
     return 0;
 }
 
