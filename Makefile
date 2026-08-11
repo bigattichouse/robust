@@ -287,7 +287,8 @@ run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN) \
 	@BIN=$(BIN) bash analyze/report/tests/test_report_cli.sh
 	@BIN=$(BIN) bash optimize/rsm/tests/test_rsm_cli.sh
 	@BIN=$(BIN) bash analyze/desire/tests/test_desire_cli.sh
-	@BIN=$(BIN) bash examples/tests/test_examples.sh
+	@if [ "$(EXAMPLES_TESTS)" != "0" ]; then BIN=$(BIN) bash examples/tests/test_examples.sh; \
+	 else echo "SKIP: examples suite (EXAMPLES_TESTS=0)"; fi
 	@$(MAKE) --no-print-directory test-bindings
 
 # The valgrind stage used to be a sequence of `valgrind ... && echo clean;`
@@ -432,7 +433,10 @@ PARETO_FUZZ_BIN = $(BUILD)/fuzz_pareto
 
 # Re-run every suite under ASan/UBSan in its own object tree (build/asan).
 test-asan:
-	$(MAKE) BUILD=build/asan CFLAGS="$(CFLAGS) $(SANFLAGS)" run-tests
+	@# EXAMPLES_TESTS=0: that suite checks the DOCS match the tools, and
+	@# exercises the same binaries every other suite does. Running it again
+	@# under sanitizers buys no coverage and costs minutes of process spawning.
+	$(MAKE) BUILD=build/asan EXAMPLES_TESTS=0 CFLAGS="$(CFLAGS) $(SANFLAGS)" run-tests
 
 # Deterministic random-input fuzz of every hand-rolled parser that reads
 # untrusted input, under ASan/UBSan. Both are seedable and reproducible:
@@ -529,7 +533,8 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 	@BIN=$(BIN) bash analyze/report/tests/test_report_cli.sh
 	@BIN=$(BIN) bash optimize/rsm/tests/test_rsm_cli.sh
 	@BIN=$(BIN) bash analyze/desire/tests/test_desire_cli.sh
-	@BIN=$(BIN) bash examples/tests/test_examples.sh
+	@if [ "$(EXAMPLES_TESTS)" != "0" ]; then BIN=$(BIN) bash examples/tests/test_examples.sh; \
+	 else echo "SKIP: examples suite (EXAMPLES_TESTS=0)"; fi
 	@$(MAKE) --no-print-directory test-bindings
 
 # Python binding contract tests.

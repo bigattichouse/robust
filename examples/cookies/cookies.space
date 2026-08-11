@@ -13,4 +13,4 @@ factors:
 
 seed: 7
 trajectories: 12
-samples: 256
+samples: 64      # enough to teach; a tutorial should not cost 2304 bakes

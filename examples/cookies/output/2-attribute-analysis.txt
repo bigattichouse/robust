@@ -1,15 +1,15 @@
-Sobol indices (metric: taste) — N=256, 2304 runs
+Sobol indices (metric: taste) — N=64, 576 runs
 Sampler: Joe-Kuo quasi-random (sampling: sobol)
 
 Factor                     S1       [95% CI]         ST       [95% CI]   interaction
 ------                     --       --------         --       --------   -----------
-butter                  0.092   [-0.14,0.33]      0.130    [0.10,0.17]   0.038
-sugar_ratio             0.021   [-0.03,0.08]      0.007    [0.01,0.01]   -0.014
-flour                   0.006   [-0.02,0.03]      0.002    [0.00,0.00]   -0.004
-egg                     0.000   [-0.01,0.01]      0.000    [0.00,0.00]   -0.000
-chips                   0.014   [-0.07,0.09]      0.015    [0.01,0.02]   0.001
-temp                    0.354   [-0.15,0.82]      0.694    [0.53,0.90]   0.341
-time                    0.082   [-0.36,0.45]      0.447    [0.32,0.60]   0.366
+butter                  0.158   [-0.29,0.72]      0.127    [0.08,0.22]   -0.031
+sugar_ratio             0.047   [-0.05,0.15]      0.006    [0.00,0.01]   -0.042
+flour                  -0.001   [-0.05,0.05]      0.002    [0.00,0.00]   0.002
+egg                     0.001   [-0.01,0.02]      0.000    [0.00,0.00]   -0.001
+chips                  -0.003   [-0.18,0.16]      0.015    [0.01,0.03]   0.018
+temp                    0.313   [-0.89,1.41]      0.773    [0.45,1.22]   0.461
+time                    0.123   [-0.90,1.06]      0.441    [0.20,0.78]   0.317
 
-Sum of first-order Si = 0.568  (<1 => interactions present)
+Sum of first-order Si = 0.638  (<1 => interactions present)
 ST ~ 0 => freeze the factor; ST - S1 large => acts through interactions.
