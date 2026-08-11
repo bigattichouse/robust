@@ -43,7 +43,12 @@ int doe_csv_read_metric(const char *path, const char *metric,
         if (err) snprintf(err, DOE_ERR_SIZE, "null input to doe_csv_read_metric");
         return -1;
     }
-    FILE *f = fopen(path, "r");
+    /* "-" is stdin, so a results CSV can arrive down a pipe. This reader only
+     * ever fgets, never seeks, so it costs one branch -- and it makes the
+     * documented composition (`desire ... | sobol analyze model.space -`)
+     * actually work, which it did not. */
+    int from_stdin = (path[0] == '-' && path[1] == '\0');
+    FILE *f = from_stdin ? stdin : fopen(path, "r");
     if (!f) {
         snprintf(err, DOE_ERR_SIZE, "cannot open results '%s'", path);
         return -1;
@@ -62,7 +67,7 @@ int doe_csv_read_metric(const char *path, const char *metric,
         if (len == sizeof line - 1 && line[len - 1] != '\n') {
             snprintf(err, DOE_ERR_SIZE, "line %d exceeds maximum length (%zu)",
                      line_no, sizeof line - 2);
-            fclose(f);
+            if (!from_stdin) fclose(f);
             return -1;
         }
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
@@ -91,7 +96,7 @@ int doe_csv_read_metric(const char *path, const char *metric,
                         metric_col = 1;
                     } else {
                         snprintf(err, DOE_ERR_SIZE, "metric '%s' not in CSV header", metric);
-                        fclose(f);
+                        if (!from_stdin) fclose(f);
                         return -1;
                     }
                 }
@@ -100,7 +105,7 @@ int doe_csv_read_metric(const char *path, const char *metric,
                 if (strcmp(metric, "response") != 0) {
                     snprintf(err, DOE_ERR_SIZE,
                              "no header in '%s'; cannot locate metric '%s'", path, metric);
-                    fclose(f);
+                    if (!from_stdin) fclose(f);
                     return -1;
                 }
                 metric_col = 1;
@@ -112,7 +117,7 @@ int doe_csv_read_metric(const char *path, const char *metric,
         if (nf <= metric_col) {
             snprintf(err, DOE_ERR_SIZE, "line %d: only %d column(s), metric at %d",
                      line_no, nf, metric_col + 1);
-            fclose(f);
+            if (!from_stdin) fclose(f);
             return -1;
         }
 
@@ -120,13 +125,13 @@ int doe_csv_read_metric(const char *path, const char *metric,
         long run_id = strtol(trim(fields[0]), &endp, 10);
         if (*endp != '\0' || run_id < 1) {
             snprintf(err, DOE_ERR_SIZE, "line %d: invalid run_id", line_no);
-            fclose(f);
+            if (!from_stdin) fclose(f);
             return -1;
         }
         if ((size_t)run_id > max_rows) {
             snprintf(err, DOE_ERR_SIZE, "line %d: run_id %ld exceeds run count %zu",
                      line_no, run_id, max_rows);
-            fclose(f);
+            if (!from_stdin) fclose(f);
             return -1;
         }
 
@@ -137,12 +142,12 @@ int doe_csv_read_metric(const char *path, const char *metric,
         if (*endp != '\0') {
             snprintf(err, DOE_ERR_SIZE, "line %d: invalid value '%s' for metric '%s'",
                      line_no, vs, metric);
-            fclose(f);
+            if (!from_stdin) fclose(f);
             return -1;
         }
         if (!isfinite(v)) {
             snprintf(err, DOE_ERR_SIZE, "line %d: non-finite value '%s'", line_no, vs);
-            fclose(f);
+            if (!from_stdin) fclose(f);
             return -1;
         }
 
@@ -150,7 +155,7 @@ int doe_csv_read_metric(const char *path, const char *metric,
         count++;
     }
 
-    fclose(f);
+    if (!from_stdin) fclose(f);
     if (count == 0) {
         snprintf(err, DOE_ERR_SIZE, "no data rows in '%s'", path);
         return -1;

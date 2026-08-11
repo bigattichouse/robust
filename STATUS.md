@@ -12,7 +12,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 
 ## Where things stand
 
-**Eleven binaries ship**, all in `build/bin/`:
+**Twelve binaries ship**, all in `build/bin/`:
 
 | stage | binaries |
 |---|---|
@@ -20,7 +20,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 | `attribute/` | `sobol` — Sᵢ / S_Tᵢ with CIs, second-order pairs |
 | `resolve/` | `ofat`, `grid` |
 | `optimize/` | `taguchi`, `rsm` |
-| `analyze/` | `pareto`, `regress`, `uq`, `report` |
+| `analyze/` | `pareto`, `regress`, `uq`, `report`, `desire` |
 | `orchestrate/` | `robust` |
 
 **Green across every mode.** Zero build warnings under
@@ -43,7 +43,8 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 | E2 | ✓ complete — `morris converge` + `sobol converge` |
 | E5 | ✓ complete — `noise:`, crossed designs, S/N ratios, `taguchi robust` |
 | E4 | ✓ complete — `rsm`: central composite design, quadratic fit, stationary point |
-| E6, E7 | pending |
+| E7 | ~ `pareto` ✓ and `desire` ✓; the front-vs-scalar tooling is complete |
+| E6 | ~ PCE pending; Shapley is a stated non-goal until `.space` supports correlated inputs |
 
 *E1 and E3 were both recorded here as complete until 2026-08-09. They are not:
 each has one deliverable left, and in E1's case it was blocked on a binary the

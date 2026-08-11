@@ -130,7 +130,7 @@ price of the warning that made it worth reading.
 
 ## Status
 
-**Eleven binaries ship**, covering screen → attribute → resolve → optimize with
+**Twelve binaries ship**, covering screen → attribute → resolve → optimize with
 an analyze stage alongside: `morris` (μ\*/σ, group screening, recursive
 splitting), `sobol` (Sᵢ/S_Tᵢ with bootstrap CIs and second-order pairs),
 `ofat` and `grid` (confirmation and interaction resolution), `taguchi`,

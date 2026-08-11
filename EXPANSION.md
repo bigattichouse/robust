@@ -177,7 +177,7 @@ setting differs from the mean-optimal one exactly as constructed.
   the `.space` format deliberately does not support today. Gated on a
   correlated-inputs decision; explicitly a non-goal until then.
 
-## E7. Multi-response & the Pareto front
+## E7. Multi-response & the Pareto front ✓ **BUILT**
 
 The results CSV already carries multiple metric columns; the funnel analyzes
 one. Real experiments trade objectives off (yield ↑ vs cost ↓ vs cycle time ↓):

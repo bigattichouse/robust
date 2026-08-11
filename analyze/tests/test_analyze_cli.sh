@@ -185,6 +185,12 @@ expect_exit 1 "grid: unknown factor exits 1" \
     "$BIN/grid" "$TMP/m.space" "$TMP/run.sh" --factors a,nope
 expect_exit 2 "grid: --factors is required" "$BIN/grid" "$TMP/m.space" "$TMP/run.sh"
 
+# doe_csv_read_metric reads "-" as stdin, so a results CSV can arrive down a
+# pipe. The documented composition depended on it and did not work.
+cat "$TMP/d.csv" | "$BIN/regress" "$TMP/m.space" - >/dev/null 2>&1 \
+    && ok "regress reads a results CSV from stdin" \
+    || bad "regress reads a results CSV from stdin" "failed"
+
 # ------------------------------------------------- ofat/grid --json
 #
 # The confirmation stage. A silent partial parse here means believing you

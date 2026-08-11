@@ -63,6 +63,11 @@ UQ_CLI_SRC = $(wildcard analyze/uq/src/cli/*.c)
 UQ_CLI_OBJ = $(UQ_CLI_SRC:analyze/uq/src/cli/%.c=$(BUILD)/uq/cli/%.o)
 UQ_BIN     = $(BIN)/uq
 
+# desire tool (E7) — Derringer-Suich desirability over several metrics
+DESIRE_CLI_SRC = $(wildcard analyze/desire/src/cli/*.c)
+DESIRE_CLI_OBJ = $(DESIRE_CLI_SRC:analyze/desire/src/cli/%.c=$(BUILD)/desire/cli/%.o)
+DESIRE_BIN     = $(BIN)/desire
+
 # rsm tool (E4) — response surface: quadratic fit + stationary point
 RSM_CLI_SRC = $(wildcard optimize/rsm/src/cli/*.c)
 RSM_CLI_OBJ = $(RSM_CLI_SRC:optimize/rsm/src/cli/%.c=$(BUILD)/rsm/cli/%.o)
@@ -163,9 +168,9 @@ DEPFILES = $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
 -include $(DEPFILES)
 
-.PHONY: all common morris sobol robust taguchi pareto regress uq ofat grid install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all test-bindings validate clean check-default-goal report rsm
+.PHONY: all common morris sobol robust taguchi pareto regress uq ofat grid install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all test-bindings validate clean check-default-goal report rsm desire
 
-all: common morris sobol robust pareto regress uq ofat grid taguchi report rsm
+all: common morris sobol robust pareto regress uq ofat grid taguchi report rsm desire
 
 # Asserts the pin above still holds. .DEFAULT_GOAL expands in a recipe after
 # every makefile -- including the .d files -- has been read, so this sees the
@@ -262,7 +267,7 @@ TEST_BINS = $(CORE_TEST_BIN) $(RUNNER_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BI
 # same build now produces, so no special ordering is needed.
 run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN) \
            $(REGRESS_BIN) $(UQ_BIN) $(OFAT_BIN) $(GRID_BIN) $(MORRIS_BIN) \
-           $(SOBOL_BIN) $(ROBUST_BIN) $(REPORT_BIN) $(RSM_BIN)
+           $(SOBOL_BIN) $(ROBUST_BIN) $(REPORT_BIN) $(RSM_BIN) $(DESIRE_BIN)
 	./$(CORE_TEST_BIN)
 	./$(RUNNER_TEST_BIN)
 	./$(SEC_TEST_BIN)
@@ -281,6 +286,7 @@ run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN) \
 	@ROBUST=$(ROBUST_BIN) bash orchestrate/robust/tests/test_robust_cli.sh
 	@BIN=$(BIN) bash analyze/report/tests/test_report_cli.sh
 	@BIN=$(BIN) bash optimize/rsm/tests/test_rsm_cli.sh
+	@BIN=$(BIN) bash analyze/desire/tests/test_desire_cli.sh
 	@$(MAKE) --no-print-directory test-bindings
 
 # The valgrind stage used to be a sequence of `valgrind ... && echo clean;`
@@ -314,6 +320,15 @@ test: run-tests
 	fi
 
 # ---- pareto -------------------------------------------------------------
+desire: $(DESIRE_BIN)
+
+$(DESIRE_BIN): $(DESIRE_CLI_OBJ) $(COMMON_OBJ) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD)/desire/cli/%.o: analyze/desire/src/cli/%.c | $(BUILD)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(COMMON_INC) -c $< -o $@
+
 rsm: $(RSM_BIN)
 
 $(RSM_BIN): $(RSM_CLI_OBJ) $(COMMON_OBJ) | $(BIN)
@@ -503,6 +518,7 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 	@ROBUST=$(ROBUST_BIN) bash orchestrate/robust/tests/test_robust_cli.sh
 	@BIN=$(BIN) bash analyze/report/tests/test_report_cli.sh
 	@BIN=$(BIN) bash optimize/rsm/tests/test_rsm_cli.sh
+	@BIN=$(BIN) bash analyze/desire/tests/test_desire_cli.sh
 	@$(MAKE) --no-print-directory test-bindings
 
 # Python binding contract tests.
