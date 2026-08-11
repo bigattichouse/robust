@@ -145,7 +145,7 @@ variance attribution, which is reason enough on its own. Per the additive rule
 above, nothing here retires `sobol`; the docs just say when the cheaper path
 suffices.
 
-## E4. RSM stage — from "who matters" to "what setting is best"
+## E4. RSM stage — from "who matters" to "what setting is best" ✓ **BUILT**
 
 Central composite (or Box–Behnken) design on the 2–3 funnel survivors →
 quadratic fit → stationary-point + canonical analysis → predicted optimum.

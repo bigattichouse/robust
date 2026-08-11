@@ -12,14 +12,14 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 
 ## Where things stand
 
-**Ten binaries ship**, all in `build/bin/`:
+**Eleven binaries ship**, all in `build/bin/`:
 
 | stage | binaries |
 |---|---|
 | `screen/` | `morris` — μ\* / σ, group screening, `bifurcate` |
 | `attribute/` | `sobol` — Sᵢ / S_Tᵢ with CIs, second-order pairs |
 | `resolve/` | `ofat`, `grid` |
-| `optimize/` | `taguchi` |
+| `optimize/` | `taguchi`, `rsm` |
 | `analyze/` | `pareto`, `regress`, `uq`, `report` |
 | `orchestrate/` | `robust` |
 
@@ -42,7 +42,8 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 | E3 | ~ `morris --groups` + `bifurcate` ✓; `pawn` and `morris analyze --dgsm` pending |
 | E2 | ✓ complete — `morris converge` + `sobol converge` |
 | E5 | ✓ complete — `noise:`, crossed designs, S/N ratios, `taguchi robust` |
-| E4, E6, E7 | pending |
+| E4 | ✓ complete — `rsm`: central composite design, quadratic fit, stationary point |
+| E6, E7 | pending |
 
 *E1 and E3 were both recorded here as complete until 2026-08-09. They are not:
 each has one deliverable left, and in E1's case it was blocked on a binary the
