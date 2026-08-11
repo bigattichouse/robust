@@ -12,7 +12,7 @@ Answers *"which factors matter at all?"*
 converges" sentinel) fails analysis with a clean error rather than propagating
 into μ\*/σ — have your model clamp to a large finite penalty instead.
 
-Status: planned — see [../DESIGN.md](../DESIGN.md) §4 and roadmap **M2**.
+Status: planned — see [../DESIGN.md](../../DESIGN.md) §4 and roadmap **M2**.
 Builds on `core/libdoe` (PRNG, `.space` scaling, run-loop).
 
 
@@ -232,3 +232,8 @@ The columns are separated now (and every interval stays one space-free token,
 so it cannot split either), but the durable fix is this mode: it lets the table
 keep evolving without breaking anyone. `sobol analyze` carries the same flag
 and the same guarantee.
+
+## Worked example
+
+[**1. Which knobs matter at all?**](../../examples/cookies/#1-which-knobs-matter-at-all-morris) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one screens seven cookie factors down to three, and correctly drops eggs.

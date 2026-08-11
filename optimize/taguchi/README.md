@@ -515,3 +515,8 @@ taguchi/
 
 ## License
 Public Domain (CC0) - no restrictions on use, modification, or distribution.
+
+## Worked example
+
+[**4. What's the best setting?**](../../examples/cookies/#4-whats-the-best-setting-taguchi) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one optimises in nine batches instead of eighty-one, then tests whether that prediction held.

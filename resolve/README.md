@@ -36,3 +36,8 @@ measured against the effects you would act on. A share-of-variance threshold
 answers a different question and gets it wrong: for `y = a + b + 0.2ab` the
 interaction is a quarter of each main effect, plainly worth knowing, yet only
 7.7% of total variation.
+
+## Worked example
+
+[**3. Which two are in a relationship?**](../examples/cookies/#3-which-two-are-in-a-relationship-grid) — part of [one experiment carried through every tool](../examples/cookies/),
+where this one resolves temperature x time -- browning is a product, not a sum.

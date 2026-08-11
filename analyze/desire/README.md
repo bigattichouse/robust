@@ -43,3 +43,8 @@ The scalar path and the front view answer different questions. `desire`
 **recommends** — one number to optimise, so the whole funnel applies.
 `pareto` **shows the trade-off space** — every non-dominated option, so you can
 see what you would be giving up. Use both.
+
+## Worked example
+
+[**7. Taste isn't the only thing**](../../examples/cookies/#7-taste-isnt-the-only-thing-desire-and-pareto) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one trades taste against cost and oven time.

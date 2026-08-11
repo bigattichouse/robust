@@ -35,3 +35,8 @@ A constant response is called out rather than summarised into a row of zeros.
 
 Reads the same results-CSV dialect as everything else, including a `.front`
 file — its preamble is comments.
+
+## Worked example
+
+[**the walkthrough**](../../examples/cookies/) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one summarises how much the score varies across the design.

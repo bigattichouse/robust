@@ -16,7 +16,7 @@ in-process; it shells out only to your model `<script>`, which reads
 **Security:** `ROBUST_<factor>` values are passed to the script as environment
 *data* (via `setenv`, never spliced into a command). Your script must read them as
 data — don't interpolate them into a shell / `eval` / `awk` program — so a hostile
-`.space` can't inject through it. See [../SECURITY.md](../SECURITY.md).
+`.space` can't inject through it. See [../SECURITY.md](../../SECURITY.md).
 
 **Responses must be finite.** A script that prints `inf`/`nan` (e.g. a "never
 converges" sentinel) hard-fails the run with a clean error rather than
@@ -28,4 +28,9 @@ they point to — no symlink or privilege checks. Don't run it with elevated
 privileges against paths you don't control.
 
 Status: **built (M4)** — funnel + screen + report + `.tgu` hand-off, validated by
-orchestrated-process tests. See [../DESIGN.md](../DESIGN.md) §6.
+orchestrated-process tests. See [../DESIGN.md](../../DESIGN.md) §6.
+
+## Worked example
+
+[**the walkthrough**](../../examples/cookies/) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one runs the screen-then-attribute funnel in one command.

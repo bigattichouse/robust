@@ -52,3 +52,8 @@ than a number that looks like an answer.
 
 Two or three factors. A response surface over everything is the full factorial
 this toolkit exists to avoid — screen first, then bring the survivors here.
+
+## Worked example
+
+[**5. Where exactly is the peak?**](../../examples/cookies/#5-where-exactly-is-the-peak-rsm) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one finds 369F -- a temperature that appeared in no design.

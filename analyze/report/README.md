@@ -43,3 +43,8 @@ wrote, and a name is not markup.
 `report` reads files by path, so the JSON reader (`core/src/json_parse.c`) is
 strict — no comments, no trailing commas, no `NaN`/`Infinity`, a nesting cap,
 and a size cap. It is fuzzed under ASan/UBSan as part of `make fuzz`.
+
+## Worked example
+
+[**8. Write it down**](../../examples/cookies/#8-write-it-down-report) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one turns the whole study into one self-contained page.

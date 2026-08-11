@@ -36,3 +36,8 @@ relationship that is monotone but curved. If `R²` is poor here and good with
 Errors rather than guesses: a constant response, a constant factor column, two
 factors that move together (rank-deficient — their effects cannot be
 separated), or fewer runs than factors.
+
+## Worked example
+
+[**the walkthrough**](../../examples/cookies/) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one shows which direction each factor pushes the score.

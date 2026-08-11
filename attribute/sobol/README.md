@@ -16,7 +16,7 @@ against the Ishigami function's closed-form indices.
 converges" sentinel) fails analysis with a clean error — variance decomposition
 on infinity is meaningless. Have your model clamp to a large finite penalty.
 
-Status: planned — see [../DESIGN.md](../DESIGN.md) §5 and roadmap **M3 / M5**.
+Status: planned — see [../DESIGN.md](../../DESIGN.md) §5 and roadmap **M3 / M5**.
 
 
 ## Second-order indices
@@ -112,3 +112,8 @@ fields in the table too, and each interval is a single space-free token
 (`[0.29,0.41]`). They used to be glued together — `0.353[0.29,0.41]` — which
 silently broke every consumer that split the row positionally. See the same
 section in [../../screen/morris/README.md](../../screen/morris/README.md).
+
+## Worked example
+
+[**2. How much does each matter?**](../../examples/cookies/#2-how-much-does-each-matter-and-do-they-interact-sobol) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one attributes the variance and confirms the interaction screening only hinted at.

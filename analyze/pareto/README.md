@@ -112,3 +112,8 @@ analytic front **before** any store behaviour is exercised:
   case above cannot detect an over-permissive filter; this one can.
 - Exhaustive: over 200 random 2–5 objective problems, every excluded point must
   have a dominator among the survivors and no survivor may dominate another.
+
+## Worked example
+
+[**7. Taste isn't the only thing**](../../examples/cookies/#7-taste-isnt-the-only-thing-desire-and-pareto) — part of [one experiment carried through every tool](../../examples/cookies/),
+where this one shows the recipes where you cannot improve one thing without giving up another.
