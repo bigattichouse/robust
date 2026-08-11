@@ -76,9 +76,9 @@ core/         libdoe — PRNG, sampling, .space parsing + scaling, fork/env
 screen/       morris/            "which factors matter at all?"
 attribute/    sobol/             "how much variance, and which interactions?"
 resolve/      ofat/  grid/       "is that effect real, and who does it pair with?"
-optimize/     taguchi/           "what is the best, most robust setting?"
+optimize/     taguchi/  rsm/     "what is the best, most robust setting?"
 
-analyze/      pareto/  regress/  uq/  report/
+analyze/      pareto/  regress/  uq/  report/  desire/
               consume results — no new sampling, no model runs
 
 orchestrate/  robust/            drives the whole funnel, emits the report
@@ -134,7 +134,7 @@ price of the warning that made it worth reading.
 an analyze stage alongside: `morris` (μ\*/σ, group screening, recursive
 splitting), `sobol` (Sᵢ/S_Tᵢ with bootstrap CIs and second-order pairs),
 `ofat` and `grid` (confirmation and interaction resolution), `taguchi`,
-`pareto`, `regress`, `uq`, `report`, and the `robust` funnel.
+`pareto`, `regress`, `uq`, `report`, `desire`, `rsm`, and the `robust` funnel.
 
 All suites pass under `-Werror`, valgrind and ASan/UBSan, with adversarial-input
 coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 88.3%
@@ -154,8 +154,8 @@ bit-for-bit identical to the authors' own reference generator, and measured
 against the same closed form it is 3× more accurate than Latin Hypercube at
 N=256 and **66× at N=65536**.
 
-Still to build: RSM and noise factors, sequential convergence targets, and the
-smaller items listed in [STATUS.md](STATUS.md).
+Still to build: PCE surrogates and the two remaining sensitivity methods
+(`pawn`, `--dgsm`); see [STATUS.md](STATUS.md).
 
 ## License
 

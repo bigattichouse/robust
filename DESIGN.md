@@ -239,6 +239,8 @@ hard-won rules):
 | `ofat`   | One-factor-at-a-time confirmation around a base point. *"Any OA effect you act on costs exactly two more runs to verify"* — directly targets the aliasing / "16 dB artifact" failure mode. |
 | `grid`   | Small full-factorial (2–3 factors, 3×3) to **resolve** interactions Sobol's `S_Tᵢ−Sᵢ` flags — exact, no aliasing. |
 | `report` | Standalone unified HTML/SVG: Morris μ*–σ scatter, Sobol Sᵢ/S_Tᵢ tornado bars, Taguchi main-effects + S/N. (Also callable as `robust report`.) |
+| `rsm` | Response surface: central composite design over 2–3 survivors, quadratic fit, stationary point + a verdict on whether it is a maximum, a minimum, a saddle or outside the region run. (E4) |
+| `desire` | Derringer–Suich desirability: maps several metrics to [0,1], combines by geometric mean, appends a `desirability` column so the single-response pipeline runs on multi-objective results unchanged. (E7) |
 
 Later / optional: a **confirmation-run checker** (Taguchi additive prediction vs.
 measured optimum → "interactions dominate?"), Sobol **convergence diagnostics**
@@ -258,6 +260,8 @@ Python **surrogate fitter** (RF/GP on LHS → Sobol on the surrogate) for slow m
 | `ofat`    | **new** | OFAT confirmation runs |
 | `grid`    | **new** | 2–3 factor interaction grids |
 | `report`  | **new** | unified HTML/SVG dashboard |
+| `rsm`     | **new** | response surface: quadratic fit + stationary point |
+| `desire`  | **new** | desirability over several metrics |
 
 MVP = `morris`, `sobol`, `robust`. Extended = `ofat`, `grid`, `report`.
 
