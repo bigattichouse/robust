@@ -1,0 +1,17 @@
+# Robustness, asked separately and asked narrowly.
+#
+# Screening and RSM have already settled butter and time. What is left is the
+# question those stages cannot answer: of the temperatures and doughs that all
+# taste fine on a good oven, which one still tastes fine on a bad one?
+#
+# Few control factors on purpose. A crossed design multiplies runs by the outer
+# array, and a noise effect has to compete with every control effect for the
+# same nine rows -- so this is the wrong place to also be screening.
+factors:
+  temp: 350, 375, 400
+  flour: 2.0, 2.375, 2.75
+
+noise:
+  oven: -30, 30
+
+array: L9

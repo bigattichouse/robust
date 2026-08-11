@@ -1,0 +1,11 @@
+# Two factors, for the response surface.
+#
+# Narrow ranges on purpose: RSM fits a curve, and a curve fitted over the whole
+# 325-425F range would be describing the burnt end as much as the good part.
+# You come here after screening and optimisation have told you roughly where
+# to look.
+factors:
+  butter: 0.55, 0.95
+  temp: 345, 405
+
+seed: 7

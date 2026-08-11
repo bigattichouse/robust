@@ -1,0 +1,16 @@
+# The survivors from screening, as a Taguchi array -- plus the oven.
+#
+# `oven` is a NOISE factor: your oven runs hot or cold and you cannot fix it,
+# but you can deliberately test both. Crossing it against the recipe asks a
+# different question from "what tastes best": it asks which recipe still
+# tastes good when the oven is wrong.
+factors:
+  butter: 0.5, 0.75, 1.0
+  temp: 350, 375, 400
+  time: 9, 11, 13
+  flour: 2.0, 2.375, 2.75
+
+noise:
+  oven: -30, 30
+
+array: L9

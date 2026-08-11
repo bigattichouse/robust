@@ -287,6 +287,7 @@ run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN) \
 	@BIN=$(BIN) bash analyze/report/tests/test_report_cli.sh
 	@BIN=$(BIN) bash optimize/rsm/tests/test_rsm_cli.sh
 	@BIN=$(BIN) bash analyze/desire/tests/test_desire_cli.sh
+	@BIN=$(BIN) bash examples/tests/test_examples.sh
 	@$(MAKE) --no-print-directory test-bindings
 
 # The valgrind stage used to be a sequence of `valgrind ... && echo clean;`
@@ -528,6 +529,7 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 	@BIN=$(BIN) bash analyze/report/tests/test_report_cli.sh
 	@BIN=$(BIN) bash optimize/rsm/tests/test_rsm_cli.sh
 	@BIN=$(BIN) bash analyze/desire/tests/test_desire_cli.sh
+	@BIN=$(BIN) bash examples/tests/test_examples.sh
 	@$(MAKE) --no-print-directory test-bindings
 
 # Python binding contract tests.

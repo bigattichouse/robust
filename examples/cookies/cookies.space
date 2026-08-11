@@ -1,0 +1,16 @@
+# Seven things you can change about a batch of cookies.
+#
+# Ranges are what a home baker would actually try -- not the widest the oven
+# allows, but the widest worth tasting.
+factors:
+  butter: 0.5, 1.0          # cups
+  sugar_ratio: 0.5, 2.0     # brown : white
+  flour: 2.0, 2.75          # cups
+  egg: 1, 3                 # whole eggs
+  chips: 0.5, 1.5           # cups
+  temp: 325, 425            # degrees F
+  time: 8, 14               # minutes
+
+seed: 7
+trajectories: 12
+samples: 256

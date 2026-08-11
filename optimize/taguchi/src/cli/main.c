@@ -67,7 +67,7 @@ static void print_usage(const char *program_name) {
         "Usage: %s [OPTIONS] <command> [ARGS]\n"
         "\n"
         "Commands:\n"
-        "  generate <file.tgu> [--json]     Generate experiment runs\n"
+        "  generate <file.tgu> [--csv|--json]  Generate experiment runs\n"
         "  run <file.tgu> <script>          Execute experiments with a script\n"
         "  analyze <file.tgu> <results.csv> [--metric N] [--minimize] [--json]\n"
         "                                   Main effects + optimal configuration\n"
@@ -206,9 +206,10 @@ static int cmd_generate(int argc, char *argv[]) {
     }
     
     const char *filename = argv[1];
-    int as_json = 0;
+    int as_json = 0, as_csv = 0;
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--json") == 0) as_json = 1;
+        else if (strcmp(argv[i], "--csv") == 0) as_csv = 1;
         else {
             /* Rejected, not ignored: a caller asking for a mode this build
              * lacks must not receive the human table and exit 0. */
@@ -258,8 +259,9 @@ static int cmd_generate(int argc, char *argv[]) {
      * not one fewer replicate.
      */
     if (noise_count > 0 && !as_json) {
-        printf("Crossed design: %zu control runs x %zu noise points = %zu runs\n",
-               count, outer, count * outer);
+        /* The banner goes to stderr so stdout is clean CSV a harness can read. */
+        fprintf(stderr, "Crossed design: %zu control runs x %zu noise points = %zu runs\n",
+                count, outer, count * outer);
         printf("run_id");
         for (size_t f = 0; f < factor_count; f++)
             printf(",%s", taguchi_def_get_factor_name(def, f));
@@ -280,6 +282,32 @@ static int cmd_generate(int argc, char *argv[]) {
                     printf(",%s", taguchi_def_get_noise_level(def, n, lv[n]));
                 printf("\n");
             }
+        }
+        taguchi_free_runs(runs, count);
+        taguchi_free_definition(def);
+        return 0;
+    }
+
+    if (as_csv) {
+        /*
+         * The design as a plain results-CSV skeleton: one row per run, a
+         * column per factor. It is what you feed to whatever runs your
+         * experiment, and it matches what `morris sample` and `sobol sample`
+         * emit -- so one harness works for every tool. Without it the only
+         * machine-readable form was --json, which a shell loop cannot read.
+         */
+        printf("run_id");
+        for (size_t f = 0; f < factor_count; f++)
+            printf(",%s", taguchi_def_get_factor_name(def, f));
+        printf("\n");
+        for (size_t i = 0; i < count; i++) {
+            printf("%zu", taguchi_run_get_id(runs[i]));
+            for (size_t f = 0; f < factor_count; f++) {
+                const char *fn = taguchi_def_get_factor_name(def, f);
+                const char *v = taguchi_run_get_value(runs[i], fn);
+                printf(",%s", v ? v : "");
+            }
+            printf("\n");
         }
         taguchi_free_runs(runs, count);
         taguchi_free_definition(def);

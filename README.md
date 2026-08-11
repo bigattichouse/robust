@@ -17,6 +17,18 @@ deterministic simulator to find what matters; Taguchi runs on the bench to optim
 `robust` orchestrates the funnel. Every tool is a small POSIX binary over a shared
 `libdoe` core; [`taguchi`](optimize/taguchi/) — the original tool this grew from — is the `optimize/` stage.
 
+## Start here
+
+**[A worked example: one experiment, every tool](examples/cookies/)**
+
+Seven things you could change about a batch of cookies, and a weekend. It walks
+the whole suite over that one problem, in the order you would actually use it —
+which factors matter, how much, which ones interact, what the best setting is,
+whether that prediction survives contact with reality, and whether the recipe
+still works when your oven runs hot.
+
+No statistics needed to read it, and every command runs in under a second.
+
 ## The binaries
 
 | Binary | Role |
@@ -95,39 +107,6 @@ rather than `analyze/` for exactly that reason — they exist to buy new runs.
 Binaries all land in `build/bin/` regardless of source location, so this layout
 is free to evolve without breaking anything downstream.
 
-## Driving these tools from another program
-
-**Every command that emits a design, a ranking, a measurement or a
-recommendation takes `--json`**, and that is the interface:
-
-| stage | commands |
-|---|---|
-| screen | `morris analyze`, `morris bifurcate` |
-| attribute | `sobol analyze` |
-| resolve | `ofat`, `grid` |
-| optimize | `taguchi generate`, `taguchi analyze`, `taguchi effects` |
-| analyze | `regress`, `uq` |
-| orchestrate | `robust screen`, `robust funnel` (`--json PATH`, or `-` for stdout) |
-
-`morris sample`, `sobol sample` and the `pareto` commands already emit CSV by
-design, and `validate` answers with its exit status. The text tables are a display for
-people; they are laid out to stay positionally parseable, but they will keep
-changing, and a program that parses them will keep breaking. The JSON documents
-carry a `schema` number that is bumped only when a key is renamed or removed,
-so a consumer can refuse a version it does not understand instead of misreading
-it.
-
-This is not hypothetical. `morris analyze` once printed μ\* glued to its new
-confidence interval (`215.6[210,221]`); a downstream tool split each row on
-whitespace, failed to parse *every* row identically, and so read an empty
-ranking as "no factors matter" — skipping its screening stage after paying for
-hours of real benchmark runs, with nothing erroring and nothing warning. See
-[screen/morris/README.md](screen/morris/README.md#--json--the-machine-readable-contract).
-
-Diagnostics — near-tie cuts, overlapping intervals, an all-inert result — go to
-**stderr in every mode**, so `--json` never buys a clean-looking document at the
-price of the warning that made it worth reading.
-
 ## Status
 
 **Twelve binaries ship**, covering screen → attribute → resolve → optimize with
@@ -137,8 +116,8 @@ splitting), `sobol` (Sᵢ/S_Tᵢ with bootstrap CIs and second-order pairs),
 `pareto`, `regress`, `uq`, `report`, `desire`, `rsm`, and the `robust` funnel.
 
 All suites pass under `-Werror`, valgrind and ASan/UBSan, with adversarial-input
-coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 88.3%
-lines / 98.7% functions.
+coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 90.0%
+lines / 100% functions.
 
 **Claims are validated too, not just code.** [`validation/`](validation/README.md)
 reproduces the published results this project relies on against closed-form
@@ -156,6 +135,46 @@ N=256 and **66× at N=65536**.
 
 Still to build: PCE surrogates and the two remaining sensitivity methods
 (`pawn`, `--dgsm`); see [STATUS.md](STATUS.md).
+
+## Driving these tools from another program
+
+**Every command that emits a design, a ranking, a measurement or a
+recommendation takes `--json`**, and that is the interface:
+
+| stage | commands |
+|---|---|
+| screen | `morris analyze`, `morris bifurcate` |
+| attribute | `sobol analyze` |
+| resolve | `ofat`, `grid` |
+| optimize | `taguchi generate`, `taguchi analyze`, `taguchi effects` |
+| analyze | `regress`, `uq` |
+| orchestrate | `robust screen`, `robust funnel` (`--json PATH`, or `-` for stdout) |
+| present | `report` reads those documents |
+
+`morris sample`, `sobol sample`, `taguchi generate --csv` and the `pareto`
+commands emit CSV by design, and `validate` answers with its exit status.
+
+The text tables are a display for people. They are laid out to stay positionally
+parseable, but they will keep changing, and a program that parses them will keep
+breaking — so parse the JSON, and check its `schema`, which is bumped only when
+a key is renamed or removed.
+
+Diagnostics — near-tie cuts, overlapping intervals, an all-inert result — go to
+**stderr in every mode**, so `--json` never buys a clean-looking document at the
+price of the warning that made it worth reading.
+
+<details>
+<summary>Why this is a contract and not a convenience</summary>
+
+`morris analyze` once printed μ\* glued to its new confidence interval
+(`215.6[210,221]`). A downstream tool split each row on whitespace, failed to
+parse *every* row identically, and read the resulting empty ranking as "no
+factors matter" — so it skipped its screening stage after paying for hours of
+real benchmark runs, with nothing erroring and nothing warning.
+
+That is why the tables are no longer the interface. See
+[screen/morris/README.md](screen/morris/README.md#--json--the-machine-readable-contract).
+</details>
 
 ## License
 

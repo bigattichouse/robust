@@ -464,14 +464,16 @@ expect_match "Crossed design" "generate crosses control against noise" \
     $TAGUCHI generate "$TMP/rb.tgu"
 expect_match "temp" "the crossed design carries the noise columns" \
     $TAGUCHI generate "$TMP/rb.tgu"
-# 4 control runs x 2 noise points, plus a header and the banner.
-n=$($TAGUCHI generate "$TMP/rb.tgu" | tail -n +3 | wc -l)
+# 4 control runs x 2 noise points, past the CSV header. The banner is on
+# stderr, so stdout is the design and nothing else.
+n=$($TAGUCHI generate "$TMP/rb.tgu" 2>/dev/null | tail -n +2 | wc -l)
 [ "$n" -eq 8 ] && ok "generate emits inner x outer = 8 rows" \
                 || bad "generate emits inner x outer = 8 rows" "$n rows"
 
 # setting=high has the better MEAN but swings +/-8 with temp; setting=low is
 # slightly lower on average and almost immune. Mean says high, S/N says low.
-$TAGUCHI generate "$TMP/rb.tgu" | tail -n +2 > "$TMP/rb_design.csv"
+# the crossed banner goes to stderr, so stdout is already clean CSV
+$TAGUCHI generate "$TMP/rb.tgu" 2>/dev/null > "$TMP/rb_design.csv"
 python3 -c "
 import csv
 rows=list(csv.DictReader(open('$TMP/rb_design.csv')))
