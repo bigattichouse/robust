@@ -26,7 +26,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 **Green across every mode.** Zero build warnings under
 `-Wall -Wextra -Werror -std=c99 -pedantic`; nine test binaries plus six shell
 suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
-`make validate` 8/8. Coverage **89.8% lines / 100% functions**.
+`make validate` 8/8. Coverage **90.0% lines / 100% functions**.
 
 **No known defects.**
 
@@ -473,6 +473,15 @@ reached for the obvious name. Deleted, along with the test.
 .space parser has always rejected them. Those names reach the JSON emitters and
 `setenv("TAGUCHI_<name>")`, neither of which can represent them. Rejected now;
 UTF-8 names still work, since only bytes below 0x20 are refused.
+
+**...and `make coverage` still had none until 2026-08-10.** The fix below
+applied to `CFLAGS`, and the coverage target REPLACES `CFLAGS` wholesale, so
+`build/cov` was built with no `.d` files at all. Adding a field to
+`ExperimentDef` rebuilt some objects there and not others; the link combined
+two struct layouts and `taguchi_generate_runs` returned a 16-run design where
+the `.tgu` asked for 81. Only `make coverage` failed, which reads as a coverage
+problem rather than the stale-object bug it is. When a target overrides
+`CFLAGS`, it inherits none of the discipline in them.
 
 **The build had no header dependencies until 2026-08-06.** Editing `doe.h`
 rebuilt some objects and not others, and the link silently combined two struct

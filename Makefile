@@ -449,7 +449,16 @@ fuzz: | $(BUILD)
 # a normal build. Reports with gcovr if available, else raw gcov totals.
 #   make coverage            summary to stdout
 #   make coverage COVHTML=1  also writes build/coverage/index.html (needs gcovr)
-COVFLAGS = --coverage -O0 -g -DDOE_COVERAGE
+# -MMD -MP as well: `coverage` OVERRIDES CFLAGS, so without them here the
+# coverage object tree has no header dependencies at all -- the exact defect
+# the main build fixed on 2026-08-06, surviving in the one target that
+# replaced the flags wholesale. It bit on 2026-08-10: adding a field to
+# ExperimentDef rebuilt some objects in build/cov and not others, the link
+# combined two struct layouts, and `taguchi_generate_runs` returned a 16-run
+# design where the .tgu asked for 81. The normal build was correct throughout,
+# so only `make coverage` failed -- which reads as a coverage problem rather
+# than the stale-object bug it is.
+COVFLAGS = --coverage -O0 -g -DDOE_COVERAGE -MMD -MP
 
 coverage:
 	@# Clear the previous run's counters first. .gcda files ACCUMULATE across

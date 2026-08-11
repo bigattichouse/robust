@@ -266,7 +266,7 @@ static int cmd_generate(int argc, char *argv[]) {
         for (size_t n = 0; n < noise_count; n++)
             printf(",%s", taguchi_def_get_noise_name(def, n));
         printf("\n");
-        size_t lv[MAX_FACTORS];
+        size_t lv[MAX_NOISE_FACTORS];
         for (size_t i = 0; i < count; i++) {
             for (size_t j = 0; j < outer; j++) {
                 printf("%zu", i * outer + j + 1);

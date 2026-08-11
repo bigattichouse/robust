@@ -281,10 +281,11 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
                 size_t *count = is_noise ? &def->noise_count : &def->factor_count;
                 Factor *table = is_noise ? def->noise : def->factors;
 
-                if (*count >= MAX_FACTORS) {
-                    set_error(error_buf, "line %d: too many %s (max %d)",
+                size_t cap = is_noise ? MAX_NOISE_FACTORS : MAX_FACTORS;
+                if (*count >= cap) {
+                    set_error(error_buf, "line %d: too many %s (max %zu)",
                               line_num, is_noise ? "noise factors" : "factors",
-                              MAX_FACTORS);
+                              cap);
                     free(content_copy);
                     return -1;
                 }

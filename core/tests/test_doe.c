@@ -276,6 +276,77 @@ static int test_json_number(void) {
     return 1;
 }
 
+/*
+ * The JSON reader's lookups. doe_json_at was public and had no caller --
+ * `report` walks the sibling chain instead -- which is exactly how an accessor
+ * ships returning the wrong thing.
+ */
+static int test_json_parse_and_lookup(void) {
+    const char *text =
+        "{\"tool\": \"morris\", \"schema\": 1, \"ok\": true, \"none\": null,\n"
+        " \"factors\": [{\"factor\": \"a\", \"mu_star\": 2.5},\n"
+        "               {\"factor\": \"b\", \"mu_star\": 0.5}]}";
+    doe_json_t doc;
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_json_parse(text, &doc, err) == 0);
+
+    const doe_json_node_t *root = &doc.nodes[0];
+    CHECK(root->type == DOE_JSON_OBJECT);
+    CHECK(strcmp(doe_json_string_of(&doc, root, "tool", ""), "morris") == 0);
+    CHECK(doe_json_number_of(&doc, root, "schema", 0) == 1.0);
+
+    const doe_json_node_t *arr = doe_json_get(&doc, root, "factors");
+    CHECK(arr && arr->type == DOE_JSON_ARRAY && arr->length == 2);
+
+    /* by index -- the accessor under test */
+    const doe_json_node_t *first = doe_json_at(&doc, arr, 0);
+    const doe_json_node_t *second = doe_json_at(&doc, arr, 1);
+    CHECK(first && second);
+    CHECK(strcmp(doe_json_string_of(&doc, first, "factor", ""), "a") == 0);
+    CHECK(strcmp(doe_json_string_of(&doc, second, "factor", ""), "b") == 0);
+    CHECK(doe_json_number_of(&doc, first, "mu_star", 0) == 2.5);
+
+    /* out of range is NULL, not a read past the end */
+    CHECK(doe_json_at(&doc, arr, 2) == NULL);
+    CHECK(doe_json_at(&doc, arr, 99) == NULL);
+    CHECK(doe_json_at(&doc, root, 0) == NULL);      /* not an array */
+    CHECK(doe_json_at(&doc, NULL, 0) == NULL);
+
+    /* absent keys fall back rather than crash */
+    CHECK(doe_json_get(&doc, root, "nope") == NULL);
+    CHECK(doe_json_number_of(&doc, root, "nope", -7.0) == -7.0);
+    CHECK(strcmp(doe_json_string_of(&doc, root, "nope", "dflt"), "dflt") == 0);
+    /* a key of the wrong type falls back too: `ok` is a bool, not a string */
+    CHECK(strcmp(doe_json_string_of(&doc, root, "ok", "dflt"), "dflt") == 0);
+
+    doe_json_free(&doc);
+    return 1;
+}
+
+/* What the reader must REFUSE. Strictness is the feature: these documents are
+ * read from paths a user names. */
+static int test_json_parse_rejects(void) {
+    doe_json_t doc;
+    char err[DOE_ERR_SIZE];
+    const char *bad[] = {
+        "",                      /* empty            */
+        "{",                     /* unterminated     */
+        "{\"a\": 1,}",           /* trailing comma   */
+        "{\"a\": 1} junk",       /* trailing content */
+        "{\"a\": NaN}",          /* not JSON         */
+        "{\"a\": Infinity}",     /* not JSON         */
+        "{a: 1}",                /* unquoted key     */
+        "[1, 2",                 /* unterminated     */
+        "{\"a\": \"\\q\"}",       /* bad escape       */
+    };
+    for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
+        memset(err, 'A', sizeof err);
+        CHECK(doe_json_parse(bad[i], &doc, err) != 0);
+        CHECK(memchr(err, '\0', DOE_ERR_SIZE) != NULL);   /* err is terminated */
+    }
+    return 1;
+}
+
 /* ---- doe_ols_src: standardized regression -------------------------------- */
 
 /*
@@ -616,5 +687,7 @@ int main(void) {
     RUN_TEST(test_json_escape);
     RUN_TEST(test_json_string_bounded);
     RUN_TEST(test_json_number);
+    RUN_TEST(test_json_parse_and_lookup);
+    RUN_TEST(test_json_parse_rejects);
     return TEST_SUMMARY();
 }

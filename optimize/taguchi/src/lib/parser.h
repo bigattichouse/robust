@@ -22,7 +22,7 @@ typedef struct {
      * factors' inner array, so every control setting is scored by how much
      * the response moves when the noise moves.
      */
-    Factor noise[MAX_FACTORS];
+    Factor noise[MAX_NOISE_FACTORS];
     size_t noise_count;
     char array_type[8];  /* "L4", "L9", "L16", "L27", etc. */
 } ExperimentDef;
