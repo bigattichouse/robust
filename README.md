@@ -1,67 +1,74 @@
 # Robust
 
 A small, fast, POSIX-compliant suite of command-line tools for designing and
-analyzing robust experiments — **Morris** screening, **Sobol** variance
-attribution, and **Taguchi** optimization — built in C with a shared-library
-core for easy language bindings.
+analyzing robust experiments — screening, variance attribution, optimization,
+response surfaces and robust parameter design — built in C over a shared
+`libdoe` core.
+
+> ### 👉 New here? [**One experiment, every tool**](examples/cookies/)
+>
+> Seven things you could change about a batch of cookies, and a weekend. It
+> walks the whole suite over that one problem in the order you would actually
+> use it — which factors matter, how much, which ones interact, what the best
+> setting is, whether that prediction survives contact with reality, and
+> whether the recipe still works when your oven runs hot.
+>
+> No statistics needed, and every command runs in under a second.
 
 ```
-many factors ──► MORRIS ──► survivors ──► SOBOL ──► key factors ──► TAGUCHI / grids
-              "what matters?"           "how much, and which   "what is the best,
-               μ*  (importance)          interactions?"          robust setting?"
-               σ   (interaction flag)    Sᵢ, S_Tᵢ (variance)     level means, S/N
+  many factors                                                    one setting
+       │                                                                ▲
+       ▼                                                                │
+    MORRIS  ──►  SOBOL  ──►  GRID / OFAT  ──►  TAGUCHI  ──►  CONFIRM  ──►  RSM
+  what matters?  how much,   which pair,      best of the   did that      where
+                 and do they  and is that     levels tried  prediction    exactly
+                 interact?    effect real?                  hold?         is the peak?
+
+                              ROBUST — and does it survive what you can't control?
 ```
 
-These are **stages of maturity, not competitors**: Morris and Sobol run on a cheap
-deterministic simulator to find what matters; Taguchi runs on the bench to optimize it.
-`robust` orchestrates the funnel. Every tool is a small POSIX binary over a shared
-`libdoe` core; [`taguchi`](optimize/taguchi/) — the original tool this grew from — is the `optimize/` stage.
+Each stage narrows the question and spends more runs on fewer factors. **That
+order is the method**: an exhaustive search over everything is exactly what
+this suite exists to avoid.
 
-## Start here
-
-**[A worked example: one experiment, every tool](examples/cookies/)**
-
-Seven things you could change about a batch of cookies, and a weekend. It walks
-the whole suite over that one problem, in the order you would actually use it —
-which factors matter, how much, which ones interact, what the best setting is,
-whether that prediction survives contact with reality, and whether the recipe
-still works when your oven runs hot.
-
-No statistics needed to read it, and every command runs in under a second.
+`robust` runs the first two stages as one command. `report` turns any of it into
+a page you can hand someone.
 
 ## The binaries
 
 | Binary | Role |
 |---|---|
-| `taguchi` | optimization / bench screening (in `taguchi/`) |
-| `morris`  | factor screening — μ\* (importance), σ (interaction flag) |
-| `sobol`   | variance attribution — Sᵢ (first-order), S_Tᵢ (total) |
-| `robust`  | funnel orchestrator + unified report |
+| `morris`  | screening — μ\* (importance), σ (interaction flag), group screening |
+| `sobol`   | variance attribution — Sᵢ, S_Tᵢ, second-order pairs |
+| `ofat`    | one-factor-at-a-time confirmation — is that effect real? |
+| `grid`    | small full-factorial — resolve an interaction exactly |
+| `taguchi` | orthogonal arrays: optimize, `confirm` a prediction, `robust` design |
+| `rsm`     | response surface — quadratic fit, stationary point |
 | `pareto`  | multi-objective frontier — filter + accumulating `.front` store |
+| `desire`  | Derringer–Suich desirability — several metrics into one |
 | `regress` | SRC/SRRC + R² — the *direction* of each effect |
 | `uq`      | output distribution — percentiles, histogram, skew |
-| `ofat`    | one-factor-at-a-time confirmation — verify an effect before acting |
-| `grid`    | small full-factorial — resolve an interaction exactly |
+| `report`  | self-contained HTML — Pareto chart of effects |
+| `robust`  | funnel orchestrator — screen → attribute in one command |
 
-Not built yet: `report` (unified HTML/SVG dashboard) — `robust` writes its own
-HTML/JSON report today, so this is the standalone version. See
-[STATUS.md](STATUS.md).
-
-All of them share one `.space` factor-definition format and a common C core
+Every tool but one takes the shared `.space` factor format. `taguchi` uses
+`.tgu`, which adds the orthogonal array and the `noise:` section a crossed
+design needs. All of them share a C core
 (`core/libdoe`) holding the PRNG, sampling, factor scaling, the fork/env run-loop,
-CSV/JSON, and stats. See **[STATUS.md](STATUS.md)** for where things stand and what is next,
+CSV, JSON reading and writing, and stats. See **[STATUS.md](STATUS.md)** for where things stand and what is next,
 **[DESIGN.md](DESIGN.md)** for the full plan, and
 **[EXPANSION.md](EXPANSION.md)** for the methods roadmap beyond it.
 
 ## Building
 
 ```bash
-make            # build libdoe + morris, sobol, robust, pareto, and taguchi
-make test       # run every suite, then valgrind (fails the build on a leak)
-make test-all   # also run the taguchi suite
-make test-asan  # the same suites under ASan/UBSan
-make fuzz       # seedable fuzz of every parser that reads untrusted input
-make validate   # reproduce published results against closed-form ground truth
+make                # build libdoe and all twelve binaries into build/bin/
+make test           # every suite, then valgrind (fails the build on a leak)
+make test-asan      # the same suites under ASan/UBSan
+make test-bindings  # the Python binding's suite
+make fuzz           # seedable fuzz of every parser that reads untrusted input
+make validate       # reproduce published results against closed-form ground truth
+make coverage       # line/function/branch coverage (needs gcovr for totals)
 make clean
 ```
 
@@ -73,8 +80,7 @@ our code; see [validation/](validation/README.md).
 `make` builds `libdoe` and every tool binary into `build/bin/`. **`taguchi` is a
 peer like any other** — this Makefile compiles it, there is no sub-make, and its
 two suites are part of `make test`, so they get the same valgrind and ASan/UBSan
-discipline as everything else. `make install` covers the whole suite. Further
-tools land per the DESIGN.md roadmap.
+discipline as everything else. `make install` covers the whole suite.
 
 ## Layout — one directory per stage of use
 
@@ -95,6 +101,9 @@ analyze/      pareto/  regress/  uq/  report/  desire/
 
 orchestrate/  robust/            drives the whole funnel, emits the report
 
+examples/     cookies/           the worked example, and the tests that keep
+                                 every command in it honest
+
 validation/   reproduces published results against closed-form ground truth
 sources/      reference papers, with an errata directory for one of them
 spec/         .bp specifications, blueprints, the screening-methods field guide
@@ -109,11 +118,9 @@ is free to evolve without breaking anything downstream.
 
 ## Status
 
-**Twelve binaries ship**, covering screen → attribute → resolve → optimize with
-an analyze stage alongside: `morris` (μ\*/σ, group screening, recursive
-splitting), `sobol` (Sᵢ/S_Tᵢ with bootstrap CIs and second-order pairs),
-`ofat` and `grid` (confirmation and interaction resolution), `taguchi`,
-`pareto`, `regress`, `uq`, `report`, `desire`, `rsm`, and the `robust` funnel.
+**All twelve binaries above ship**, covering the funnel end to end: screening
+through attribution, resolution, optimization, confirmation, response surfaces
+and robust design, with the analyze stage alongside.
 
 All suites pass under `-Werror`, valgrind and ASan/UBSan, with adversarial-input
 coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 90.0%
