@@ -241,6 +241,49 @@ const char *doe_json_string(const char *s, char *out, size_t cap);
  */
 #define DOE_JSON_NUM 32
 const char *doe_json_number(double v, char *out, size_t cap);
+/* ---- reading JSON ----------------------------------------------------
+ *
+ * A strict reader for the `--json` documents these tools emit: objects,
+ * arrays, strings, numbers, true/false/null. No comments, no trailing commas,
+ * no NaN/Infinity. The tree is a flat node array, so one free releases it.
+ */
+typedef enum {
+    DOE_JSON_NULL, DOE_JSON_BOOL, DOE_JSON_NUMBER,
+    DOE_JSON_STRING, DOE_JSON_ARRAY, DOE_JSON_OBJECT
+} doe_json_type_t;
+
+typedef struct {
+    doe_json_type_t type;
+    char   *key;        /* owned; NULL unless this is a member of an object   */
+    char   *string;     /* owned; DOE_JSON_STRING only                        */
+    double  number;     /* NUMBER, and 0/1 for BOOL                           */
+    long    first;      /* first child index, or -1                           */
+    long    next;       /* next sibling index, or -1                          */
+    size_t  length;     /* members or elements                                */
+} doe_json_node_t;
+
+typedef struct {
+    doe_json_node_t *nodes;
+    size_t count, cap;
+} doe_json_t;
+
+/* Parse `text`. Node 0 is the root. Returns 0, or -1 with err filled. */
+int  doe_json_parse(const char *text, doe_json_t *out, char *err);
+void doe_json_free(doe_json_t *doc);
+
+/* Member of an object by name, or element of an array by index; NULL if
+ * absent or the wrong kind. */
+const doe_json_node_t *doe_json_get(const doe_json_t *doc,
+                                    const doe_json_node_t *obj, const char *key);
+const doe_json_node_t *doe_json_at(const doe_json_t *doc,
+                                   const doe_json_node_t *arr, size_t index);
+
+/* Typed lookups with a fallback, for the common "read a field" case. */
+double      doe_json_number_of(const doe_json_t *doc, const doe_json_node_t *obj,
+                               const char *key, double fallback);
+const char *doe_json_string_of(const doe_json_t *doc, const doe_json_node_t *obj,
+                               const char *key, const char *fallback);
+
 /* Escape a string for embedding in HTML text. Caller frees (doe_free). */
 char *doe_html_escape(const char *s);
 void  doe_free(void *p);

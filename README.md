@@ -130,11 +130,11 @@ price of the warning that made it worth reading.
 
 ## Status
 
-**Nine binaries ship**, covering screen → attribute → resolve → optimize with
+**Ten binaries ship**, covering screen → attribute → resolve → optimize with
 an analyze stage alongside: `morris` (μ\*/σ, group screening, recursive
 splitting), `sobol` (Sᵢ/S_Tᵢ with bootstrap CIs and second-order pairs),
 `ofat` and `grid` (confirmation and interaction resolution), `taguchi`,
-`pareto`, `regress`, `uq`, and the `robust` funnel.
+`pareto`, `regress`, `uq`, `report`, and the `robust` funnel.
 
 All suites pass under `-Werror`, valgrind and ASan/UBSan, with adversarial-input
 coverage and parser fuzzing per [SECURITY.md](SECURITY.md). Coverage is 88.3%

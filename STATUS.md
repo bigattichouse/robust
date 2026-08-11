@@ -12,7 +12,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 
 ## Where things stand
 
-**Nine binaries ship**, all in `build/bin/`:
+**Ten binaries ship**, all in `build/bin/`:
 
 | stage | binaries |
 |---|---|
@@ -20,7 +20,7 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 | `attribute/` | `sobol` — Sᵢ / S_Tᵢ with CIs, second-order pairs |
 | `resolve/` | `ofat`, `grid` |
 | `optimize/` | `taguchi` |
-| `analyze/` | `pareto`, `regress`, `uq` |
+| `analyze/` | `pareto`, `regress`, `uq`, `report` |
 | `orchestrate/` | `robust` |
 
 **Green across every mode.** Zero build warnings under
@@ -35,10 +35,10 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 | | state |
 |---|---|
 | M0–M5, MI | ✓ complete |
-| M6 | ~ `ofat` + `grid` + `taguchi confirm` ✓; `report` still unbuilt |
+| M6 | ✓ complete — `ofat`, `grid`, `taguchi confirm`, `report` |
 | M7 | ~ Python bindings ship and are CI-gated (299 checks), but they drive the CLI as a **subprocess**, not the shared library via **ctypes**, which is what M7 asks for |
 | E0 | ✓ complete |
-| E1 | ~ `pareto`, `regress`, `uq`, μ\* CIs, `--keep-share`, cut-gap ✓; the **Pareto chart of effects** is pending, because it needs `report` |
+| E1 | ✓ complete — the Pareto chart of effects ships in `report` |
 | E3 | ~ `morris --groups` + `bifurcate` ✓; `pawn` and `morris analyze --dgsm` pending |
 | E2 | ✓ complete — `morris converge` + `sobol converge` |
 | E4, E5, E6, E7 | pending |
@@ -63,12 +63,12 @@ and nothing in the toolkit does robustness-to-noise today. Everything it needs
 is now in place. It is the largest single piece of unbuilt *method* and the
 biggest gap between what the project is called and what it does.
 
-### 1. `report`, and the Pareto chart that closes E1
+### 1. M7 — ctypes bindings
 
-The standalone HTML/SVG dashboard, and M6's remaining half. `robust` writes its
-own report today, so the missing piece is the *standalone* tool — plus the
-Pareto chart of effects, which is E1's last deliverable and has nowhere to live
-until `report` exists.
+The Python bindings ship and are CI-gated, but they drive the CLI as a
+subprocess. M7 asks for ctypes against `libtaguchi.so`, which the build already
+produces. The `--json` contracts make the subprocess route perfectly workable,
+so this is about the *cost* of a fork per call, not correctness.
 
 ### 2. ~~M6's confirmation checker~~ — built 2026-08-10
 

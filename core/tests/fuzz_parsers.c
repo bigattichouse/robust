@@ -54,6 +54,20 @@ static const char *SPACE_TMPL =
     "trajectories: 5\n"
     "grid_levels: 4\n";
 
+static const char *JSON_DICT[] = {
+    "{", "}", "[", "]", ":", ",", "\"", "\\", "true", "false", "null",
+    "0", "-1.5e300", "1e999", "NaN", "Infinity", "\\u0041", "\\u", "\\q",
+    "\"tool\"", "\"morris\"", "\"schema\"", "\"factors\"", "\"mu_star\"",
+};
+
+static const char *JSON_TMPL =
+    "{\"tool\": \"morris\", \"command\": \"analyze\", \"schema\": 1,\n"
+    "  \"metric\": \"response\", \"trajectories\": 6, \"runs\": 24,\n"
+    "  \"factors\": [\n"
+    "    {\"factor\": \"a\", \"mu_star\": 1.5, \"sigma\": 0.25},\n"
+    "    {\"factor\": \"b\", \"mu_star\": 0.5, \"sigma\": 0.10}\n"
+    "  ]\n}\n";
+
 static const char *CSV_TMPL =
     "run_id,response\n"
     "1,3.14\n"
@@ -175,6 +189,39 @@ int main(int argc, char **argv) {
     }
     remove(path);
     printf("  doe_csv_read_metric: %ld inputs, %ld parsed OK, no violations\n", citers, ok);
+
+    /* ---- doe_json_parse ----
+     *
+     * report reads these documents from paths a user names, so the parser sees
+     * whatever is on disk. What must hold for ANY input: it terminates, it
+     * fills err on failure, and on success every child/sibling index stays
+     * inside the node array -- a walk must not run off the end.
+     */
+    ok = 0;
+    for (long i = 0; i < iters; i++) {
+        switch (rnd(3)) {
+        case 0:  gen_random(buf, sizeof buf); break;
+        case 1:  gen_soup(buf, sizeof buf, JSON_DICT, sizeof JSON_DICT / sizeof *JSON_DICT); break;
+        default: gen_mutant(buf, sizeof buf, JSON_TMPL); break;
+        }
+        memset(err, 'A', sizeof err);
+        doe_json_t doc;
+        if (doe_json_parse(buf, &doc, err) == 0) {
+            ok++;
+            for (size_t n = 0; n < doc.count; n++) {
+                long fi = doc.nodes[n].first, nx = doc.nodes[n].next;
+                if (fi >= (long)doc.count || nx >= (long)doc.count) {
+                    fprintf(stderr, "FAIL: node %zu index out of range (iter %ld)\n", n, i);
+                    return 1;
+                }
+            }
+            doe_json_free(&doc);
+        } else if (!err_ok(err)) {
+            fprintf(stderr, "FAIL: json error not terminated (iter %ld)\n", i);
+            return 1;
+        }
+    }
+    printf("  doe_json_parse:      %ld inputs, %ld parsed OK, no violations\n", iters, ok);
 
     printf("fuzz_parsers: clean\n");
     return 0;

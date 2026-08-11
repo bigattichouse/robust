@@ -63,6 +63,11 @@ UQ_CLI_SRC = $(wildcard analyze/uq/src/cli/*.c)
 UQ_CLI_OBJ = $(UQ_CLI_SRC:analyze/uq/src/cli/%.c=$(BUILD)/uq/cli/%.o)
 UQ_BIN     = $(BIN)/uq
 
+# report tool (M6/E1) — self-contained HTML from the tools' --json documents
+REPORT_CLI_SRC = $(wildcard analyze/report/src/cli/*.c)
+REPORT_CLI_OBJ = $(REPORT_CLI_SRC:analyze/report/src/cli/%.c=$(BUILD)/report/cli/%.o)
+REPORT_BIN     = $(BIN)/report
+
 # pareto tool (E1) — frontier filter + .front store
 PARETO_INC      = -Ianalyze/pareto/include
 PARETO_LIB_SRC  = $(wildcard analyze/pareto/src/lib/*.c)
@@ -153,9 +158,9 @@ DEPFILES = $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
 -include $(DEPFILES)
 
-.PHONY: all common morris sobol robust taguchi pareto regress uq ofat grid install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all test-bindings validate clean check-default-goal
+.PHONY: all common morris sobol robust taguchi pareto regress uq ofat grid install install-cli uninstall coverage test run-tests test-asan fuzz test-taguchi test-all test-bindings validate clean check-default-goal report
 
-all: common morris sobol robust pareto regress uq ofat grid taguchi
+all: common morris sobol robust pareto regress uq ofat grid taguchi report
 
 # Asserts the pin above still holds. .DEFAULT_GOAL expands in a recipe after
 # every makefile -- including the .d files -- has been read, so this sees the
@@ -252,7 +257,7 @@ TEST_BINS = $(CORE_TEST_BIN) $(RUNNER_TEST_BIN) $(SEC_TEST_BIN) $(MORRIS_TEST_BI
 # same build now produces, so no special ordering is needed.
 run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN) \
            $(REGRESS_BIN) $(UQ_BIN) $(OFAT_BIN) $(GRID_BIN) $(MORRIS_BIN) \
-           $(SOBOL_BIN) $(ROBUST_BIN)
+           $(SOBOL_BIN) $(ROBUST_BIN) $(REPORT_BIN)
 	./$(CORE_TEST_BIN)
 	./$(RUNNER_TEST_BIN)
 	./$(SEC_TEST_BIN)
@@ -269,6 +274,7 @@ run-tests: $(TEST_BINS) $(TAGUCHI_BIN) $(PARETO_BIN) \
 	@MORRIS=$(MORRIS_BIN) bash screen/morris/tests/test_morris_cli.sh
 	@SOBOL=$(SOBOL_BIN) bash attribute/sobol/tests/test_sobol_cli.sh
 	@ROBUST=$(ROBUST_BIN) bash orchestrate/robust/tests/test_robust_cli.sh
+	@BIN=$(BIN) bash analyze/report/tests/test_report_cli.sh
 	@$(MAKE) --no-print-directory test-bindings
 
 # The valgrind stage used to be a sequence of `valgrind ... && echo clean;`
@@ -302,6 +308,15 @@ test: run-tests
 	fi
 
 # ---- pareto -------------------------------------------------------------
+report: $(REPORT_BIN)
+
+$(REPORT_BIN): $(REPORT_CLI_OBJ) $(COMMON_OBJ) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD)/report/cli/%.o: analyze/report/src/cli/%.c | $(BUILD)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(COMMON_INC) -c $< -o $@
+
 pareto: $(PARETO_BIN)
 
 $(PARETO_BIN): $(PARETO_CLI_OBJ) $(PARETO_LIB_OBJ) $(COMMON_OBJ) | $(BIN)
@@ -471,6 +486,7 @@ test-taguchi: $(TAGUCHI_TEST_BIN) $(TAGUCHI_INTEG_BIN)
 	@MORRIS=$(MORRIS_BIN) bash screen/morris/tests/test_morris_cli.sh
 	@SOBOL=$(SOBOL_BIN) bash attribute/sobol/tests/test_sobol_cli.sh
 	@ROBUST=$(ROBUST_BIN) bash orchestrate/robust/tests/test_robust_cli.sh
+	@BIN=$(BIN) bash analyze/report/tests/test_report_cli.sh
 	@$(MAKE) --no-print-directory test-bindings
 
 # Python binding contract tests.
