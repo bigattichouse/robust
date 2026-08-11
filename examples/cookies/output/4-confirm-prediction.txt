@@ -1,0 +1,15 @@
+Confirmation for metric: taste (maximizing)
+
+Run this combination:
+  butter               1.0              (contributes +26.15)
+  temp                 375              (contributes +4.38)
+  time                 11               (contributes +12.5)
+  flour                2.75             (contributes +11.29)
+
+Grand mean          69.5215
+Predicted response  123.85
+
+That prediction is the HYPOTHESIS, not the result. The array never
+ran this combination, so nothing here has tested whether the factors
+actually add up. Run it, then:
+  taguchi confirm cookies.tgu output/4-optimize-results.csv --measured <value>

@@ -5,16 +5,6 @@ analyzing robust experiments — screening, variance attribution, optimization,
 response surfaces and robust parameter design — built in C over a shared
 `libdoe` core.
 
-> ### 👉 New here? [**One experiment, every tool**](examples/cookies/)
->
-> Seven things you could change about a batch of cookies, and a weekend. It
-> walks the whole suite over that one problem in the order you would actually
-> use it — which factors matter, how much, which ones interact, what the best
-> setting is, whether that prediction survives contact with reality, and
-> whether the recipe still works when your oven runs hot.
->
-> No statistics needed, and every command runs in under a second.
-
 ```
   many factors                                                    one setting
        │                                                                ▲
@@ -33,6 +23,16 @@ this suite exists to avoid.
 
 `robust` runs the first two stages as one command. `report` turns any of it into
 a page you can hand someone.
+
+> ### 👉 New here? [**One experiment, every tool**](examples/cookies/)
+>
+> Seven things you could change about a batch of cookies, and a weekend. It
+> walks the whole suite over that one problem in the order you would actually
+> use it — which factors matter, how much, which ones interact, what the best
+> setting is, whether that prediction survives contact with reality, and
+> whether the recipe still works when your oven runs hot.
+>
+> No statistics needed, and every command runs in under a second.
 
 ## The binaries
 

@@ -1,0 +1,16 @@
+Full factorial over temp x time — 9 runs at 3 levels, others held at mid
+
+temp                        8       10.997       13.994   <- time
+325                   76.2078      81.6407      86.3808
+374.95                97.1774      100.312       91.846
+424.9                 95.1852      49.4751            1
+
+Main effect of temp           47.8919
+Main effect of time           29.7812
+Interaction (max departure from additivity): 32.5778
+Interaction share of total variation: 39.2%
+Interaction relative to the larger main effect: 68.0%
+
+These two DO interact. Their main effects are not additive, so
+optimising them independently will not find the joint optimum --
+read the table, not the two ranges.

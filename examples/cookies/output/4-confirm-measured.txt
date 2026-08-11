@@ -1,0 +1,23 @@
+Confirmation for metric: taste (maximizing)
+
+Run this combination:
+  butter               1.0              (contributes +26.15)
+  temp                 375              (contributes +4.38)
+  time                 11               (contributes +12.5)
+  flour                2.75             (contributes +11.29)
+
+Grand mean          69.5215
+Predicted response  123.85
+Measured response   96.5
+Error               -27.3495  (55% of the largest main effect)
+
+The additive prediction did NOT hold. The measurement is off by a
+margin comparable to the effects themselves, which means something
+the array could not see -- an interaction, or aliasing. Resolve the
+suspect pair with `grid`, and do not act on the ranking until you
+have.
+
+This compares one run against one prediction. It is a sanity check,
+not a significance test: that needs an error variance, and a saturated
+array has no degrees of freedom left to estimate one. Replicate, or
+leave a column unassigned, if you need the stronger claim.

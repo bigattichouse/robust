@@ -1,0 +1,14 @@
+Morris elementary effects (metric: taste) — 12 trajectories
+
+Factor                        mu*         [95% CI]        sigma   note
+------                       ----         --------        -----   ----
+temp                        46.47      [26.6,70.8]         58.8   interacting/nonlinear
+butter                      33.99      [32.6,34.7]        33.21   interacting/nonlinear
+time                        27.27      [12.5,45.3]        38.26   interacting/nonlinear
+chips                        8.25         [6.75,9]        2.598   
+sugar_ratio                 4.375         [1.75,7]        5.407   interacting/nonlinear
+flour                           3            [3,3]            0   
+egg                           0.8        [0.8,0.8]    7.833e-05   
+
+Ranked by mu* (importance). sigma >= mu*/2 flags interaction/nonlinearity;
+factors at the bottom with small mu* are screening drop candidates.

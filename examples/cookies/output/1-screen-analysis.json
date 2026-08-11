@@ -1,0 +1,25 @@
+{
+  "tool": "morris",
+  "command": "analyze",
+  "schema": 1,
+  "mode": "per-factor",
+  "metric": "taste",
+  "trajectories": 12,
+  "runs": 96,
+  "factor_count": 7,
+  "total_mu_star": 124.1663875,
+  "all_zero": false,
+  "factors": [
+    {"factor": "temp", "rank": 1, "mu": -21.23705, "mu_star": 46.474775, "mu_star_lo": 26.6051125, "mu_star_hi": 70.7860125, "sigma": 58.80093049, "share": 0.3742943315, "interacting": true},
+    {"factor": "butter", "rank": 2, "mu": 12.2285125, "mu_star": 33.9937375, "mu_star_lo": 32.6478375, "mu_star_hi": 34.6667, "sigma": 33.21038718, "share": 0.2737756827, "interacting": true},
+    {"factor": "time", "rank": 3, "mu": -15.831175, "mu_star": 27.27285, "mu_star_lo": 12.495, "mu_star_hi": 45.318375, "sigma": 38.26330498, "share": 0.2196476079, "interacting": true},
+    {"factor": "chips", "rank": 4, "mu": 8.25, "mu_star": 8.25, "mu_star_lo": 6.75, "mu_star_hi": 9, "sigma": 2.598076211, "share": 0.06644310241, "interacting": false},
+    {"factor": "sugar_ratio", "rank": 5, "mu": -4.375, "mu_star": 4.375, "mu_star_lo": 1.75, "mu_star_hi": 7, "sigma": 5.406750831, "share": 0.03523497855, "interacting": true},
+    {"factor": "flour", "rank": 6, "mu": -3, "mu_star": 3, "mu_star_lo": 3, "mu_star_hi": 3, "sigma": 0, "share": 0.02416112815, "interacting": false},
+    {"factor": "egg", "rank": 7, "mu": 0.800025, "mu_star": 0.800025, "mu_star_lo": 0.7999875, "mu_star_hi": 0.8000625, "sigma": 7.833494518e-05, "share": 0.006443168849, "interacting": false}
+  ],
+  "keep": null,
+  "cut_at": null,
+  "gap_at_cut": null,
+  "cut_is_tie": false
+}

@@ -161,6 +161,35 @@ grep -q "Pareto chart of effects" "$TMP/study.html" \
 run "morris converge reaches a target" \
     "$BIN/morris" converge "$EX/cookies.space" "$EX/model.sh" --target-ci 40
 
+# ---- the committed outputs are current --------------------------------------
+#
+# examples/cookies/output/ is committed so a reader can see every product
+# without running anything. That only helps if it still matches what the tools
+# produce -- a worked example that has quietly drifted from the software is
+# worse than none. Regenerate into a scratch copy and compare.
+if [ -d "$EX/output" ]; then
+    cp -r "$EX" "$TMP/regen"
+    rm -rf "$TMP/regen/output"
+    ABSBIN=$(cd "$BIN" && pwd)
+    if ( cd "$TMP/regen" && BIN="$ABSBIN" ./regenerate.sh >/dev/null 2>&1 ); then
+        ok "regenerate.sh runs"
+        drift=0
+        for f in "$EX"/output/*; do
+            b=$(basename "$f")
+            [ "$b" = "README.md" ] && continue
+            if ! diff -q "$f" "$TMP/regen/output/$b" >/dev/null 2>&1; then
+                echo "      drifted: $b"
+                drift=$((drift+1))
+            fi
+        done
+        [ "$drift" -eq 0 ] && ok "committed outputs match what the tools produce now" \
+            || bad "committed outputs match what the tools produce now" \
+                   "$drift file(s) differ -- run examples/cookies/regenerate.sh"
+    else
+        bad "regenerate.sh runs" "exited non-zero"
+    fi
+fi
+
 echo
 echo "examples tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

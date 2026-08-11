@@ -1,0 +1,17 @@
+OFAT confirmation of 'butter' — 5 runs, others held at mid
+
+butter                         response
+------------------------ --------------
+0.5                             74.3125
+0.624875                        93.7995
+0.74975                         100.312
+0.874625                        93.8514
+0.9995                          74.4164
+
+Measured effect at this base point: 26 (range over 5 levels)
+Curvature: the mid-level sits 25.948 off the straight line between
+the ends (100% of the range). A two-level design would have
+missed this; the optimum may not be at an endpoint.
+
+This is the effect AT ONE POINT. It confirms or refutes a specific
+claim; it does not replace a screen.

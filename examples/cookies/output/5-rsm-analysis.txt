@@ -1,0 +1,9 @@
+Response surface for 'taste' (maximizing), 11 runs
+
+Stationary point is a maximum
+Predicted taste: 101.745
+
+factor                      coded          value
+------                      -----          -----
+butter                         -0           0.75
+temp                      -0.2806        369.047

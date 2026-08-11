@@ -1,0 +1,24 @@
+Robust analysis of 'taste' (larger-the-better)
+9 inner runs x 2 outer points = 18 runs
+
+run            mean           sd     S/N (dB)
+---            ----           --     --------
+1              90.7        15.61        38.96
+2             95.01        6.336        39.53
+3             94.16         3.96        39.47
+4             89.69        8.259           39
+5             98.74        1.321        39.89
+6             98.47       0.5162        39.87
+7             71.23         43.6        34.51
+8             85.03        17.35        38.32
+9             85.32        10.84        38.52
+
+factor               robust (S/N)     mean-optimal    
+------               ------------     ------------    
+temp                 375              375             
+flour                2.75             2.375              <- differ
+
+The robust and mean-optimal settings DIFFER. That is a control x noise
+interaction: the setting with the best average is not the one that holds
+up when the noise moves. Take the S/N column -- that is the whole reason
+for running a crossed design.

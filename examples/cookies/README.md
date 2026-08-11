@@ -15,6 +15,10 @@ question it answers and what to do with the answer.
 cd examples/cookies          # every command below is run from here
 ```
 
+**In a hurry, or just browsing?** Every output is committed in
+[`output/`](output/) — start with [`output/study.html`](output/study.html), the
+report this ends with. `./regenerate.sh` rebuilds them all.
+
 ---
 
 ## The problem
@@ -292,6 +296,16 @@ each later stage spends more runs on fewer. **That order is the whole method** �
 running an RSM over seven factors is the 2187 batches you were avoiding.
 
 ---
+
+## Everything this produced
+
+[`output/`](output/) holds every design, result, table and the final page —
+committed, so you can read the study without running it. See
+[`output/README.md`](output/README.md) for a map.
+
+They are not decoration: `examples/tests/test_examples.sh` regenerates them and
+fails the build if the tools no longer produce what is committed here. A worked
+example that has quietly drifted from the software is worse than none.
 
 ## Files
 

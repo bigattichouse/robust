@@ -1,0 +1,11 @@
+Analysis for metric: taste (maximizing)
+
+Main Effects:
+Factor                  Range   Level Means
+------                  -----   -----------
+butter                 49.391   L1=66.607, L2=46.283, L3=95.674
+temp                   10.488   L1=71.249, L2=73.902, L3=63.414
+time                   26.886   L1=55.138, L2=82.024, L3=71.403
+flour                  19.213   L1=66.148, L2=61.601, L3=80.815
+
+Optimal Configuration: butter=level_3, temp=level_2, time=level_2, flour=level_3
