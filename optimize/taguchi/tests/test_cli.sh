@@ -441,6 +441,105 @@ json_is "True" "[s['value'] for s in d['settings']] == ['cold', 'low']" \
     "confirm --json: --minimize recommends the low settings" \
     $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/grad.csv" --minimize --json
 
+# ---------------------------------------------------------------- robust (E5)
+#
+# The classic Taguchi "robust", and the thing this repo is named for: control
+# factors inner, noise factors outer, crossed, and the recommendation is the
+# setting least sensitive to what you cannot control.
+#
+# EXPANSION.md E5 states the validation exactly: "on a model with a known
+# control x noise interaction, the S/N-optimal setting differs from the
+# mean-optimal one exactly as constructed." So construct one.
+cat > "$TMP/rb.tgu" <<'EOF'
+factors:
+  setting: low, high
+  other: p, q
+noise:
+  temp: cold, hot
+array: L4
+EOF
+
+expect_exit 0 "validate accepts a noise: section" $TAGUCHI validate "$TMP/rb.tgu"
+expect_match "Crossed design" "generate crosses control against noise" \
+    $TAGUCHI generate "$TMP/rb.tgu"
+expect_match "temp" "the crossed design carries the noise columns" \
+    $TAGUCHI generate "$TMP/rb.tgu"
+# 4 control runs x 2 noise points, plus a header and the banner.
+n=$($TAGUCHI generate "$TMP/rb.tgu" | tail -n +3 | wc -l)
+[ "$n" -eq 8 ] && ok "generate emits inner x outer = 8 rows" \
+                || bad "generate emits inner x outer = 8 rows" "$n rows"
+
+# setting=high has the better MEAN but swings +/-8 with temp; setting=low is
+# slightly lower on average and almost immune. Mean says high, S/N says low.
+$TAGUCHI generate "$TMP/rb.tgu" | tail -n +2 > "$TMP/rb_design.csv"
+python3 -c "
+import csv
+rows=list(csv.DictReader(open('$TMP/rb_design.csv')))
+print('run_id,response')
+for r in rows:
+    base = 12 if r['setting']=='high' else 10
+    swing = 8 if r['setting']=='high' else 0.2
+    d = swing if r['temp']=='hot' else -swing
+    print('%s,%.4f' % (r['run_id'], base + d))
+" > "$TMP/rb.csv"
+
+expect_exit 0 "robust runs on a crossed design" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv"
+expect_match "differ" "robust flags the control x noise interaction" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv"
+
+json_ok "robust --json parses" $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --json
+json_is "True" "d['recommendations_differ']" \
+    "robust --json: S/N and mean disagree, as constructed" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --json
+json_is "low" "[f['robust_value'] for f in d['factors'] if f['factor']=='setting'][0]" \
+    "robust --json: S/N picks the insensitive setting" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --json
+json_is "high" "[f['mean_value'] for f in d['factors'] if f['factor']=='setting'][0]" \
+    "robust --json: the mean picks the higher-average setting" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --json
+json_is "8" "d['total_runs']" "robust --json reports the crossed run count" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --json
+json_is "2" "d['outer_points']" "robust --json reports the outer array size" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --json
+# The row with the wider spread must score LOWER on S/N -- that is the ratio
+# doing its job, and it is what the whole crossed design buys.
+json_is "True" "min(r['sn_db'] for r in d['rows']) < max(r['sn_db'] for r in d['rows'])" \
+    "robust --json: a wider spread scores worse on S/N" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --json
+json_is "True" "sorted(d['rows'], key=lambda r: r['sd'])[0]['sn_db'] == max(r['sn_db'] for r in d['rows'])" \
+    "robust --json: the tightest row has the best S/N" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --json
+
+# A response with no control x noise interaction must NOT be flagged.
+python3 -c "
+import csv
+rows=list(csv.DictReader(open('$TMP/rb_design.csv')))
+print('run_id,response')
+for r in rows:
+    base = 12 if r['setting']=='high' else 10
+    d = 3 if r['temp']=='hot' else -3      # same swing either way
+    print('%s,%.4f' % (r['run_id'], base + d))
+" > "$TMP/rb_add.csv"
+json_is "False" "d['recommendations_differ']" \
+    "robust --json: no interaction means the columns agree" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb_add.csv" --json
+
+expect_exit 1 "robust rejects a .tgu with no noise: section" \
+    $TAGUCHI robust "$TMP/exp.tgu" "$TMP/grad.csv"
+expect_match "no .noise:. section" "and says why" \
+    $TAGUCHI robust "$TMP/exp.tgu" "$TMP/grad.csv"
+expect_exit 1 "robust rejects an unknown --sn" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --sn sideways
+expect_exit 1 "robust rejects an unknown option" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb.csv" --format json
+# A crossed design needs every pair: a missing one is a missing number.
+head -5 "$TMP/rb.csv" > "$TMP/rb_short.csv"
+expect_exit 1 "robust refuses an incomplete crossed design" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb_short.csv"
+expect_match "missing response" "and names the gap" \
+    $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb_short.csv"
+
 # ---------------------------------------------------------------- summary
 echo
 echo "taguchi CLI tests: $pass passed, $fail failed"

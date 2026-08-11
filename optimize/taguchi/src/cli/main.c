@@ -174,6 +174,30 @@ static int cmd_list_arrays(int argc, char *argv[]) {
     return 0;
 }
 
+#define OUTER_MAX 4096
+
+static size_t outer_size(const taguchi_experiment_def_t *def) {
+    size_t n = 1;
+    size_t nc = taguchi_def_get_noise_count(def);
+    for (size_t i = 0; i < nc; i++) {
+        size_t lv = taguchi_def_get_noise_level_count(def, i);
+        if (lv == 0) return 0;
+        if (n > OUTER_MAX / lv) return 0;      /* refuse to overflow */
+        n *= lv;
+    }
+    return n;
+}
+
+/* The j-th point of the full factorial, as a level index per noise factor. */
+static void outer_point(const taguchi_experiment_def_t *def, size_t j, size_t *lv_out) {
+    size_t nc = taguchi_def_get_noise_count(def);
+    for (size_t i = 0; i < nc; i++) {
+        size_t lv = taguchi_def_get_noise_level_count(def, i);
+        lv_out[i] = j % lv;
+        j /= lv;
+    }
+}
+
 static int cmd_generate(int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Error: generate command requires .tgu file\n");
@@ -217,6 +241,50 @@ static int cmd_generate(int argc, char *argv[]) {
     }
     
     size_t factor_count = taguchi_def_get_factor_count(def);
+    size_t noise_count = taguchi_def_get_noise_count(def);
+    size_t outer = noise_count ? outer_size(def) : 1;
+    if (outer == 0) {
+        fprintf(stderr, "Error: the outer array would exceed %d points\n", OUTER_MAX);
+        taguchi_free_runs(runs, count);
+        taguchi_free_definition(def);
+        return 1;
+    }
+
+    /*
+     * With a `noise:` section the design is CROSSED: every inner (control) run
+     * is paired with every outer (noise) point, and run ids number the pairs
+     * i*outer + j + 1. You have to run all of them -- the spread across the
+     * outer array is the measurement, so a missing pair is a missing number,
+     * not one fewer replicate.
+     */
+    if (noise_count > 0 && !as_json) {
+        printf("Crossed design: %zu control runs x %zu noise points = %zu runs\n",
+               count, outer, count * outer);
+        printf("run_id");
+        for (size_t f = 0; f < factor_count; f++)
+            printf(",%s", taguchi_def_get_factor_name(def, f));
+        for (size_t n = 0; n < noise_count; n++)
+            printf(",%s", taguchi_def_get_noise_name(def, n));
+        printf("\n");
+        size_t lv[MAX_FACTORS];
+        for (size_t i = 0; i < count; i++) {
+            for (size_t j = 0; j < outer; j++) {
+                printf("%zu", i * outer + j + 1);
+                for (size_t f = 0; f < factor_count; f++) {
+                    const char *fn = taguchi_def_get_factor_name(def, f);
+                    const char *v = taguchi_run_get_value(runs[i], fn);
+                    printf(",%s", v ? v : "");
+                }
+                outer_point(def, j, lv);
+                for (size_t n = 0; n < noise_count; n++)
+                    printf(",%s", taguchi_def_get_noise_level(def, n, lv[n]));
+                printf("\n");
+            }
+        }
+        taguchi_free_runs(runs, count);
+        taguchi_free_definition(def);
+        return 0;
+    }
 
     if (as_json) {
         /*
@@ -868,6 +936,336 @@ static size_t best_level_of(taguchi_main_effect_t *effect, bool higher_is_better
     return best;
 }
 
+/* ---- E5: robust parameter design, control x noise ---- */
+
+/*
+ * The classic Taguchi "robust", and the thing this repo is named for.
+ *
+ * Control factors go in an INNER array; noise factors -- what you cannot hold
+ * still in production but CAN vary deliberately on the bench -- go in an OUTER
+ * one. Crossing them scores every control setting by how much the response
+ * moves when the noise moves, so the recommendation becomes "the setting least
+ * sensitive to what you cannot control" rather than "the best average".
+ *
+ * The outer array is the FULL FACTORIAL of the noise factors. Noise factors
+ * are few and usually two-level, so this is both what practice does and the
+ * honest choice: an outer array that aliases noise effects would defeat the
+ * purpose of deliberately exercising them.
+ *
+ * S/N ratios, in dB, per Taguchi:
+ *   larger-better   -10 log10( mean(1/y^2) )
+ *   smaller-better  -10 log10( mean(y^2)   )
+ *   nominal-best     10 log10( mean^2 / var )
+ */
+typedef enum { SN_LARGER, SN_SMALLER, SN_NOMINAL } sn_kind_t;
+
+static double sn_ratio(const double *y, size_t n, sn_kind_t kind, int *bad) {
+    double acc = 0.0, mean = 0.0;
+    *bad = 0;
+    for (size_t i = 0; i < n; i++) mean += y[i];
+    mean /= (double)n;
+
+    if (kind == SN_LARGER) {
+        for (size_t i = 0; i < n; i++) {
+            if (y[i] == 0.0) { *bad = 1; return 0.0; }
+            acc += 1.0 / (y[i] * y[i]);
+        }
+        acc /= (double)n;
+        if (acc <= 0.0) { *bad = 1; return 0.0; }
+        return -10.0 * log10(acc);
+    }
+    if (kind == SN_SMALLER) {
+        for (size_t i = 0; i < n; i++) acc += y[i] * y[i];
+        acc /= (double)n;
+        if (acc <= 0.0) { *bad = 1; return 0.0; }
+        return -10.0 * log10(acc);
+    }
+    /* nominal-best */
+    for (size_t i = 0; i < n; i++) acc += (y[i] - mean) * (y[i] - mean);
+    acc /= (n > 1) ? (double)(n - 1) : 1.0;
+    if (acc <= 0.0 || mean == 0.0) { *bad = 1; return 0.0; }
+    return 10.0 * log10((mean * mean) / acc);
+}
+
+/*
+ * Level means of `score` over the inner runs, for one control factor. This is
+ * a main effect computed on whatever score is passed -- S/N or the plain mean
+ * -- which is what lets the two recommendations be compared directly.
+ */
+static void level_scores(const taguchi_experiment_def_t *def,
+                         taguchi_experiment_run_t **runs, size_t nruns,
+                         const double *score, size_t fi,
+                         double *means_out, size_t nlevels) {
+    const char *fname = taguchi_def_get_factor_name(def, fi);
+    for (size_t lv = 0; lv < nlevels; lv++) {
+        const char *want = taguchi_def_get_factor_level(def, fi, lv);
+        double sum = 0.0;
+        size_t n = 0;
+        for (size_t r = 0; r < nruns; r++) {
+            const char *got = taguchi_run_get_value(runs[r], fname);
+            if (got && want && strcmp(got, want) == 0) { sum += score[r]; n++; }
+        }
+        means_out[lv] = n ? sum / (double)n : 0.0;
+    }
+}
+
+static size_t argbest(const double *v, size_t n, int higher_is_better) {
+    size_t best = 0;
+    for (size_t i = 1; i < n; i++) {
+        int better = higher_is_better ? (v[i] > v[best]) : (v[i] < v[best]);
+        if (better) best = i;
+    }
+    return best;
+}
+
+static int cmd_robust(int argc, char *argv[]) {
+    if (argc < 3) {
+        fprintf(stderr, "Error: robust requires .tgu file and results CSV\n");
+        fprintf(stderr, "Usage: robust <file.tgu> <results.csv> "
+                        "[--sn larger|smaller|nominal] [--metric NAME] [--json]\n");
+        return 1;
+    }
+
+    const char *tgu_file = argv[1], *csv_file = argv[2];
+    const char *metric_name = "response";
+    sn_kind_t kind = SN_LARGER;
+    int as_json = 0;
+
+    for (int i = 3; i < argc; i++) {
+        if (strcmp(argv[i], "--metric") == 0 && i + 1 < argc) metric_name = argv[++i];
+        else if (strcmp(argv[i], "--json") == 0) as_json = 1;
+        else if (strcmp(argv[i], "--sn") == 0 && i + 1 < argc) {
+            const char *k = argv[++i];
+            if      (strcmp(k, "larger") == 0)  kind = SN_LARGER;
+            else if (strcmp(k, "smaller") == 0) kind = SN_SMALLER;
+            else if (strcmp(k, "nominal") == 0) kind = SN_NOMINAL;
+            else { fprintf(stderr, "--sn must be larger, smaller or nominal\n"); return 1; }
+        } else {
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[i]);
+            return 1;
+        }
+    }
+
+    char *content = read_file_dynamic(tgu_file);
+    if (!content) return 1;
+    char error[TAGUCHI_ERROR_SIZE];
+    taguchi_experiment_def_t *def = taguchi_parse_definition(content, error);
+    free(content);
+    if (!def) { fprintf(stderr, "Error parsing %s: %s\n", tgu_file, error); return 1; }
+
+    size_t nnoise = taguchi_def_get_noise_count(def);
+    if (nnoise == 0) {
+        fprintf(stderr, "Error: %s has no `noise:` section, so there is nothing to be\n"
+                        "robust against. Use `analyze` for a single-array experiment.\n",
+                tgu_file);
+        taguchi_free_definition(def);
+        return 1;
+    }
+    size_t outer = outer_size(def);
+    if (outer == 0) {
+        fprintf(stderr, "Error: the outer array would exceed %d points\n", OUTER_MAX);
+        taguchi_free_definition(def);
+        return 1;
+    }
+
+    taguchi_experiment_run_t **runs = NULL;
+    size_t inner = 0;
+    if (taguchi_generate_runs(def, &runs, &inner, error) != 0) {
+        fprintf(stderr, "Error generating runs: %s\n", error);
+        taguchi_free_definition(def);
+        return 1;
+    }
+
+    /* Responses arrive as inner x outer rows, run_id = i*outer + j + 1. */
+    size_t total = inner * outer;
+    double *y = calloc(total, sizeof *y);
+    int *seen = calloc(total, sizeof *seen);
+    if (!y || !seen) { fprintf(stderr, "Error: out of memory\n"); return 1; }
+
+    {
+        taguchi_result_set_t *rs = taguchi_create_result_set(def, metric_name);
+        if (!rs) { fprintf(stderr, "Error creating result set\n"); return 1; }
+        /* parse_csv_results validates run ids against the INNER design, which
+         * is the wrong shape here, so read the file directly. */
+        taguchi_free_result_set(rs);
+    }
+
+    FILE *f = fopen(csv_file, "r");
+    if (!f) { fprintf(stderr, "Error: cannot open '%s'\n", csv_file); return 1; }
+    {
+        char line[4096];
+        int header = 0, mcol = -1;
+        while (fgets(line, sizeof line, f)) {
+            size_t len = strlen(line);
+            while (len && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = '\0';
+            if (len == 0 || line[0] == '#') continue;
+
+            char work[4096];
+            memcpy(work, line, len + 1);
+            char *fields[64];
+            int nf = csv_split(work, fields, 64);
+            for (int i = 0; i < nf; i++) fields[i] = csv_trim(fields[i]);
+
+            if (!header) {
+                header = 1;
+                for (int i = 0; i < nf; i++)
+                    if (strcmp(fields[i], metric_name) == 0) mcol = i;
+                if (mcol < 0) {
+                    fprintf(stderr, "Error: metric column '%s' not found in %s\n",
+                            metric_name, csv_file);
+                    fclose(f); return 1;
+                }
+                continue;
+            }
+            if (nf <= mcol) continue;
+            char *end;
+            long id = strtol(fields[0], &end, 10);
+            if (end == fields[0] || id < 1 || (size_t)id > total) continue;
+            double v = strtod(fields[mcol], &end);
+            if (end == fields[mcol]) continue;
+            y[id - 1] = v;
+            seen[id - 1] = 1;
+        }
+    }
+    fclose(f);
+
+    for (size_t i = 0; i < total; i++) {
+        if (!seen[i]) {
+            fprintf(stderr, "Error: missing response for run %zu. A crossed design needs\n"
+                            "every inner x outer combination: %zu inner rows x %zu outer\n"
+                            "points = %zu runs.\n", i + 1, inner, outer, total);
+            free(y); free(seen);
+            taguchi_free_runs(runs, inner);
+            taguchi_free_definition(def);
+            return 1;
+        }
+    }
+
+    /* Per inner row: mean, sd and S/N across the outer array. */
+    double *mean = calloc(inner, sizeof *mean);
+    double *sd   = calloc(inner, sizeof *sd);
+    double *sn   = calloc(inner, sizeof *sn);
+    if (!mean || !sd || !sn) { fprintf(stderr, "Error: out of memory\n"); return 1; }
+
+    int any_bad = 0;
+    for (size_t i = 0; i < inner; i++) {
+        const double *row = &y[i * outer];
+        double m = 0.0;
+        for (size_t j = 0; j < outer; j++) m += row[j];
+        m /= (double)outer;
+        double v = 0.0;
+        for (size_t j = 0; j < outer; j++) v += (row[j] - m) * (row[j] - m);
+        v /= (outer > 1) ? (double)(outer - 1) : 1.0;
+        mean[i] = m;
+        sd[i] = sqrt(v);
+        int bad = 0;
+        sn[i] = sn_ratio(row, outer, kind, &bad);
+        if (bad) any_bad = 1;
+    }
+
+    if (any_bad) {
+        fprintf(stderr, "Error: the S/N ratio is undefined for at least one inner row\n"
+                        "(a zero response for larger/smaller-better, or a constant row\n"
+                        "for nominal-best). Choose a different --sn, or check the model.\n");
+        free(y); free(seen); free(mean); free(sd); free(sn);
+        taguchi_free_runs(runs, inner);
+        taguchi_free_definition(def);
+        return 1;
+    }
+
+    /*
+     * The two recommendations, side by side. S/N is always maximised -- that
+     * is what the ratio is built to mean -- while the mean-optimal setting
+     * follows the objective the S/N kind implies. When they disagree, a
+     * control x noise interaction is what put them apart, and the S/N answer
+     * is the robust one.
+     */
+    size_t ncontrol = taguchi_def_get_factor_count(def);
+    int mean_higher_better = (kind != SN_SMALLER);
+
+    if (as_json) {
+        printf("{\n  \"tool\": \"taguchi\",\n  \"command\": \"robust\",\n");
+        printf("  \"schema\": %d,\n", TAGUCHI_JSON_SCHEMA);
+        printf("  \"metric\": ");
+        json_str(metric_name);
+        printf(",\n  \"sn\": \"%s\",\n",
+               kind == SN_LARGER ? "larger" : kind == SN_SMALLER ? "smaller" : "nominal");
+        printf("  \"inner_runs\": %zu,\n  \"outer_points\": %zu,\n  \"total_runs\": %zu,\n",
+               inner, outer, total);
+        printf("  \"rows\": [\n");
+        for (size_t i = 0; i < inner; i++) {
+            printf("    {\"run_id\": %zu, \"mean\": ", i + 1);
+            json_num(mean[i]);
+            printf(", \"sd\": ");
+            json_num(sd[i]);
+            printf(", \"sn_db\": ");
+            json_num(sn[i]);
+            printf("}%s\n", i + 1 < inner ? "," : "");
+        }
+        printf("  ],\n  \"factors\": [\n");
+    } else {
+        printf("Robust analysis of '%s' (%s-the-better)\n", metric_name,
+               kind == SN_LARGER ? "larger" : kind == SN_SMALLER ? "smaller" : "nominal");
+        printf("%zu inner runs x %zu outer points = %zu runs\n\n", inner, outer, total);
+        printf("%-6s %12s %12s %12s\n", "run", "mean", "sd", "S/N (dB)");
+        printf("%-6s %12s %12s %12s\n", "---", "----", "--", "--------");
+        for (size_t i = 0; i < inner; i++)
+            printf("%-6zu %12.4g %12.4g %12.4g\n", i + 1, mean[i], sd[i], sn[i]);
+        printf("\n%-20s %-16s %-16s\n", "factor", "robust (S/N)", "mean-optimal");
+        printf("%-20s %-16s %-16s\n", "------", "------------", "------------");
+    }
+
+    int differ = 0;
+    for (size_t fi = 0; fi < ncontrol; fi++) {
+        size_t nlv = taguchi_def_get_factor_level_count(def, fi);
+        if (nlv == 0 || nlv > MAX_LEVELS) continue;
+        double sn_means[MAX_LEVELS], mu_means[MAX_LEVELS];
+        level_scores(def, runs, inner, sn, fi, sn_means, nlv);
+        level_scores(def, runs, inner, mean, fi, mu_means, nlv);
+
+        size_t best_sn = argbest(sn_means, nlv, 1);
+        size_t best_mu = argbest(mu_means, nlv, mean_higher_better);
+        if (best_sn != best_mu) differ = 1;
+
+        const char *fname = taguchi_def_get_factor_name(def, fi);
+        const char *v_sn = taguchi_def_get_factor_level(def, fi, best_sn);
+        const char *v_mu = taguchi_def_get_factor_level(def, fi, best_mu);
+
+        if (as_json) {
+            printf("    {\"factor\": ");
+            json_str(fname);
+            printf(", \"robust_level\": %zu, \"robust_value\": ", best_sn + 1);
+            json_str(v_sn ? v_sn : "");
+            printf(", \"mean_level\": %zu, \"mean_value\": ", best_mu + 1);
+            json_str(v_mu ? v_mu : "");
+            printf(", \"differs\": %s}%s\n",
+                   best_sn == best_mu ? "false" : "true",
+                   fi + 1 < ncontrol ? "," : "");
+        } else {
+            printf("%-20s %-16s %-16s%s\n", fname, v_sn ? v_sn : "?", v_mu ? v_mu : "?",
+                   best_sn == best_mu ? "" : "   <- differ");
+        }
+    }
+
+    if (as_json) {
+        printf("  ],\n  \"recommendations_differ\": %s\n}\n", differ ? "true" : "false");
+    } else if (differ) {
+        printf("\nThe robust and mean-optimal settings DIFFER. That is a control x noise\n"
+               "interaction: the setting with the best average is not the one that holds\n"
+               "up when the noise moves. Take the S/N column -- that is the whole reason\n"
+               "for running a crossed design.\n");
+    } else {
+        printf("\nBoth columns agree, so no control factor changes the response's\n"
+               "SENSITIVITY to this noise -- only its level. A crossed design was not\n"
+               "needed for this answer, which is itself worth knowing.\n");
+    }
+
+    free(y); free(seen); free(mean); free(sd); free(sn);
+    taguchi_free_runs(runs, inner);
+    taguchi_free_definition(def);
+    return 0;
+}
+
 static int cmd_confirm(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Error: confirm requires .tgu file and results CSV\n");
@@ -1262,6 +1660,8 @@ int main(int argc, char *argv[]) {
         return cmd_run(sub_argc, sub_argv);
     } else if (strcmp(command, "analyze") == 0) {
         return cmd_analyze(sub_argc, sub_argv);
+    } else if (strcmp(command, "robust") == 0) {
+        return cmd_robust(sub_argc, sub_argv);
     } else if (strcmp(command, "confirm") == 0) {
         return cmd_confirm(sub_argc, sub_argv);
     } else if (strcmp(command, "effects") == 0) {

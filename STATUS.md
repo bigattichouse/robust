@@ -41,7 +41,8 @@ suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 | E1 | ✓ complete — the Pareto chart of effects ships in `report` |
 | E3 | ~ `morris --groups` + `bifurcate` ✓; `pawn` and `morris analyze --dgsm` pending |
 | E2 | ✓ complete — `morris converge` + `sobol converge` |
-| E4, E5, E6, E7 | pending |
+| E5 | ✓ complete — `noise:`, crossed designs, S/N ratios, `taguchi robust` |
+| E4, E6, E7 | pending |
 
 *E1 and E3 were both recorded here as complete until 2026-08-09. They are not:
 each has one deliverable left, and in E1's case it was blocked on a binary the

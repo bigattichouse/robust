@@ -155,6 +155,20 @@ const char *taguchi_def_get_factor_name(const taguchi_experiment_def_t *def, siz
  * @param index Factor index (0-based)
  * @return Level count, or 0 if the index is out of range
  */
+/**
+ * Noise factors (E5) — the outer array.
+ *
+ * Things you cannot control in production but can vary deliberately on the
+ * bench. Crossed against the control factors, they turn each control setting
+ * into a spread rather than a point, which is what a signal-to-noise ratio
+ * scores. Zero of them means an ordinary single-array experiment.
+ */
+size_t taguchi_def_get_noise_count(const taguchi_experiment_def_t *def);
+const char *taguchi_def_get_noise_name(const taguchi_experiment_def_t *def, size_t index);
+size_t taguchi_def_get_noise_level_count(const taguchi_experiment_def_t *def, size_t index);
+const char *taguchi_def_get_noise_level(const taguchi_experiment_def_t *def,
+                                        size_t noise_index, size_t level_index);
+
 size_t taguchi_def_get_factor_level_count(const taguchi_experiment_def_t *def,
                                           size_t index);
 

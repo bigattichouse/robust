@@ -155,7 +155,7 @@ Depends on the E1 least-squares core and pairs naturally with M6's `grid`.
 Validation: recovers the known optimum of a synthetic quadratic bowl to
 tolerance; degenerate fits (saddle, rank-deficient) produce clean errors.
 
-## E5. Robust parameter design — noise factors
+## E5. Robust parameter design — noise factors ✓ **BUILT**
 
 The classic Taguchi "robust" the repo is named for: a `noise:` section in
 `.space`, crossed (inner × outer) designs, and S/N ratios

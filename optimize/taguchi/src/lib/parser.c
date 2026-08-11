@@ -222,7 +222,8 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
      */
     char *line = content_copy;
     int line_num = 0;
-    int in_factors_section = 0;  // 0 = not in factors section, 1 = in factors section
+    /* 0 = outside any section, 1 = factors:, 2 = noise: */
+    int in_factors_section = 0;
 
     while (line != NULL && *line != '\0') {
         char *nl = strchr(line, '\n');
@@ -246,9 +247,13 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
         if (strcmp(trimmed_line, "factors:") == 0) {
             in_factors_section = 1;
         }
+        /* Noise factors (E5): the outer array. Same line grammar as factors. */
+        else if (strcmp(trimmed_line, "noise:") == 0) {
+            in_factors_section = 2;
+        }
         // Check for array specification
         else if (strncmp(trimmed_line, "array:", 6) == 0) {
-            in_factors_section = 0;  // No longer in factors section
+            in_factors_section = 0;  // No longer in a factor section
 
             // Parse the array type
             const char *array_start = trimmed_line + 6;
@@ -267,19 +272,24 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
             trim_whitespace(def->array_type);
         }
         // If we're in the factors section and the original line started with space (indentation)
-        else if (in_factors_section == 1) {
+        else if (in_factors_section != 0) {
             // The original line (before trimming) should start with whitespace (indentation)
             // and after trimming it should contain a colon
             if ((first_char_original == ' ' || first_char_original == '\t') && strchr(trimmed_line, ':')) {
                 // This is an indented factor line like "  cache_size: 64M, 128M, 256M"
-                if (def->factor_count >= MAX_FACTORS) {
-                    set_error(error_buf, "line %d: too many factors (max %d)",
-                              line_num, MAX_FACTORS);
+                int is_noise = (in_factors_section == 2);
+                size_t *count = is_noise ? &def->noise_count : &def->factor_count;
+                Factor *table = is_noise ? def->noise : def->factors;
+
+                if (*count >= MAX_FACTORS) {
+                    set_error(error_buf, "line %d: too many %s (max %d)",
+                              line_num, is_noise ? "noise factors" : "factors",
+                              MAX_FACTORS);
                     free(content_copy);
                     return -1;
                 }
 
-                Factor *current_factor = &def->factors[def->factor_count];
+                Factor *current_factor = &table[*count];
                 if (parse_factor_line(trimmed_line, current_factor, error_buf) != 0) {  // Use trimmed line
                     /* parse_factor_line has no idea which line it was handed, so
                      * the location is attached here -- the one place that knows. */
@@ -288,7 +298,7 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
                     return -1;
                 }
 
-                def->factor_count++;
+                (*count)++;
             }
             /*
              * Anything else inside `factors:` used to be dropped in silence,
@@ -321,7 +331,7 @@ int parse_experiment_def_from_string(const char *content, ExperimentDef *def, ch
          */
         else {
             set_error(error_buf,
-                      "line %d: unknown key in '%s' (expected 'factors:' or 'array:')",
+                      "line %d: unknown key in '%s' (expected 'factors:', 'noise:' or 'array:')",
                       line_num, trimmed_line);
             free(content_copy);
             return -1;

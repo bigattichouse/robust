@@ -15,6 +15,15 @@ typedef struct {
 typedef struct {
     Factor factors[MAX_FACTORS];
     size_t factor_count;
+    /*
+     * Noise factors (E5). Things you cannot control in production but CAN
+     * vary deliberately on the bench: ambient temperature, feedstock batch,
+     * operator. They form the OUTER array, crossed against the control
+     * factors' inner array, so every control setting is scored by how much
+     * the response moves when the noise moves.
+     */
+    Factor noise[MAX_FACTORS];
+    size_t noise_count;
     char array_type[8];  /* "L4", "L9", "L16", "L27", etc. */
 } ExperimentDef;
 

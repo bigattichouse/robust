@@ -129,6 +129,28 @@ const char *taguchi_def_get_factor_name(const taguchi_experiment_def_t *def, siz
     return def->internal_def.factors[index].name;
 }
 
+size_t taguchi_def_get_noise_count(const taguchi_experiment_def_t *def) {
+    return def ? def->internal_def.noise_count : 0;
+}
+
+const char *taguchi_def_get_noise_name(const taguchi_experiment_def_t *def, size_t index) {
+    if (!def || index >= def->internal_def.noise_count) return NULL;
+    return def->internal_def.noise[index].name;
+}
+
+size_t taguchi_def_get_noise_level_count(const taguchi_experiment_def_t *def, size_t index) {
+    if (!def || index >= def->internal_def.noise_count) return 0;
+    return def->internal_def.noise[index].level_count;
+}
+
+const char *taguchi_def_get_noise_level(const taguchi_experiment_def_t *def,
+                                        size_t noise_index, size_t level_index) {
+    if (!def || noise_index >= def->internal_def.noise_count) return NULL;
+    const Factor *f = &def->internal_def.noise[noise_index];
+    if (level_index >= f->level_count) return NULL;
+    return f->values[level_index];
+}
+
 size_t taguchi_def_get_factor_level_count(const taguchi_experiment_def_t *def,
                                           size_t index) {
     if (!def) return 0;

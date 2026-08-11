@@ -326,6 +326,56 @@ Optimize ingredient proportions and cooking parameters (temperature, time, ingre
 ### Scientific Experiments
 Design experiments with multiple controlled variables efficiently
 
+## Robust parameter design — `noise:` and `robust`
+
+The Taguchi method this repo is named for. Control factors go in the **inner**
+array; factors you cannot hold still in production but *can* vary deliberately
+on the bench go in an **outer** one:
+
+```
+factors:
+  setting: low, high
+  other: p, q
+noise:
+  temp: cold, hot
+array: L4
+```
+
+`generate` then emits the **crossed** design — every control run paired with
+every noise point — and `robust` scores each control row by its mean, spread
+and signal-to-noise ratio:
+
+```sh
+taguchi generate exp.tgu > design.csv      # run all inner x outer rows
+taguchi robust exp.tgu results.csv --sn larger
+```
+
+```
+factor               robust (S/N)     mean-optimal
+setting              low              high               <- differ
+other                p                p
+```
+
+**That disagreement is the entire point.** `high` has the better average and
+swings wildly when the temperature moves; `low` gives up a little average and
+barely notices. Only a crossed design can tell them apart, because only a
+crossed design measures *sensitivity* rather than level.
+
+When both columns agree, no control factor changes the response's sensitivity
+to this noise — which is worth knowing too, and the output says so.
+
+`--sn larger|smaller|nominal` selects the ratio:
+larger-better `-10·log₁₀(mean(1/y²))`, smaller-better `-10·log₁₀(mean(y²))`,
+nominal-best `10·log₁₀(mean²/var)`.
+
+The outer array is the **full factorial** of the noise factors. They are few
+and usually two-level, and an outer array that aliased noise effects would
+defeat the purpose of deliberately exercising them.
+
+Every inner × outer pair is required. The spread across the outer array *is*
+the measurement, so a missing pair is a missing number rather than one fewer
+replicate, and `robust` refuses rather than averaging over a hole.
+
 ## `--json` — the machine-readable contract
 
 `generate`, `analyze` and `effects` take `--json`. **If you are driving this
