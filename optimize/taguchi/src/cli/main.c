@@ -829,6 +829,121 @@ static void print_effects_json(const taguchi_experiment_def_t *def,
     printf("  ]");
 }
 
+/*
+ * Does this results file actually cover this design?
+ *
+ * `analyze`, `effects` and `confirm` all regenerate the array to learn which
+ * level each run used, then bucket the responses by level. Neither step
+ * checks the file's shape, and both failure modes are silent:
+ *
+ *   Too many rows -- a run id the array does not have is skipped, so an L9
+ *   read against a 20-row file produced a complete-looking ranking from rows
+ *   1-9 and said nothing about the other eleven.
+ *
+ *   Too few rows -- a level nothing landed in gets a mean of 0.0, printed in
+ *   the same column as the real means. "L3=0.000" was a fabricated number in
+ *   a table of measurements, at exit 0.
+ *
+ * Worst is a CROSSED design. With a `noise:` section the run ids number inner
+ * x outer PAIRS, so the first nine rows of a 144-row L9 file are nine noise
+ * points of control setting 1 -- and the table came out as a main-effects
+ * ranking of pure noise, labelled with the control factor names. Nothing here
+ * can tell that file from an uncrossed nine-run one by shape alone, and
+ * guessing is the one option worth refusing outright: `robust` already reads
+ * crossed results correctly, so send the reader there.
+ *
+ * Returns 0 when the file covers the design, -1 having explained why not.
+ */
+static int check_results_cover_design(const taguchi_experiment_def_t *def,
+                                      const taguchi_result_set_t *results,
+                                      const char *cmd, const char *csv_file,
+                                      size_t *runs_out) {
+    size_t outer = taguchi_def_get_noise_count(def) ? outer_size(def) : 1;
+    if (outer != 1) {
+        fprintf(stderr,
+                "Error: this is a crossed design -- its `noise:` section makes every\n"
+                "run id an inner x outer PAIR, not a control setting. `%s` builds a\n"
+                "main-effects table over control settings, so it would read the first\n"
+                "%zu rows of %s as %zu different control runs when they are %zu noise\n"
+                "points of the SAME one.\n"
+                "\nUse `taguchi robust` instead: it reads the crossed layout and reports\n"
+                "the mean, spread and S/N of each control run across the outer array.\n",
+                cmd, outer, csv_file, outer, outer);
+        return -1;
+    }
+
+    char error[TAGUCHI_ERROR_SIZE];
+    taguchi_experiment_run_t **runs = NULL;
+    size_t expected = 0;
+    if (taguchi_generate_runs(def, &runs, &expected, error) != 0) {
+        fprintf(stderr, "Error generating runs: %s\n", error);
+        return -1;
+    }
+    taguchi_free_runs(runs, expected);
+    if (expected == 0) {
+        fprintf(stderr, "Error: the design has no runs\n");
+        return -1;
+    }
+
+    unsigned *seen = calloc(expected, sizeof *seen);
+    if (!seen) {
+        fprintf(stderr, "Error: out of memory\n");
+        return -1;
+    }
+
+    size_t count = taguchi_result_count(results);
+    for (size_t i = 0; i < count; i++) {
+        size_t id = taguchi_result_run_id(results, i);
+        if (id < 1 || id > expected) {
+            fprintf(stderr,
+                    "Error: %s has a row for run %zu, but the design has %zu run%s.\n"
+                    "Extra rows were silently ignored before this check existed; a\n"
+                    "results file and the .tgu that produced it must agree.\n",
+                    csv_file, id, expected, expected == 1 ? "" : "s");
+            free(seen);
+            return -1;
+        }
+        seen[id - 1]++;
+    }
+
+    for (size_t i = 0; i < expected; i++) {
+        if (seen[i] > 1) {
+            fprintf(stderr,
+                    "Error: %s has %u rows for run %zu. Each run appears once; the\n"
+                    "analysis has no way to tell a replicate from a duplicated row.\n",
+                    csv_file, seen[i], i + 1);
+            free(seen);
+            return -1;
+        }
+    }
+
+    /* Name every hole rather than only the first: someone fixing one row per
+     * attempt learns the file is short once per attempt. */
+    size_t missing = 0;
+    for (size_t i = 0; i < expected; i++) if (seen[i] == 0) missing++;
+    if (missing > 0) {
+        fprintf(stderr, "Error: %s is missing %zu of the design's %zu runs: ",
+                csv_file, missing, expected);
+        size_t shown = 0;
+        for (size_t i = 0; i < expected && shown < 12; i++) {
+            if (seen[i]) continue;
+            fprintf(stderr, "%s%zu", shown ? ", " : "", i + 1);
+            shown++;
+        }
+        if (missing > shown) fprintf(stderr, ", ...");
+        fprintf(stderr, "\n"
+                "A missing run is not one fewer replicate: no response lands in its\n"
+                "level, so that level's mean came out as 0.000 and printed alongside\n"
+                "real measurements. Measure it, or drop it from the design.\n");
+        free(seen);
+        return -1;
+    }
+
+    free(seen);
+    if (runs_out) *runs_out = expected;
+    return 0;
+}
+
 static int cmd_effects(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Error: effects command requires .tgu file and results CSV\n");
@@ -875,6 +990,13 @@ static int cmd_effects(int argc, char *argv[]) {
         return 1;
     }
 
+    size_t design_runs = 0;
+    if (check_results_cover_design(def, results, "effects", csv_file, &design_runs) != 0) {
+        taguchi_free_result_set(results);
+        taguchi_free_definition(def);
+        return 1;
+    }
+
     taguchi_main_effect_t **effects = NULL;
     size_t effect_count = 0;
     if (taguchi_calculate_main_effects(results, &effects, &effect_count, error) != 0) {
@@ -891,7 +1013,10 @@ static int cmd_effects(int argc, char *argv[]) {
         printf("  \"schema\": %d,\n", TAGUCHI_JSON_SCHEMA);
         printf("  \"metric\": ");
         json_str(metric_name);
-        printf(",\n  \"factor_count\": %zu,\n", effect_count);
+        /* `runs` so a consumer can check the file covered the design without
+         * re-deriving the array size from the table. */
+        printf(",\n  \"runs\": %zu,\n", design_runs);
+        printf("  \"factor_count\": %zu,\n", effect_count);
         print_effects_json(def, effects, effect_count);
         printf("\n}\n");
     } else {
@@ -1351,6 +1476,13 @@ static int cmd_confirm(int argc, char *argv[]) {
         return 1;
     }
 
+    size_t design_runs = 0;
+    if (check_results_cover_design(def, results, "confirm", csv_file, &design_runs) != 0) {
+        taguchi_free_result_set(results);
+        taguchi_free_definition(def);
+        return 1;
+    }
+
     taguchi_main_effect_t **effects = NULL;
     size_t effect_count = 0;
     if (taguchi_calculate_main_effects(results, &effects, &effect_count, error) != 0) {
@@ -1402,6 +1534,9 @@ static int cmd_confirm(int argc, char *argv[]) {
         printf("  \"metric\": ");
         json_str(metric_name);
         printf(",\n  \"objective\": \"%s\",\n", higher_is_better ? "maximize" : "minimize");
+        /* `runs` so a consumer can check the file covered the design without
+         * re-deriving the array size from the table. */
+        printf("  \"runs\": %zu,\n", design_runs);
         printf("  \"grand_mean\": ");
         json_num(grand);
         printf(",\n  \"predicted\": ");
@@ -1543,6 +1678,13 @@ static int cmd_analyze(int argc, char *argv[]) {
         return 1;
     }
 
+    size_t design_runs = 0;
+    if (check_results_cover_design(def, results, "analyze", csv_file, &design_runs) != 0) {
+        taguchi_free_result_set(results);
+        taguchi_free_definition(def);
+        return 1;
+    }
+
     taguchi_main_effect_t **effects = NULL;
     size_t effect_count = 0;
     if (taguchi_calculate_main_effects(results, &effects, &effect_count, error) != 0) {
@@ -1578,6 +1720,9 @@ static int cmd_analyze(int argc, char *argv[]) {
         json_str(metric_name);
         printf(",\n  \"objective\": \"%s\",\n",
                higher_is_better ? "maximize" : "minimize");
+        /* `runs` so a consumer can check the file covered the design without
+         * re-deriving the array size from the table. */
+        printf("  \"runs\": %zu,\n", design_runs);
         printf("  \"factor_count\": %zu,\n", effect_count);
         print_effects_json(def, effects, effect_count);
         printf(",\n");

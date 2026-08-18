@@ -305,6 +305,28 @@ int taguchi_add_result(
 );
 
 /**
+ * Number of results added to the set.
+ *
+ * @param results Result set
+ * @return Count of results, or 0 if results is NULL
+ */
+size_t taguchi_result_count(const taguchi_result_set_t *results);
+
+/**
+ * The run id of the index-th result, in the order the results were added.
+ *
+ * Exposed so a caller can check that a results file covers the design it
+ * claims to: the analysis silently skips a run id the array does not have,
+ * and scores a run the file omits as zero, so only the caller holding both
+ * the definition and the file can tell a complete set from a partial one.
+ *
+ * @param results Result set
+ * @param index Zero-based index, below taguchi_result_count()
+ * @return The run id, or 0 if out of range
+ */
+size_t taguchi_result_run_id(const taguchi_result_set_t *results, size_t index);
+
+/**
  * Free result set.
  * 
  * @param results Result set to free

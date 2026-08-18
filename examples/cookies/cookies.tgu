@@ -1,16 +1,20 @@
-# The survivors from screening, as a Taguchi array -- plus the oven.
+# The survivors from screening, as a Taguchi array.
 #
-# `oven` is a NOISE factor: your oven runs hot or cold and you cannot fix it,
-# but you can deliberately test both. Crossing it against the recipe asks a
-# different question from "what tastes best": it asks which recipe still
-# tastes good when the oven is wrong.
+# Nine batches for four three-level factors, which a full factorial would want
+# eighty-one for. That is the whole trade: main effects cheaply, interactions
+# not at all.
+#
+# No `noise:` section here on purpose. Crossing the oven against the recipe
+# asks a different question -- which recipe still tastes good when the oven is
+# wrong -- and it is asked separately, and narrowly, in cookies-robust.tgu.
+# Mixing the two questions into one array means neither gets nine clean rows,
+# and `analyze` reads a crossed file as control settings when its run ids are
+# really inner x outer pairs. It refuses that file now; this one is the design
+# it is meant to read.
 factors:
   butter: 0.5, 0.75, 1.0
   temp: 350, 375, 400
   time: 9, 11, 13
   flour: 2.0, 2.375, 2.75
-
-noise:
-  oven: -30, 30
 
 array: L9

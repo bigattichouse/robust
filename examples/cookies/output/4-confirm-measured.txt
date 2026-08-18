@@ -1,15 +1,15 @@
 Confirmation for metric: taste (maximizing)
 
 Run this combination:
-  butter               1.0              (contributes +26.15)
-  temp                 375              (contributes +4.38)
-  time                 11               (contributes +12.5)
-  flour                2.75             (contributes +11.29)
+  butter               0.75             (contributes +22.22)
+  temp                 375              (contributes +6.3)
+  time                 9                (contributes +4.358)
+  flour                2.375            (contributes +7.084)
 
-Grand mean          69.5215
-Predicted response  123.85
+Grand mean          75.3862
+Predicted response  115.353
 Measured response   96.5
-Error               -27.3495  (55% of the largest main effect)
+Error               -18.853  (49% of the largest main effect)
 
 The additive prediction did NOT hold. The measurement is off by a
 margin comparable to the effects themselves, which means something

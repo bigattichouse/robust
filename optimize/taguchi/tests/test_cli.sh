@@ -542,6 +542,68 @@ expect_exit 1 "robust refuses an incomplete crossed design" \
 expect_match "missing response" "and names the gap" \
     $TAGUCHI robust "$TMP/rb.tgu" "$TMP/rb_short.csv"
 
+# ------------------------------------------------- results must cover the design
+#
+# `analyze`, `effects` and `confirm` used to read whatever rows the file had
+# and say nothing about the rest. Too many rows: the extras were skipped and a
+# complete-looking ranking came back from the first N. Too few: a level nothing
+# landed in was reported as a mean of 0.000 -- a fabricated number in a table
+# of measurements, at exit 0. Both are the silent-wrong-answer class.
+
+# too many rows: an L9 .tgu against a 20-row file
+{ echo "run_id,response"; for i in $(seq 1 20); do echo "$i,$i"; done; } > "$TMP/rows20.csv"
+for c in analyze effects confirm; do
+    expect_exit 1 "$c refuses more rows than the design has" \
+        $TAGUCHI $c "$TMP/exp.tgu" "$TMP/rows20.csv"
+    expect_match "the design has 9 runs" "and says how many it wanted ($c)" \
+        $TAGUCHI $c "$TMP/exp.tgu" "$TMP/rows20.csv"
+done
+
+# too few rows: the four missing runs used to be scored as 0.0
+head -6 "$TMP/results.csv" > "$TMP/rows5.csv"
+for c in analyze effects confirm; do
+    expect_exit 1 "$c refuses fewer rows than the design has" \
+        $TAGUCHI $c "$TMP/exp.tgu" "$TMP/rows5.csv"
+    expect_match "missing 4 of the design's 9 runs" "and names the holes ($c)" \
+        $TAGUCHI $c "$TMP/exp.tgu" "$TMP/rows5.csv"
+done
+# the fabricated mean itself is gone from the output
+$TAGUCHI analyze "$TMP/exp.tgu" "$TMP/rows5.csv" >"$TMP/short.out" 2>&1
+if grep -q "L3=0.000" "$TMP/short.out"; then
+    bad "a missing run is never printed as a 0.000 measurement" "L3=0.000 still printed"
+else
+    ok "a missing run is never printed as a 0.000 measurement"
+fi
+
+# a duplicated run is not a replicate the analysis can interpret
+{ cat "$TMP/results.csv"; echo "9,999"; } > "$TMP/dup.csv"
+expect_exit 1 "analyze refuses a duplicated run" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/dup.csv"
+expect_match "2 rows for run 9" "and names the duplicate" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/dup.csv"
+
+# the crossed design: run ids number inner x outer PAIRS, so the first rows of
+# rb.csv are noise points of ONE control setting. `analyze` reported them as
+# different control settings and disagreed with `robust` on the same two files,
+# neither saying anything.
+for c in analyze effects confirm; do
+    expect_exit 1 "$c refuses a crossed design outright" \
+        $TAGUCHI $c "$TMP/rb.tgu" "$TMP/rb.csv"
+    expect_match "crossed design" "and says the run ids are pairs ($c)" \
+        $TAGUCHI $c "$TMP/rb.tgu" "$TMP/rb.csv"
+    expect_match "taguchi robust" "and sends the reader to robust ($c)" \
+        $TAGUCHI $c "$TMP/rb.tgu" "$TMP/rb.csv"
+done
+
+# `runs` in the document, so a consumer can check the row count without
+# parsing the table.
+json_is "9" "d['runs']" "analyze --json reports the design's run count" \
+    $TAGUCHI analyze "$TMP/exp.tgu" "$TMP/results.csv" --json
+json_is "9" "d['runs']" "effects --json reports the design's run count" \
+    $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --json
+json_is "9" "d['runs']" "confirm --json reports the design's run count" \
+    $TAGUCHI confirm "$TMP/exp.tgu" "$TMP/results.csv" --json
+
 # ---------------------------------------------------------------- summary
 echo
 echo "taguchi CLI tests: $pass passed, $fail failed"

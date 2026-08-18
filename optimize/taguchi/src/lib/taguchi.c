@@ -366,6 +366,15 @@ int taguchi_add_result(taguchi_result_set_t *results, size_t run_id, double resp
     return result;
 }
 
+size_t taguchi_result_count(const taguchi_result_set_t *results) {
+    return results ? results->internal_results.count : 0;
+}
+
+size_t taguchi_result_run_id(const taguchi_result_set_t *results, size_t index) {
+    if (!results || index >= results->internal_results.count) return 0;
+    return results->internal_results.run_ids[index];
+}
+
 void taguchi_free_result_set(taguchi_result_set_t *results) {
     if (results) {
         // Use analyzer module's free function

@@ -2,6 +2,37 @@
 
 All notable changes to the Taguchi Array Tool project.
 
+## [v1.8.0] - 2026-08-18
+
+### Fixed
+- **`analyze`, `effects` and `confirm` now require the results file to cover
+  the design.** They read whatever rows the file had and said nothing about the
+  rest, in both directions. Too many rows: the extras were skipped, so an L9
+  against a 20-row file returned a complete-looking ranking computed from rows
+  1-9. Too few: a level that no response landed in was reported as a mean of
+  `0.000` — a fabricated number printed in a table of real measurements, at
+  exit 0. Run ids must now be exactly 1..N, each once; anything else is refused
+  with a message naming what is wrong.
+- **A crossed design (`noise:`) is refused by those three commands.** Its run
+  ids number inner x outer *pairs*, so the first rows of the file are several
+  noise points of one control setting, not different control settings — and the
+  output was a main-effects ranking of pure noise wearing the control factors'
+  names. Nothing in the file's shape distinguishes it from an uncrossed one, so
+  the commands now name `robust`, which reads the crossed layout correctly,
+  rather than guess.
+- **`examples/cookies/cookies.tgu` no longer carries a `noise:` section.** The
+  walkthrough ran `analyze` on it, so the committed stage-4 output was itself
+  one of these wrong tables. The robustness question is asked separately by
+  `cookies-robust.tgu`, as its own comment always said it should be.
+
+### Added
+- `runs` in the `analyze`, `effects` and `confirm` `--json` documents: the
+  number of runs the array calls for, and that the results file was checked
+  against. An addition, so no schema bump.
+- `taguchi_result_count()` and `taguchi_result_run_id()` in the public header,
+  so a caller holding both a definition and a results file can perform the
+  coverage check itself.
+
 ## [v1.7.0] - 2026-03-27
 
 ### Added

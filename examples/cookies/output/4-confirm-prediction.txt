@@ -1,13 +1,13 @@
 Confirmation for metric: taste (maximizing)
 
 Run this combination:
-  butter               1.0              (contributes +26.15)
-  temp                 375              (contributes +4.38)
-  time                 11               (contributes +12.5)
-  flour                2.75             (contributes +11.29)
+  butter               0.75             (contributes +22.22)
+  temp                 375              (contributes +6.3)
+  time                 9                (contributes +4.358)
+  flour                2.375            (contributes +7.084)
 
-Grand mean          69.5215
-Predicted response  123.85
+Grand mean          75.3862
+Predicted response  115.353
 
 That prediction is the HYPOTHESIS, not the result. The array never
 ran this combination, so nothing here has tested whether the factors

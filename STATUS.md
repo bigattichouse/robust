@@ -592,6 +592,44 @@ its own reimplementation of group μ\*, which proves nothing about what users
 run. It now drives `morris_group_analyze`, with the prototype retained only as
 an independent second opinion that must agree to 1e-9.
 
+**The tool that reads a file must check the file is the one it thinks.**
+`taguchi analyze`, `effects` and `confirm` regenerated the array to learn which
+level each run used, bucketed the responses by level, and never once asked
+whether the results file had the runs the array called for. Both directions
+were silent. Too many rows: the extras were skipped, so an L9 against a 20-row
+file returned a complete-looking ranking from rows 1-9. Too few: a level that
+no response landed in was reported as a mean of **0.000**, printed in the same
+column as the real means — a fabricated number in a table of measurements, at
+exit 0.
+
+Worst was a **crossed** design. With a `noise:` section the run ids number
+inner × outer *pairs*, so the first nine rows of a 144-row L9 file are nine
+noise points of control setting 1 — and the output was a main-effects ranking
+of pure noise, wearing the control factors' names. Reported 2026-08-18 from the
+inkwell iron-tannate project, where `robust` and `analyze` returned different
+optimal settings from the same two files and neither said anything.
+
+The lessons, in order of how much they cost:
+
+- **The validation already existed.** `taguchi robust` requires every inner ×
+  outer pair and refuses rather than averaging over a hole. `analyze` simply
+  did not call it. Look for the check before writing it — and when one command
+  in a suite validates something, ask why its siblings do not.
+- **The repo's own worked example was demonstrating the bug.**
+  `examples/cookies/cookies.tgu` carried a `noise:` section *and* the
+  walkthrough ran `analyze` on it, so the committed
+  `4-optimize-analysis.txt` was a wrong table shipped as a teaching artifact —
+  and its README prose said "nine batches" while the file generated eighteen.
+  The example suite ran the command and checked it *exited 0*, which it did.
+  An example that runs is not an example that is right.
+- **A zero is the most dangerous default there is.** `0.000` is a plausible
+  measurement. Nothing about it looks like absence, which is precisely why a
+  missing run must be refused rather than defaulted.
+- **Ambiguity is a reason to refuse, not to guess.** A nine-row file for a
+  crossed design could be nine control runs or the first nine of 144; nothing
+  in its shape says which. `analyze` now refuses every crossed design outright
+  and names `robust` instead.
+
 ---
 
 ## Measurements worth keeping

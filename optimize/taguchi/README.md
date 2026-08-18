@@ -262,6 +262,29 @@ run_id,endpoint_type,pressure,system_COP,heating_COP,T_fridge_C,Qh_W
 The `--metric` flag locates the column by header name. Non-numeric columns (factor
 columns, string labels) in all other positions are simply ignored.
 
+### The results file must cover the design
+
+`analyze`, `effects` and `confirm` require **one row per run of the array, and
+no others** — run ids 1..N, each exactly once. Anything else is refused with a
+message naming what is wrong.
+
+This is not pedantry about file hygiene; both directions used to produce a
+confidently wrong table at exit 0:
+
+- **Too many rows.** The extras were skipped, so an L9 read against a 20-row
+  file returned a complete-looking ranking computed from rows 1–9 only.
+- **Too few rows.** A level that no response landed in was reported as a mean
+  of `0.000`, printed in the same column as the real means — a fabricated
+  number in a table of measurements.
+
+**A crossed design (`noise:`) is refused outright.** Its run ids number inner ×
+outer *pairs*, so the first rows of the file are several noise points of the
+*same* control setting, not different control settings. Nothing in the file's
+shape distinguishes it from an uncrossed one, so guessing is not on the table:
+use [`robust`](#robust-parameter-design--noise-and-robust), which reads the
+crossed layout and reports each control run's mean, spread and S/N across the
+outer array.
+
 ## File Format (.tgu)
 
 The `.tgu` file format is YAML-like for defining experiments:
@@ -403,7 +426,7 @@ name you might have mis-scraped:
 
 ```json
 { "tool": "taguchi", "command": "analyze", "schema": 1,
-  "metric": "response", "objective": "maximize", "factor_count": 2,
+  "metric": "response", "objective": "maximize", "runs": 9, "factor_count": 2,
   "effects": [
     {"factor": "temp", "range": 20,
      "levels": [{"level": 1, "value": "cold", "mean": 12},
@@ -425,6 +448,9 @@ Notes:
   in agreement so they cannot drift.
 - **`effects` is in definition order**, not sorted by importance — it is the
   order `levels` is indexed in. Sort on `range` for the ranking.
+- **`runs`** is the number of runs the array calls for, which the results file
+  has been checked against. A consumer can verify the row count from the
+  document instead of re-deriving the array size from the table.
 - **`schema`** is bumped when a key is renamed or removed, never for an
   addition. Refuse a schema you do not know rather than misreading it.
 - Level means are separate numbers at full precision, not the `L1=12.000,

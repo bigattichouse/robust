@@ -153,7 +153,7 @@ recommendation takes `--json`**, and that is the interface:
 | screen | `morris analyze`, `morris bifurcate` |
 | attribute | `sobol analyze` |
 | resolve | `ofat`, `grid` |
-| optimize | `taguchi generate`, `taguchi analyze`, `taguchi effects` |
+| optimize | `taguchi generate`, `taguchi analyze`, `taguchi effects`, `taguchi confirm`, `taguchi robust`, `taguchi list-arrays`, `rsm analyze` |
 | analyze | `regress`, `uq` |
 | orchestrate | `robust screen`, `robust funnel` (`--json PATH`, or `-` for stdout) |
 | present | `report` reads those documents |
@@ -165,6 +165,12 @@ The text tables are a display for people. They are laid out to stay positionally
 parseable, but they will keep changing, and a program that parses them will keep
 breaking — so parse the JSON, and check its `schema`, which is bumped only when
 a key is renamed or removed.
+
+Every document leads with `tool`, `command` and `schema`, so a consumer can
+identify what it is holding before it reads a field. Documents also carry the
+run count they were computed from — `runs` — because a ranking is only as good
+as the rows behind it, and knowing there were nine of them is how you tell a
+complete analysis from a partial one.
 
 Diagnostics — near-tie cuts, overlapping intervals, an all-inert result — go to
 **stderr in every mode**, so `--json` never buys a clean-looking document at the
