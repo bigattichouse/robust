@@ -54,27 +54,43 @@ int main(int argc, char **argv) {
         else { fprintf(stderr, "Error: unknown option '%s'\n", argv[i]); usage(argv[0]); return 2; }
     }
 
-    size_t cap = 1024, n = 0;
-    double *y = malloc(cap * sizeof *y);
-    if (!y) { fprintf(stderr, "Error: out of memory\n"); return 1; }
-
     char err[DOE_ERR_SIZE];
     /* Reuse the shared reader so `uq` accepts exactly what every other tool
      * does, including a .front file (its preamble is comments). */
     if (strcmp(path, "-") == 0) {
         fprintf(stderr, "Error: uq needs a file, not stdin (it must re-read to size)\n");
-        free(y); return 2;
+        return 2;
     }
+
+    /*
+     * Size against the file, in one pass, before reading it.
+     *
+     * This used to guess: allocate 1024, read, and if the buffer came back
+     * exactly full, double it and retry. But the shared reader treats a run_id
+     * past `max_rows` as a data error -- correctly, for the tools that pass a
+     * DESIGN's run count there -- so the probe never reported "buffer full",
+     * it reported "run_id 1025 exceeds run count 1024" and quit. The growth
+     * loop could not run, and `uq`, whose whole job is summarising large
+     * response sets, was capped at 1024 rows.
+     */
+    size_t n = 0;
+    if (doe_csv_max_run_id(path, &n, err) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 1;
+    }
+
+    /* NaN, not malloc's indeterminate bytes: the reader leaves a slot no row
+     * mentions untouched, and the compaction below asks isfinite() about every
+     * slot. Reading uninitialised memory to decide that is undefined, and it
+     * decided wrong often enough to matter on a file with gaps in its ids. */
+    double *y = malloc(n * sizeof *y);
+    if (!y) { fprintf(stderr, "Error: out of memory\n"); return 1; }
+    for (size_t i = 0; i < n; i++) y[i] = NAN;
+
     size_t got = 0;
-    /* Grow until the whole file fits. */
-    for (;;) {
-        int rc = doe_csv_read_metric(path, metric, y, cap, &got, err);
-        if (rc != 0) { fprintf(stderr, "Error: %s\n", err); free(y); return 1; }
-        if (got < cap) { n = got; break; }
-        cap *= 2;
-        double *ny = realloc(y, cap * sizeof *ny);
-        if (!ny) { fprintf(stderr, "Error: out of memory\n"); free(y); return 1; }
-        y = ny;
+    if (doe_csv_read_metric(path, metric, y, n, &got, err) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        free(y); return 1;
     }
 
     /* doe_csv_read_metric keys by run_id, so gaps arrive as untouched slots.

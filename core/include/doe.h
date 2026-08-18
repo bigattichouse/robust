@@ -366,10 +366,24 @@ int doe_run_capture(const doe_space_t *space, const char *prefix, const char *sc
  * ============================================================================ */
 
 /* Read the `metric` column keyed by run_id (1-based) into responses[].
+ *
+ * `max_rows` is the caller's run count: a run_id past it is an error, because
+ * for a caller holding a design it means the file is not that design's. A
+ * caller with no design must therefore size the buffer BEFORE reading -- see
+ * doe_csv_max_run_id -- rather than pass a guess and grow it.
+ *
+ * Slots no row mentions are left untouched, so initialise the buffer if gaps
+ * are possible.
+ *
  * Returns 0 on success, -1 on error (err filled). */
 int doe_csv_read_metric(const char *path, const char *metric,
                         double *responses, size_t max_rows,
                         size_t *count_out, char *err);
+
+/* The greatest run_id in a results file, for a caller with no design to size
+ * against. Not stdin: it is a first pass over a file that will be read again.
+ * Returns 0 on success, -1 on error (err filled). */
+int doe_csv_max_run_id(const char *path, size_t *max_out, char *err);
 
 #ifdef __cplusplus
 }

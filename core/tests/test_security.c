@@ -286,6 +286,82 @@ static int test_csv_reads_valid_results(void) {
     return 1;
 }
 
+/*
+ * Sizing a results file without a design to size against.
+ *
+ * `uq` has no design, so it used to pass its buffer capacity as `max_rows` and
+ * grow on "buffer full". The reader treats a run_id past max_rows as a data
+ * error, so the probe reported "run_id 1025 exceeds run count 1024" instead --
+ * and uq was capped at 1024 rows. This is the function that replaced the
+ * guess.
+ */
+static int test_csv_max_run_id(void) {
+    const char *path = "build/test_maxrunid.csv";
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("run_id,setting,yield\n"
+          "2,x,20.5\n"
+          "1,y,10.25\n"
+          "900,z,30\n"          /* the greatest id, not the row count */
+          "4,w,40\n", f);
+    fclose(f);
+
+    size_t max_id = 0;
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_csv_max_run_id(path, &max_id, err) == 0);
+    CHECK(max_id == 900);
+
+    /* A buffer sized by it is a buffer read_metric will not reject. */
+    double *resp = malloc(max_id * sizeof *resp);
+    CHECK(resp != NULL);
+    for (size_t i = 0; i < max_id; i++) resp[i] = -999.0;
+    size_t got = 0;
+    CHECK(doe_csv_read_metric(path, "yield", resp, max_id, &got, err) == 0);
+    CHECK(got == 4);
+    CHECK(resp[899] == 30.0);
+    free(resp);
+
+    /* No header, the documented default: the first row is already data. */
+    remove(path);
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("1,7.5\n2,8.5\n3,9.5\n", f);
+    fclose(f);
+    CHECK(doe_csv_max_run_id(path, &max_id, err) == 0);
+    CHECK(max_id == 3);
+
+    /* Comments and blank lines are not rows. */
+    remove(path);
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("# a preamble, as a .front file carries\n\nrun_id,response\n5,1\n", f);
+    fclose(f);
+    CHECK(doe_csv_max_run_id(path, &max_id, err) == 0);
+    CHECK(max_id == 5);
+
+    /* Rejections: a bad id, an empty file, a missing file, NULL. */
+    remove(path);
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("run_id,response\n1,1\nzero,2\n", f);
+    fclose(f);
+    CHECK(doe_csv_max_run_id(path, &max_id, err) != 0);
+
+    remove(path);
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("run_id,response\n", f);
+    fclose(f);
+    CHECK(doe_csv_max_run_id(path, &max_id, err) != 0);
+
+    CHECK(doe_csv_max_run_id("build/no_such_results.csv", &max_id, err) != 0);
+    CHECK(doe_csv_max_run_id(NULL, &max_id, err) != 0);
+    CHECK(doe_csv_max_run_id(path, NULL, err) != 0);
+
+    remove(path);
+    return 1;
+}
+
 /* H3 — NULL inputs return an error, never dereference. */
 static int test_null_inputs(void) {
     doe_space_t sp;
@@ -492,6 +568,7 @@ int main(void) {
     RUN_TEST(test_space_parse_file_paths);
     RUN_TEST(test_csv_rejects_broken_results);
     RUN_TEST(test_csv_reads_valid_results);
+    RUN_TEST(test_csv_max_run_id);
     RUN_TEST(test_null_inputs);
     RUN_TEST(test_param_caps);
     RUN_TEST(test_size_mul_ok);

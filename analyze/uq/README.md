@@ -36,6 +36,15 @@ A constant response is called out rather than summarised into a row of zeros.
 Reads the same results-CSV dialect as everything else, including a `.front`
 file — its preamble is comments.
 
+**No row limit, and no design needed.** Unlike the other analyze stages, `uq`
+has no array to check the file against — it summarises whatever responses it is
+handed, so it sizes itself from the file in one pass before reading it. It needs
+a real file rather than stdin for that reason. (It was capped at 1024 rows until
+2026-08-18: it guessed a buffer size and grew on "buffer full", but the shared
+reader reports a run id past the buffer as a *data* error — the right call for
+the tools that pass a design's run count there — so the growth never happened
+and larger files failed outright.)
+
 ## Worked example
 
 [**the walkthrough**](../../examples/cookies/) — part of [one experiment carried through every tool](../../examples/cookies/),

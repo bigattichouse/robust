@@ -630,6 +630,29 @@ The lessons, in order of how much they cost:
   in its shape says which. `analyze` now refuses every crossed design outright
   and names `robust` instead.
 
+**One parameter cannot mean two things.** `doe_csv_read_metric`'s `max_rows` is
+a *design's run count* for every caller that has a design — morris, sobol and
+rsm all pass the size of the array they generated — so a run id past it means
+the file does not belong to that design, and refusing is correct. `uq` has no
+design, and used the same parameter as a *capacity*: allocate 1024, read, and
+grow if the buffer came back exactly full. Those two readings cannot both hold.
+The reader saw run id 1025 against max_rows 1024 and reported a data error, so
+the growth loop could never run and `uq` — whose entire job is summarising large
+response sets — was capped at 1024 rows, failing outright on anything bigger.
+Reported and fixed 2026-08-18 by sizing up front with `doe_csv_max_run_id`.
+
+Two things worth carrying forward:
+
+- **The bug was in the caller that was different, not the check.** The check
+  earned its place; six callers depend on it. Adding a way to *ask the file its
+  size* was the fix, not weakening what the other six rely on.
+- **It reported the greatest run id, not the row count.** The buffer is indexed
+  by run id, so a file holding runs 1, 5 and 900 needs 900 slots for three
+  values. Sizing by row count would have reintroduced the same overflow from
+  the other direction. (Fixing this also surfaced that `uq` was reading those
+  untouched slots *uninitialised* to decide `isfinite()`; they are NaN-filled
+  now.)
+
 ---
 
 ## Measurements worth keeping

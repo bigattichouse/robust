@@ -143,6 +143,33 @@ json_is "analyze" "d['command']" "uq: --json names the command" \
     "$BIN/uq" "$TMP/u.csv" --json
 json_is "1" "d['schema']" "uq: --json carries a schema version" \
     "$BIN/uq" "$TMP/u.csv" --json
+
+# uq has no design to size against, so it used to allocate 1024 slots, read,
+# and grow if the buffer came back full. The shared reader treats a run_id past
+# max_rows as a DATA error -- right for the tools passing a design's run count
+# there -- so the probe never reported "full", it reported "run_id 1025 exceeds
+# run count 1024" and quit. uq was capped at 1024 rows: every larger Monte-Carlo
+# or Sobol results file failed outright. It now sizes the file in one pass first.
+awk 'BEGIN{print "run_id,response"; for(i=1;i<=5000;i++) printf "%d,%.4f\n", i, i*0.5}' \
+    > "$TMP/big.csv"
+expect_exit 0 "uq: a file past the old 1024-row cap is read" "$BIN/uq" "$TMP/big.csv"
+json_is "5000" "d['n']" "uq: and every row of it counted" \
+    "$BIN/uq" "$TMP/big.csv" --json
+json_is "True" "abs(d['mean'] - 1250.25) < 1e-6" "uq: over the whole file, not a prefix" \
+    "$BIN/uq" "$TMP/big.csv" --json
+# The boundary the growth loop turned on: 1024 worked, 1025 did not.
+awk 'BEGIN{print "run_id,response"; for(i=1;i<=1025;i++) printf "%d,%d\n", i, i}' \
+    > "$TMP/edge.csv"
+json_is "1025" "d['n']" "uq: the row after the old cap is not the one that breaks it" \
+    "$BIN/uq" "$TMP/edge.csv" --json
+# Gaps in the ids leave slots no row touches. Those were read uninitialised to
+# decide isfinite(); they are NaN-filled now, so the count is the rows present.
+printf 'run_id,response\n1,10\n5,20\n900,30\n' > "$TMP/gaps.csv"
+json_is "3" "d['n']" "uq: a gap in the run ids counts only the rows present" \
+    "$BIN/uq" "$TMP/gaps.csv" --json
+json_is "True" "d['min'] == 10 and d['max'] == 30" \
+    "uq: and summarises those rows, not the holes" \
+    "$BIN/uq" "$TMP/gaps.csv" --json
 # --metric is argv, so it is the field a user can put a quote in.
 awk -F, 'NR==1{print "run_id,resp\"onse";next}{print}' "$TMP/u.csv" > "$TMP/uq.csv"
 json_ok "uq: --json escapes a quoted metric" \
