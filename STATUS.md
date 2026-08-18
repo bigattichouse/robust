@@ -624,7 +624,10 @@ The lessons, in order of how much they cost:
   An example that runs is not an example that is right.
 - **A zero is the most dangerous default there is.** `0.000` is a plausible
   measurement. Nothing about it looks like absence, which is precisely why a
-  missing run must be refused rather than defaulted.
+  missing run must be refused rather than defaulted. The fabrication was fixed
+  at *both* layers: the CLI refuses a results file that does not cover the
+  design, and `calculate_main_effects` refuses an empty level whoever calls it,
+  because a C consumer of `libtaguchi` has no CLI in front of it.
 - **Ambiguity is a reason to refuse, not to guess.** A nine-row file for a
   crossed design could be nine control runs or the first nine of 144; nothing
   in its shape says which. `analyze` now refuses every crossed design outright

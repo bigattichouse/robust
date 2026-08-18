@@ -132,6 +132,7 @@ extern void test_analyzer_create_null_inputs(void);
 extern void test_analyzer_add_result_null(void);
 extern void test_analyzer_result_set_grows(void);
 extern void test_analyzer_main_effects_l9(void);
+extern void test_analyzer_refuses_a_level_with_no_responses(void);
 extern void test_analyzer_main_effects_null(void);
 extern void test_analyzer_recommend_higher_is_better(void);
 extern void test_analyzer_recommend_lower_is_better(void);
@@ -272,6 +273,7 @@ int main(void) {
     RUN_TEST(analyzer_add_result_null);
     RUN_TEST(analyzer_result_set_grows);
     RUN_TEST(analyzer_main_effects_l9);
+    RUN_TEST(analyzer_refuses_a_level_with_no_responses);
     RUN_TEST(analyzer_main_effects_null);
     RUN_TEST(analyzer_recommend_higher_is_better);
     RUN_TEST(analyzer_recommend_lower_is_better);

@@ -78,8 +78,10 @@ void free_result_set(ResultSet *results) {
  * determine which level of each factor was used in each run, then
  * groups responses by factor level and computes means.
  */
-int calculate_main_effects(const ResultSet *results, MainEffect **effects_out, size_t *count_out) {
+int calculate_main_effects(const ResultSet *results, MainEffect **effects_out,
+                           size_t *count_out, char *error_buf) {
     if (!results || !effects_out || !count_out || !results->experiment_def) {
+        set_error(error_buf, "Invalid parameters to calculate_main_effects");
         return -1;
     }
 
@@ -88,8 +90,9 @@ int calculate_main_effects(const ResultSet *results, MainEffect **effects_out, s
     /* Regenerate the runs to get the factor-level mapping */
     ExperimentRun *runs = NULL;
     size_t run_count = 0;
-    char error_buf[256];
-    if (generate_experiments(def, &runs, &run_count, error_buf) != 0) {
+    char gen_err[256];
+    if (generate_experiments(def, &runs, &run_count, gen_err) != 0) {
+        set_error(error_buf, "%s", gen_err);
         return -1;
     }
 
@@ -129,13 +132,31 @@ int calculate_main_effects(const ResultSet *results, MainEffect **effects_out, s
             }
         }
 
-        /* Calculate means for each level */
+        /*
+         * A level nothing landed in has no mean, and 0.0 is not one.
+         *
+         * This used to write 0.0 and carry on, so a results file short of the
+         * array's runs produced a table with "L3=0.000" in it -- a fabricated
+         * number sitting in the same column as real measurements, indexed by a
+         * real factor name, with nothing anywhere saying it was invented. It
+         * ranked, it recommended, it confirmed. Every level of an orthogonal
+         * array appears in some run, so an empty bucket means the responses are
+         * incomplete, and there is no honest number to print for it.
+         */
         for (size_t lv = 0; lv < factor->level_count; lv++) {
-            if (level_counts[lv] > 0) {
-                effect->level_means[lv] = level_sums[lv] / (double)level_counts[lv];
-            } else {
-                effect->level_means[lv] = 0.0;
+            if (level_counts[lv] == 0) {
+                set_error(error_buf,
+                          "no response for factor '%s' at level %zu of %zu: the "
+                          "results are missing runs the array calls for, and a "
+                          "level with nothing in it has no mean",
+                          factor->name, lv + 1, factor->level_count);
+                free(level_sums);
+                free(level_counts);
+                free_main_effects(effects, factor_idx + 1);
+                free_experiments(runs, run_count);
+                return -1;
             }
+            effect->level_means[lv] = level_sums[lv] / (double)level_counts[lv];
         }
 
         /* Calculate range (max - min) */

@@ -85,6 +85,54 @@ TEST(analyzer_result_set_grows) {
     free_result_set(rs);
 }
 
+/*
+ * A level nothing landed in has no mean, so the analysis must refuse.
+ *
+ * It used to write 0.0 there and carry on, which put a fabricated number in
+ * the same column as real measurements -- "L3=0.000" ranked, recommended and
+ * confirmed against, with nothing saying it was invented. The CLI now checks
+ * the results cover the design before it gets here; this pins the behaviour at
+ * the layer a library consumer sees, where there is no CLI to check first.
+ */
+TEST(analyzer_refuses_a_level_with_no_responses) {
+    ExperimentDef def;
+    make_simple_def(&def);
+
+    ExperimentRun *runs = NULL;
+    size_t run_count = 0;
+    char err[256];
+    ASSERT_EQ(generate_experiments(&def, &runs, &run_count, err), 0);
+    ASSERT_EQ(run_count, (size_t)9);
+
+    ResultSet *rs = create_result_set(&def, "output");
+    ASSERT_NOT_NULL(rs);
+
+    /* Every run but the last three: an L9's third level of some factor is now
+     * empty, which is exactly what a short results file does. */
+    for (size_t i = 0; i < run_count - 3; i++) {
+        ASSERT_EQ(add_result(rs, runs[i].run_id, 10.0 + (double)i), 0);
+    }
+
+    MainEffect *effects = NULL;
+    size_t effect_count = 0;
+    err[0] = '\0';
+    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count, err), -1);
+    /* and it says which factor and level, not just "failed" */
+    ASSERT_TRUE(err[0] != '\0');
+    ASSERT_TRUE(strstr(err, "no response for factor") != NULL);
+
+    /* The complete set still works, so the check is not simply refusing. */
+    for (size_t i = run_count - 3; i < run_count; i++) {
+        ASSERT_EQ(add_result(rs, runs[i].run_id, 10.0 + (double)i), 0);
+    }
+    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count, err), 0);
+    ASSERT_EQ(effect_count, (size_t)2);
+    free_main_effects(effects, effect_count);
+
+    free_result_set(rs);
+    free_experiments(runs, run_count);
+}
+
 /* Test: calculate main effects for a simple L9 experiment */
 TEST(analyzer_main_effects_l9) {
     ExperimentDef def;
@@ -122,7 +170,7 @@ TEST(analyzer_main_effects_l9) {
     /* Calculate effects */
     MainEffect *effects = NULL;
     size_t effect_count = 0;
-    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count), 0);
+    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count, NULL), 0);
     ASSERT_EQ(effect_count, (size_t)2);
 
     /* Find effect for factor A */
@@ -158,7 +206,7 @@ TEST(analyzer_main_effects_l9) {
 TEST(analyzer_main_effects_null) {
     MainEffect *effects = NULL;
     size_t count = 0;
-    ASSERT_EQ(calculate_main_effects(NULL, &effects, &count), -1);
+    ASSERT_EQ(calculate_main_effects(NULL, &effects, &count, NULL), -1);
 }
 
 /* Test: recommend optimal levels (higher is better) */
@@ -194,7 +242,7 @@ TEST(analyzer_recommend_higher_is_better) {
 
     MainEffect *effects = NULL;
     size_t effect_count = 0;
-    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count), 0);
+    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count, NULL), 0);
 
     char rec[512];
     ASSERT_EQ(recommend_optimal_levels(effects, effect_count, true, rec, sizeof(rec)), 0);
@@ -241,7 +289,7 @@ TEST(analyzer_recommend_lower_is_better) {
 
     MainEffect *effects = NULL;
     size_t effect_count = 0;
-    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count), 0);
+    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count, NULL), 0);
 
     char rec[512];
     ASSERT_EQ(recommend_optimal_levels(effects, effect_count, false, rec, sizeof(rec)), 0);
@@ -298,7 +346,7 @@ TEST(analyzer_main_effects_l27) {
 
     MainEffect *effects = NULL;
     size_t effect_count = 0;
-    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count), 0);
+    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count, NULL), 0);
     ASSERT_EQ(effect_count, (size_t)4);
 
     /* F0 should show clear effect */
@@ -390,7 +438,7 @@ TEST(analyzer_duplicate_values_9level) {
 
     MainEffect *effects = NULL;
     size_t effect_count = 0;
-    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count), 0);
+    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count, NULL), 0);
 
     /* Locate factor N effect */
     MainEffect *en = NULL;
@@ -480,7 +528,7 @@ TEST(analyzer_duplicate_values_5level) {
 
     MainEffect *effects = NULL;
     size_t effect_count = 0;
-    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count), 0);
+    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count, NULL), 0);
 
     /* Locate factor P effect */
     MainEffect *ep = NULL;
@@ -554,7 +602,7 @@ TEST(analyzer_main_effects_paired) {
 
     MainEffect *effects = NULL;
     size_t effect_count = 0;
-    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count), 0);
+    ASSERT_EQ(calculate_main_effects(rs, &effects, &effect_count, NULL), 0);
     ASSERT_EQ(effect_count, (size_t)2);
 
     /* Find factor X */

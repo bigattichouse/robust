@@ -25,6 +25,22 @@ All notable changes to the Taguchi Array Tool project.
   one of these wrong tables. The robustness question is asked separately by
   `cookies-robust.tgu`, as its own comment always said it should be.
 
+- **The library no longer invents a level mean either.**
+  `taguchi_calculate_main_effects()` now **fails** when any level of any factor
+  has no response against it, naming the factor and level, instead of returning
+  success with that level's mean set to `0.0`. Every level of an orthogonal
+  array appears in some run, so an empty bucket means the results are
+  incomplete. The CLI checks coverage before it gets here; this closes the same
+  hole for a C consumer of `libtaguchi`, which has no CLI in front of it. (The
+  Python bindings are a pure-Python implementation and already checked their
+  own result count, so they are unaffected.)
+
+### Changed
+- `calculate_main_effects()` (internal `analyzer.h`) takes a `char *error_buf`
+  fourth argument, which may be NULL. `taguchi_calculate_main_effects()`'s
+  public signature is unchanged; it now passes the analyzer's own message
+  through rather than replacing it with "Failed to calculate main effects".
+
 ### Added
 - `runs` in the `analyze`, `effects` and `confirm` `--json` documents: the
   number of runs the array calls for, and that the results file was checked

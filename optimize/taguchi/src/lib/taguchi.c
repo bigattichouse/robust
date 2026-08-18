@@ -408,11 +408,12 @@ int taguchi_calculate_main_effects(const taguchi_result_set_t *results, taguchi_
     MainEffect *internal_effects = NULL;
     size_t internal_count = 0;
 
-    int rc = calculate_main_effects(&results->internal_results, &internal_effects, &internal_count);
-    if (rc != 0) {
-        set_error(error_buf, "Failed to calculate main effects");
-        return -1;
-    }
+    /* error_buf carries the analyzer's own message -- which names the factor
+     * and level whose responses are missing -- so do not overwrite it with a
+     * generic one. */
+    int rc = calculate_main_effects(&results->internal_results, &internal_effects,
+                                    &internal_count, error_buf);
+    if (rc != 0) return -1;
 
     /* Wrap internal effects in opaque handles */
     taguchi_main_effect_t **external_effects = xmalloc(internal_count * sizeof(taguchi_main_effect_t *));
