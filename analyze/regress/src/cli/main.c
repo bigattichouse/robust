@@ -29,6 +29,15 @@
  */
 #define REGRESS_ZERO 1e-9
 
+/*
+ * The machine-readable contract, same as every other tool's: `tool`,
+ * `command` and `schema` lead the document so a consumer can identify what it
+ * is holding before it reads a single field. The table below is a display;
+ * these keys are the interface. Additions are free; renames and removals need
+ * a schema bump.
+ */
+#define REGRESS_JSON_SCHEMA 1
+
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s <file.space> <data.csv> [--metric NAME] [--ranks] [--json]\n"
@@ -206,7 +215,9 @@ int main(int argc, char **argv) {
          * being parsed.
          */
         char *m = doe_json_escape(metric);
-        printf("{\n  \"metric\": \"%s\",\n  \"kind\": \"%s\",\n  \"runs\": %zu,\n",
+        printf("{\n  \"tool\": \"regress\",\n  \"command\": \"analyze\",\n");
+        printf("  \"schema\": %d,\n", REGRESS_JSON_SCHEMA);
+        printf("  \"metric\": \"%s\",\n  \"kind\": \"%s\",\n  \"runs\": %zu,\n",
                m ? m : "", use_ranks ? "SRRC" : "SRC", n);
         doe_free(m);
         printf("  \"r2\": %s,\n  \"coefficients\": [\n",

@@ -19,6 +19,15 @@
 
 #define MAXLINE 8192
 
+/*
+ * The machine-readable contract, same as every other tool's: `tool`,
+ * `command` and `schema` lead the document so a consumer can identify what
+ * it is holding before it reads a single field. Without them a `uq` document
+ * and a `regress` one were told apart by guessing at their keys. Additions
+ * are free; renames and removals need a schema bump.
+ */
+#define UQ_JSON_SCHEMA 1
+
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s <results.csv|-> [--metric NAME] [--bins N] [--json]\n"
@@ -94,7 +103,9 @@ int main(int argc, char **argv) {
         /* Escaped: --metric comes from argv, and a quote in it turned this
          * mode's output into something no parser would accept. */
         char *m = doe_json_escape(metric);
-        printf("{\n  \"metric\": \"%s\",\n  \"n\": %zu,\n", m ? m : "", n);
+        printf("{\n  \"tool\": \"uq\",\n  \"command\": \"analyze\",\n");
+        printf("  \"schema\": %d,\n", UQ_JSON_SCHEMA);
+        printf("  \"metric\": \"%s\",\n  \"n\": %zu,\n", m ? m : "", n);
         doe_free(m);
         printf("  \"mean\": %.10g,\n  \"sd\": %.10g,\n", mean, sd);
         printf("  \"min\": %.10g,\n  \"p05\": %.10g,\n  \"p25\": %.10g,\n"

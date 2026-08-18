@@ -86,6 +86,14 @@ json_is "True" "all(isinstance(c['coef'], (int, float)) for c in d['coefficients
     "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
 json_is "True" "abs(d['r2'] - 1.0) < 1e-9" "regress: --json carries R^2 as a number" \
     "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
+# A consumer identifies the document before it reads a field, the same way it
+# does for every other tool.
+json_is "regress" "d['tool']" "regress: --json names the tool" \
+    "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
+json_is "analyze" "d['command']" "regress: --json names the command" \
+    "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
+json_is "1" "d['schema']" "regress: --json carries a schema version" \
+    "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
 
 # A factor name may hold a quote -- the .space parser rejects only control
 # characters -- and --metric comes straight from argv. Interpolated raw, either
@@ -130,6 +138,11 @@ expect_match '"p95"' "uq: --json carries percentiles" "$BIN/uq" "$TMP/u.csv" --j
 json_ok "uq: --json parses" "$BIN/uq" "$TMP/u.csv" --json
 json_is "True" "d['min'] <= d['p05'] <= d['p50'] <= d['p95'] <= d['max']" \
     "uq: --json percentiles are ordered numbers" "$BIN/uq" "$TMP/u.csv" --json
+json_is "uq" "d['tool']" "uq: --json names the tool" "$BIN/uq" "$TMP/u.csv" --json
+json_is "analyze" "d['command']" "uq: --json names the command" \
+    "$BIN/uq" "$TMP/u.csv" --json
+json_is "1" "d['schema']" "uq: --json carries a schema version" \
+    "$BIN/uq" "$TMP/u.csv" --json
 # --metric is argv, so it is the field a user can put a quote in.
 awk -F, 'NR==1{print "run_id,resp\"onse";next}{print}' "$TMP/u.csv" > "$TMP/uq.csv"
 json_ok "uq: --json escapes a quoted metric" \
