@@ -582,11 +582,10 @@ static int cmd_analyze_groups(const doe_space_t *sp, const char *csv, const char
     size_t np = morris_group_npoints(sp);
     double *responses = malloc(np * sizeof *responses);
     if (!responses) { fprintf(stderr, "Error: out of memory\n"); return 1; }
-    for (size_t i = 0; i < np; i++) responses[i] = 0.0 / 0.0;
-
     char err[DOE_ERR_SIZE];
-    size_t got = 0;
-    if (doe_csv_read_metric(csv, metric, responses, np, &got, err) != 0) {
+    /* NaN-fills, and refuses a run the file repeats -- a duplicated row
+     * used to overwrite the earlier value silently. */
+    if (doe_csv_read_design(csv, metric, responses, np, err) != 0) {
         fprintf(stderr, "Error reading results: %s\n", err);
         free(responses);
         return 1;
@@ -728,11 +727,10 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric,
     size_t np = morris_npoints(&sp);
     double *responses = malloc(np * sizeof *responses);
     if (!responses) { fprintf(stderr, "Error: out of memory\n"); return 1; }
-    for (size_t i = 0; i < np; i++) responses[i] = 0.0 / 0.0;   /* NaN = missing */
-
     char err[DOE_ERR_SIZE];
-    size_t got = 0;
-    if (doe_csv_read_metric(csv, metric, responses, np, &got, err) != 0) {
+    /* NaN-fills, and refuses a run the file repeats -- a duplicated row
+     * used to overwrite the earlier value silently. */
+    if (doe_csv_read_design(csv, metric, responses, np, err) != 0) {
         fprintf(stderr, "Error reading results: %s\n", err);
         free(responses);
         return 1;

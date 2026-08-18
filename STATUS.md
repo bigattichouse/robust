@@ -118,14 +118,34 @@ effects, which is E1's one remaining deliverable and has nowhere to live until
 M7 Python bindings; `pareto svg`; E3's remaining `pawn` tool and
 `morris analyze --dgsm`; E6 (PCE, Shapley); E7 (`desire`, `objectives:`).
 
-### 6. Engineering, not method
+### 6. Loose ends from the 2026-08-18 consolidation
+
+The results-reading path is done — no tool keeps a private CSV parser, and the
+four shared readers are listed in DESIGN.md. What that pass deliberately did
+*not* touch, in rough order of how much a bug there would cost:
+
+- **The Python bindings still reimplement C logic** (`optimize/taguchi/TODO.md`,
+  first two items): a second `suggest_array` and a second `.tgu` parser. This
+  is the same defect class the consolidation was about — two copies that can
+  drift, where only one gets fixed — and it is the last big instance of it in
+  the repo. `taguchi suggest-array` already exists for the first; the second
+  wants a `taguchi dump` emitting a parsed experiment as JSON.
+- **Five private `read_file` helpers** remain (`robust`, `sobol`, `report`,
+  `regress`, taguchi's `read_file_dynamic`). Slurping a file is thinner than
+  parsing one and they disagree only about size caps and error wording, so this
+  is tidiness rather than a latent wrong answer — but it is the same shape.
+- **`get_response_for_run` answers 0.0 for a run it does not hold**
+  (`optimize/taguchi/src/lib/analyzer.c`). Left deliberately: nothing decides
+  presence with it, and the contract is now written down at the declaration.
+
+### 7. Engineering, not method
 
 - **A real GCC 16 job.** The clang job catches the increment-only class that
   PR #1 hit, but it is a proxy, not an equivalent. Add gcc-16 when the runners
   carry it.
 - `core/src/runner.c` stays at 77% on purpose — see Housekeeping.
 
-### 7. Research leads — `EXPANSION_NOTE.md` §8.4
+### 8. Research leads — `EXPANSION_NOTE.md` §8.4
 
 Unbuilt and still the most interesting direction: the reduction pattern
 (analysis → low-dimensional family → DOE) as a *named funnel stage*;
@@ -625,6 +645,15 @@ The lessons, in order of how much they cost:
   parser is deleted (—285 lines). The library stays independent, which is the
   line worth holding: **shared plumbing is shared, domain code is not.** Being
   older than the suite is not a reason to be exempt from it.
+- **Consolidating found a defect none of the tools knew they had.** With one
+  shared reader, "what else does it need to check?" becomes a question you can
+  answer once. It turned out morris, sobol and rsm all NaN-filled and caught a
+  *missing* run, but a **repeated** row simply overwrote the earlier value and
+  nothing said so. That is not a rounding difference: on a morris design one
+  duplicated row moved μ\* from **1.5 to 37500**, at exit 0. `taguchi` caught it
+  only because its coverage check had just been written by hand. All four go
+  through `doe_csv_read_design` now. **A defect spread across four private
+  copies is invisible; the same defect in one shared function is obvious.**
 - **Every private parser carried a ceiling, and every ceiling was wrong.** Once
   taguchi's went, two more were left: `regress` and `desire` each had their own
   trim/split, and desire's refused a results file past **100000 rows** or 256

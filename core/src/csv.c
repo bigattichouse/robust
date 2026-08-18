@@ -265,6 +265,53 @@ int doe_csv_read_metric_seen(const char *path, const char *metric,
     return 0;
 }
 
+/*
+ * Read a results file for a design of `runs` runs.
+ *
+ * The shape every design-backed tool wants: NaN-fill so an unmentioned run
+ * stays visibly absent, read, and refuse a run the file repeats. Detecting a
+ * REPEAT is the part each tool was missing -- morris, sobol and rsm all
+ * NaN-filled and checked for gaps, but a duplicated row simply overwrote the
+ * earlier value and nothing said so. On a morris design that is not a rounding
+ * difference: one repeated row moved mu* from 1.5 to 37500, at exit 0.
+ *
+ * Missing runs are left as NaN rather than reported here, because what a gap
+ * MEANS differs by tool -- rsm needs every run for a quadratic fit, morris
+ * needs both ends of an elementary effect -- and each says so in its own words.
+ *
+ * Returns 0 on success, -1 on error (err filled).
+ */
+int doe_csv_read_design(const char *path, const char *metric,
+                        double *responses, size_t runs, char *err) {
+    if (!path || !responses || runs == 0) {
+        if (err) snprintf(err, DOE_ERR_SIZE, "null input to doe_csv_read_design");
+        return -1;
+    }
+    for (size_t i = 0; i < runs; i++) responses[i] = (double)NAN;
+
+    unsigned *seen = calloc(runs, sizeof *seen);
+    if (!seen) {
+        snprintf(err, DOE_ERR_SIZE, "out of memory");
+        return -1;
+    }
+    size_t got = 0;
+    if (doe_csv_read_metric_seen(path, metric, responses, runs, seen, &got, err) != 0) {
+        free(seen);
+        return -1;
+    }
+    for (size_t i = 0; i < runs; i++) {
+        if (seen[i] > 1) {
+            snprintf(err, DOE_ERR_SIZE,
+                     "run %zu appears in %u rows; each run must appear once, and "
+                     "the later row silently replaced the earlier one", i + 1, seen[i]);
+            free(seen);
+            return -1;
+        }
+    }
+    free(seen);
+    return 0;
+}
+
 /* ============================================================================
  * doe_table — a results CSV read whole, addressed by column name.
  *

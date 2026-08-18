@@ -438,6 +438,52 @@ static int test_table_read(void) {
     return 1;
 }
 
+/*
+ * A repeated run is refused, not silently collapsed.
+ *
+ * morris, sobol and rsm all NaN-filled and checked for gaps, so a MISSING run
+ * was caught -- but a duplicated row just overwrote the earlier value and
+ * nothing said so. On a morris design that is not a rounding difference: one
+ * repeated row moved mu* from 1.5 to 37500, at exit 0.
+ */
+static int test_csv_read_design_refuses_a_repeat(void) {
+    const char *path = "build/test_design.csv";
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("run_id,response\n1,10\n2,20\n3,30\n", f);
+    fclose(f);
+
+    double y[3];
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_csv_read_design(path, "response", y, 3, err) == 0);
+    CHECK(y[0] == 10.0 && y[1] == 20.0 && y[2] == 30.0);
+
+    /* the same file with run 2 repeated */
+    remove(path);
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("run_id,response\n1,10\n2,20\n3,30\n2,99999\n", f);
+    fclose(f);
+    err[0] = '\0';
+    CHECK(doe_csv_read_design(path, "response", y, 3, err) != 0);
+    CHECK(strstr(err, "appears in 2 rows") != NULL);
+
+    /* A gap is NOT this function's refusal -- it stays NaN so each tool can say
+     * what a gap means for what it is about to compute. */
+    remove(path);
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("run_id,response\n1,10\n3,30\n", f);
+    fclose(f);
+    CHECK(doe_csv_read_design(path, "response", y, 3, err) == 0);
+    CHECK(y[0] == 10.0);
+    CHECK(!isfinite(y[1]));
+    CHECK(y[2] == 30.0);
+
+    remove(path);
+    return 1;
+}
+
 /* No ceiling of the reader's own invention: past desire's old 100000-row cap. */
 static int test_table_grows_past_the_old_cap(void) {
     const char *path = "build/test_table_big.csv";
@@ -666,6 +712,7 @@ int main(void) {
     RUN_TEST(test_csv_rejects_broken_results);
     RUN_TEST(test_csv_reads_valid_results);
     RUN_TEST(test_csv_max_run_id);
+    RUN_TEST(test_csv_read_design_refuses_a_repeat);
     RUN_TEST(test_table_read);
     RUN_TEST(test_table_grows_past_the_old_cap);
     RUN_TEST(test_null_inputs);

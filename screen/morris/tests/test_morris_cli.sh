@@ -428,6 +428,15 @@ else
     skip "converge: the reported r reproduces the run exactly"
 fi
 
+# A repeated run row used to overwrite the earlier value silently, and on this
+# design that is not a rounding difference -- one duplicate moved mu* from 1.5
+# to 37500 at exit 0. The shared reader refuses it now.
+{ cat "$TMP/r.csv"; sed -n '2p' "$TMP/r.csv" | awk -F, '{print $1",99999"}'; } > "$TMP/dup.csv"
+expect_exit 1 "analyze refuses a repeated run" \
+    "$MORRIS" analyze "$TMP/f.space" "$TMP/dup.csv"
+expect_match "appears in 2 rows" "and says which run was repeated" \
+    "$MORRIS" analyze "$TMP/f.space" "$TMP/dup.csv"
+
 expect_exit 1 "unknown command exits 1" "$MORRIS" not-a-command "$TMP/f.space"
 expect_exit 1 "no arguments exits 1" "$MORRIS"
 

@@ -205,11 +205,10 @@ static int cmd_analyze(const char *path, const char *csv, const char *metric,
 
     double *y = malloc(n * sizeof *y);
     if (!y) { fprintf(stderr, "Error: out of memory\n"); return 1; }
-    for (size_t i = 0; i < n; i++) y[i] = 0.0 / 0.0;
-
     char err[DOE_ERR_SIZE];
-    size_t got = 0;
-    if (doe_csv_read_metric(csv, metric, y, n, &got, err) != 0) {
+    /* NaN-fills, and refuses a run the file repeats -- a duplicated row used to
+     * overwrite the earlier value silently. */
+    if (doe_csv_read_design(csv, metric, y, n, err) != 0) {
         fprintf(stderr, "Error reading results: %s\n", err);
         free(y);
         return 1;

@@ -392,6 +392,15 @@ int doe_csv_read_metric_seen(const char *path, const char *metric,
                              double *responses, size_t max_rows,
                              unsigned *seen, size_t *count_out, char *err);
 
+/* Read a results file for a design of `runs` runs: NaN-fills first so an
+ * unmentioned run stays visibly absent, then refuses a run the file REPEATS
+ * (which otherwise overwrites silently -- one duplicated row moved a morris
+ * mu* from 1.5 to 37500 at exit 0). Gaps are left as NaN for the caller to
+ * report in its own words, since what a gap means differs by tool.
+ * Returns 0 on success, -1 on error (err filled). */
+int doe_csv_read_design(const char *path, const char *metric,
+                        double *responses, size_t runs, char *err);
+
 /* The greatest run_id in a results file, for a caller with no design to size
  * against. Not stdin: it is a first pass over a file that will be read again.
  * Returns 0 on success, -1 on error (err filled). */

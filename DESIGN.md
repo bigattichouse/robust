@@ -384,9 +384,17 @@ metric, keyed by run id" and they need several columns addressed by name — so
 core grew `doe_table`, which reads a results CSV whole and hands back named
 columns plus each row verbatim. Both were carrying ceilings of their own
 invention along with the code; desire refused any file past 100000 rows. Core
-reads results three ways now, and none of them is a tool's private copy:
-`doe_csv_read_metric` (a design's runs), `doe_csv_max_run_id` (sizing when
+reads results four ways now, and none of them is a tool's private copy:
+`doe_csv_read_metric` (a design's runs), `doe_csv_read_design` (the same, but
+NaN-filled and refusing a repeated run), `doe_csv_max_run_id` (sizing when
 there is no design), and `doe_table` (columns by name).
+
+Consolidating paid for itself immediately. Once one reader served everything,
+"what else should it check?" had a single answer — and it surfaced that morris,
+sobol and rsm all caught a *missing* run but not a *repeated* one, which had
+been overwriting values silently. One duplicated row moved a morris μ\* from
+1.5 to 37500, at exit 0. Four private copies hid that; one shared function made
+it obvious.
 
 **Done.** The GitHub repo was renamed **taguchi → robust** (stars + redirects
 intact) and the consolidation is pushed — live at `github.com/bigattichouse/robust`
