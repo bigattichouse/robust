@@ -362,6 +362,103 @@ static int test_csv_max_run_id(void) {
     return 1;
 }
 
+/*
+ * doe_table — the named-column reader `regress` and `desire` share.
+ *
+ * Each used to carry its own line splitter, and desire's came with a ceiling:
+ * it refused a file past 100000 rows outright, which is a limit invented by
+ * the reader rather than the data -- the same defect as the 1024-row cap that
+ * made `uq` fail on real Monte-Carlo output.
+ */
+static int test_table_read(void) {
+    const char *path = "build/test_table.csv";
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    /* a comment, a blank line, padded names and cells, a short row, an empty
+     * cell, and a non-numeric one -- everything a real results file does */
+    fputs("# preamble, as a .front file carries\n"
+          "\n"
+          "run_id, yield ,cost\n"
+          "1,10.5,3\n"
+          "2,  20.5 ,4\n"
+          "3,,5\n"
+          "4,oops,6\n"
+          "5,30\n", f);
+    fclose(f);
+
+    doe_table_t t;
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_table_read(path, &t, err) == 0);
+    CHECK(t.ncols == 3);
+    CHECK(t.nrows == 5);
+
+    /* Names are trimmed, so a lookup by name matches " yield ". */
+    CHECK(doe_table_col(&t, "yield") == 1);
+    CHECK(doe_table_col(&t, "run_id") == 0);
+    CHECK(doe_table_col(&t, "cost") == 2);
+    CHECK(doe_table_col(&t, "nope") == -1);
+
+    double v = 0.0;
+    CHECK(doe_table_number(&t, 0, 1, &v) == 0 && v == 10.5);
+    CHECK(doe_table_number(&t, 1, 1, &v) == 0 && v == 20.5);  /* cell trimmed */
+    CHECK(doe_table_number(&t, 2, 1, &v) != 0);               /* empty */
+    CHECK(doe_table_number(&t, 3, 1, &v) != 0);               /* not a number */
+    CHECK(doe_table_number(&t, 4, 1, &v) == 0 && v == 30.0);
+    CHECK(doe_table_number(&t, 4, 2, &v) != 0);               /* short row */
+    CHECK(doe_table_number(&t, 99, 1, &v) != 0);              /* out of range */
+
+    /* Rows come back exactly as they arrived -- `desire` echoes them. */
+    CHECK(strcmp(doe_table_row(&t, 1), "2,  20.5 ,4") == 0);
+    CHECK(doe_table_row(&t, 99) == NULL);
+    doe_table_free(&t);
+
+    /* A header with no data rows is not a table. */
+    remove(path);
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("run_id,yield\n", f);
+    fclose(f);
+    CHECK(doe_table_read(path, &t, err) != 0);
+    doe_table_free(&t);
+
+    /* Neither is a file of nothing but comments. */
+    remove(path);
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("# all comment\n# and nothing else\n", f);
+    fclose(f);
+    CHECK(doe_table_read(path, &t, err) != 0);
+    doe_table_free(&t);
+
+    CHECK(doe_table_read("build/no_such_table.csv", &t, err) != 0);
+    doe_table_free(&t);
+    CHECK(doe_table_read(NULL, &t, err) != 0);
+
+    remove(path);
+    return 1;
+}
+
+/* No ceiling of the reader's own invention: past desire's old 100000-row cap. */
+static int test_table_grows_past_the_old_cap(void) {
+    const char *path = "build/test_table_big.csv";
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    fputs("run_id,yield\n", f);
+    for (size_t i = 1; i <= 120000; i++) fprintf(f, "%zu,%zu\n", i, i * 2);
+    fclose(f);
+
+    doe_table_t t;
+    char err[DOE_ERR_SIZE];
+    CHECK(doe_table_read(path, &t, err) == 0);
+    CHECK(t.nrows == 120000);
+    double v = 0.0;
+    CHECK(doe_table_number(&t, 119999, 1, &v) == 0 && v == 240000.0);
+    doe_table_free(&t);
+
+    remove(path);
+    return 1;
+}
+
 /* H3 — NULL inputs return an error, never dereference. */
 static int test_null_inputs(void) {
     doe_space_t sp;
@@ -569,6 +666,8 @@ int main(void) {
     RUN_TEST(test_csv_rejects_broken_results);
     RUN_TEST(test_csv_reads_valid_results);
     RUN_TEST(test_csv_max_run_id);
+    RUN_TEST(test_table_read);
+    RUN_TEST(test_table_grows_past_the_old_cap);
     RUN_TEST(test_null_inputs);
     RUN_TEST(test_param_caps);
     RUN_TEST(test_size_mul_ok);

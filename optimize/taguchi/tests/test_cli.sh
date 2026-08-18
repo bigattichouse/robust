@@ -207,7 +207,9 @@ expect_exit 1 "validate with no file exits 1" $TAGUCHI validate
 # --metric naming a column that does not exist
 expect_exit 1 "unknown --metric exits 1" \
     $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --metric nonexistent
-expect_match "not found" "unknown --metric says so" \
+# Core's wording, not taguchi's own: the CLI reads results through the shared
+# doe_csv_read_metric now, so one message serves every tool.
+expect_match "not in CSV header" "unknown --metric says so" \
     $TAGUCHI effects "$TMP/exp.tgu" "$TMP/results.csv" --metric nonexistent
 
 # ---------------------------------------------------------------- --json

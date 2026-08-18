@@ -169,14 +169,16 @@ check_output "end-to-end: --minimize reflected in analyze output" \
 
 # --- expected failure cases --------------------------------------------------
 
+# The shared reader's wording: taguchi's CLI no longer carries its own parser,
+# so these messages are the suite's, identical across every tool.
 check_fails_with \
-    "failure: --metric nonexistent gives 'not found in CSV header' error" \
-    "not found in CSV header" \
+    "failure: --metric nonexistent gives 'not in CSV header' error" \
+    "not in CSV header" \
     "$TAGUCHI" effects "$TGU" "$MULTI_CSV" --metric nonexistent
 
 check_fails_with \
-    "failure: named --metric on headerless CSV gives 'No header row' error" \
-    "No header row" \
+    "failure: named --metric on headerless CSV gives a 'no header' error" \
+    "no header" \
     "$TAGUCHI" effects "$TGU" "$NO_HDR_CSV" --metric system_COP
 
 # --- summary -----------------------------------------------------------------

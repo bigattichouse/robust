@@ -27,9 +27,9 @@
 #include <math.h>
 
 #define MAX_OBJ    16
-#define MAX_COLS  256
-#define MAX_ROWS  100000
-#define MAXLINE  8192
+/* No MAX_ROWS, MAX_COLS or MAXLINE any more: those were this file's own
+ * ceilings, and it refused a results file past 100000 rows outright. doe_table
+ * grows to fit. */
 
 typedef enum { OBJ_MAX, OBJ_MIN, OBJ_TARGET } obj_kind_t;
 
@@ -41,23 +41,6 @@ typedef struct {
     double     lo, hi;       /* observed range, the default bounds */
 } objective_t;
 
-static char *trim(char *s) {
-    while (*s == ' ' || *s == '\t') s++;
-    size_t n = strlen(s);
-    while (n && (s[n-1]==' '||s[n-1]=='\t'||s[n-1]=='\r'||s[n-1]=='\n')) s[--n] = '\0';
-    return s;
-}
-
-static int split(char *line, char **f, int max) {
-    int n = 0; char *p = line;
-    while (n < max) {
-        f[n++] = p;
-        char *c = strchr(p, ',');
-        if (!c) break;
-        *c = '\0'; p = c + 1;
-    }
-    return n;
-}
 
 /*
  * One metric's desirability. Linear between the bounds (Derringer-Suich's
@@ -169,86 +152,57 @@ int main(int argc, char **argv) {
     }
     if (!path) { fprintf(stderr, "Error: no results file\n"); usage(argv[0]); return 2; }
 
-    FILE *f = (strcmp(path, "-") == 0) ? stdin : fopen(path, "r");
-    if (!f) { fprintf(stderr, "Error: cannot open '%s'\n", path); return 1; }
-
-    /* Read the whole file: bounds come from the observed range, so nothing can
-     * be scored until every row has been seen. */
-    char (*lines)[MAXLINE] = malloc(sizeof *lines * MAX_ROWS);
-    if (!lines) { fprintf(stderr, "Error: out of memory\n"); return 1; }
-    size_t nrows = 0;
-    char header[MAXLINE] = {0};
-    int ncols = 0;
-
-    char line[MAXLINE];
-    while (fgets(line, sizeof line, f)) {
-        size_t len = strlen(line);
-        if (len && line[len-1] != '\n' && !feof(f)) {
-            fprintf(stderr, "Error: line %zu exceeds %d bytes\n", nrows + 1, MAXLINE);
-            free(lines); return 1;
-        }
-        while (len && (line[len-1]=='\n' || line[len-1]=='\r')) line[--len] = '\0';
-        if (len == 0 || line[0] == '#') continue;
-
-        if (!header[0]) {
-            snprintf(header, sizeof header, "%s", line);
-            char work[MAXLINE], *fields[MAX_COLS];
-            memcpy(work, line, len + 1);
-            ncols = split(work, fields, MAX_COLS);
-            for (int c = 0; c < ncols; c++) {
-                char *name = trim(fields[c]);
-                for (int o = 0; o < nobj; o++)
-                    if (strcmp(name, objs[o].name) == 0) objs[o].col = c;
-            }
-            for (int o = 0; o < nobj; o++) {
-                if (objs[o].col < 0) {
-                    fprintf(stderr, "Error: column '%s' not found in %s\n", objs[o].name, path);
-                    free(lines); return 1;
-                }
-            }
-            continue;
-        }
-        if (nrows == MAX_ROWS) {
-            fprintf(stderr, "Error: more than %d data rows\n", MAX_ROWS);
-            free(lines); return 1;
-        }
-        snprintf(lines[nrows++], MAXLINE, "%s", line);
+    /*
+     * Read the whole table: bounds come from the observed range, so nothing
+     * can be scored until every row has been seen.
+     *
+     * This used to be a private parser with a fixed ceiling -- 100000 rows,
+     * 256 columns -- refusing anything larger outright. That is the same class
+     * of defect as the 1024-row cap that made `uq` fail on real Monte-Carlo
+     * output: a limit invented by the reader rather than the data. doe_table
+     * grows to fit, and hands back each row verbatim so the echo below is
+     * exactly what arrived.
+     */
+    char terr[DOE_ERR_SIZE];
+    doe_table_t tbl;
+    if (doe_table_read(path, &tbl, terr) != 0) {
+        fprintf(stderr, "Error: %s\n", terr);
+        return 1;
     }
-    if (f != stdin) fclose(f);
 
-    if (!header[0]) { fprintf(stderr, "Error: %s has no header row\n", path); free(lines); return 1; }
-    if (nrows == 0) { fprintf(stderr, "Error: %s has no data rows\n", path); free(lines); return 1; }
+    for (int o = 0; o < nobj; o++) {
+        long c = doe_table_col(&tbl, objs[o].name);
+        if (c < 0) {
+            fprintf(stderr, "Error: column '%s' not found in %s\n", objs[o].name, path);
+            doe_table_free(&tbl);
+            return 1;
+        }
+        objs[o].col = (int)c;
+    }
 
     /* Observed range per objective. */
     for (int o = 0; o < nobj; o++) { objs[o].lo = INFINITY; objs[o].hi = -INFINITY; }
-    for (size_t r = 0; r < nrows; r++) {
-        char work[MAXLINE], *fields[MAX_COLS];
-        snprintf(work, sizeof work, "%s", lines[r]);
-        int n = split(work, fields, MAX_COLS);
+    for (size_t r = 0; r < tbl.nrows; r++) {
         for (int o = 0; o < nobj; o++) {
-            if (objs[o].col >= n) continue;
-            char *end;
-            double v = strtod(trim(fields[objs[o].col]), &end);
-            if (end == fields[objs[o].col] || !isfinite(v)) continue;
+            double v;
+            if (doe_table_number(&tbl, r, (size_t)objs[o].col, &v) != 0) continue;
             if (v < objs[o].lo) objs[o].lo = v;
             if (v > objs[o].hi) objs[o].hi = v;
         }
-
     }
 
-    printf("%s,desirability\n", header);
-    for (size_t r = 0; r < nrows; r++) {
-        char work[MAXLINE], *fields[MAX_COLS];
-        snprintf(work, sizeof work, "%s", lines[r]);
-        int n = split(work, fields, MAX_COLS);
-
+    /* The header back with one column appended, then every row the same way. */
+    {
+        printf("%s", tbl.names[0]);
+        for (size_t c = 1; c < tbl.ncols; c++) printf(",%s", tbl.names[c]);
+        printf(",desirability\n");
+    }
+    for (size_t r = 0; r < tbl.nrows; r++) {
         double product = 1.0;
         int usable = 1;
         for (int o = 0; o < nobj; o++) {
-            if (objs[o].col >= n) { usable = 0; break; }
-            char *end;
-            double v = strtod(trim(fields[objs[o].col]), &end);
-            if (end == fields[objs[o].col] || !isfinite(v)) { usable = 0; break; }
+            double v;
+            if (doe_table_number(&tbl, r, (size_t)objs[o].col, &v) != 0) { usable = 0; break; }
             product *= desirability(&objs[o], v);
         }
         double D = usable ? pow(product, 1.0 / (double)nobj) : 0.0;
@@ -256,9 +210,9 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Warning: row %zu has a missing or non-numeric objective; "
                             "desirability 0\n", r + 1);
         }
-        printf("%s,%.6g\n", lines[r], D);
+        printf("%s,%.6g\n", doe_table_row(&tbl, r), D);
     }
 
-    free(lines);
+    doe_table_free(&tbl);
     return 0;
 }

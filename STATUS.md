@@ -611,10 +611,29 @@ optimal settings from the same two files and neither said anything.
 
 The lessons, in order of how much they cost:
 
-- **The validation already existed.** `taguchi robust` requires every inner ×
-  outer pair and refuses rather than averaging over a hole. `analyze` simply
-  did not call it. Look for the check before writing it — and when one command
-  in a suite validates something, ask why its siblings do not.
+- **The validation already existed — twice.** `taguchi robust` requires every
+  inner × outer pair and refuses rather than averaging over a hole, and
+  `doe_csv_read_metric` — the reader every *other* tool uses — refuses a run id
+  the design does not have. `analyze` called neither, because taguchi's CLI had
+  its own copy of the parser. Look for the check before writing it, and when
+  one command in a suite validates something, ask why its siblings do not.
+- **The duplication was the defect, not a tidiness problem.** taguchi predates
+  the suite, so it kept a private results-CSV parser, private JSON helpers, and
+  a hand-rolled reader inside `robust`. That copy was the only one missing the
+  run-id check, and being a copy is exactly why nobody noticed: fixing the
+  shared reader never reached it. The CLI links `libdoe` now and the private
+  parser is deleted (—285 lines). The library stays independent, which is the
+  line worth holding: **shared plumbing is shared, domain code is not.** Being
+  older than the suite is not a reason to be exempt from it.
+- **Every private parser carried a ceiling, and every ceiling was wrong.** Once
+  taguchi's went, two more were left: `regress` and `desire` each had their own
+  trim/split, and desire's refused a results file past **100000 rows** or 256
+  columns. That is the same defect as the 1024-row cap in `uq` — a limit
+  invented by the reader rather than by the data, discovered only when someone
+  brings a real file. `doe_table` replaced both: it reads a results CSV whole,
+  addressed by column name, growing to fit. desire now reads a 150000-row file
+  the previous build refused outright. **When a tool sets a numeric limit on
+  input it did not generate, ask what happens the day the input is bigger.**
 - **The repo's own worked example was demonstrating the bug.**
   `examples/cookies/cookies.tgu` carried a `noise:` section *and* the
   walkthrough ran `analyze` on it, so the committed

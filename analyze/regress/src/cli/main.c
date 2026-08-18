@@ -20,7 +20,6 @@
 #include <string.h>
 #include <math.h>
 
-#define MAXLINE 8192
 
 /*
  * Below this, a coefficient is floating-point noise rather than a direction.
@@ -51,24 +50,6 @@ static void usage(const char *prog) {
         "                 captures a monotone but non-linear relationship\n"
         "  --json         machine-readable output\n",
         prog);
-}
-
-static char *trim(char *s) {
-    while (*s == ' ' || *s == '\t') s++;
-    size_t n = strlen(s);
-    while (n && (s[n-1]==' '||s[n-1]=='\t'||s[n-1]=='\r'||s[n-1]=='\n')) s[--n] = '\0';
-    return s;
-}
-
-static int split(char *line, char **f, int max) {
-    int n = 0; char *p = line;
-    while (n < max) {
-        f[n++] = p;
-        char *c = strchr(p, ',');
-        if (!c) break;
-        *c = '\0'; p = c + 1;
-    }
-    return n;
 }
 
 static char *read_file(const char *path) {
@@ -104,87 +85,57 @@ int main(int argc, char **argv) {
     }
     free(content);
 
-    FILE *f = (strcmp(csv_path, "-") == 0) ? stdin : fopen(csv_path, "r");
-    if (!f) { fprintf(stderr, "Error: cannot open '%s'\n", csv_path); return 1; }
+    /*
+     * Read the whole table once, then pull the columns by name. This used to
+     * be a private line-splitting loop -- one of two left in the suite -- with
+     * its own trim, its own split, and its own growth. doe_table does the
+     * reading; what is left here is the part that is actually about
+     * regression: which columns, and what to refuse.
+     */
+    doe_table_t tbl;
+    if (doe_table_read(csv_path, &tbl, err) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 1;
+    }
 
     /* Resolve one column per factor, plus the metric. */
-    int *col = malloc(sp.factor_count * sizeof *col);
-    int mcol = -1;
-    if (!col) { fprintf(stderr, "Error: out of memory\n"); return 1; }
-    for (size_t i = 0; i < sp.factor_count; i++) col[i] = -1;
-
-    char line[MAXLINE], *fl[1024];
-    size_t n = 0, cap = 256;
-    double *X = malloc(cap * sp.factor_count * sizeof *X);
-    double *y = malloc(cap * sizeof *y);
-    if (!X || !y) { fprintf(stderr, "Error: out of memory\n"); return 1; }
-
-    int header_seen = 0, line_no = 0, rc = 0;
-    while (fgets(line, sizeof line, f)) {
-        line_no++;
-        size_t len = strlen(line);
-        while (len && (line[len-1]=='\n'||line[len-1]=='\r')) line[--len] = '\0';
-        if (len == 0 || line[0] == '#') continue;
-
-        char work[MAXLINE];
-        memcpy(work, line, len + 1);
-        int nf = split(work, fl, 1024);
-        for (int i = 0; i < nf; i++) fl[i] = trim(fl[i]);
-
-        if (!header_seen) {
-            header_seen = 1;
-            for (int i = 0; i < nf; i++) {
-                if (strcmp(fl[i], metric) == 0) mcol = i;
-                for (size_t j = 0; j < sp.factor_count; j++)
-                    if (strcmp(fl[i], sp.factors[j].name) == 0) col[j] = i;
-            }
-            if (mcol < 0) {
-                fprintf(stderr, "Error: metric column '%s' not found in %s\n", metric, csv_path);
-                rc = 1; break;
-            }
-            for (size_t j = 0; j < sp.factor_count; j++) {
-                if (col[j] < 0) {
-                    fprintf(stderr, "Error: factor '%s' has no column in %s\n",
-                            sp.factors[j].name, csv_path);
-                    rc = 1; break;
-                }
-            }
-            if (rc) break;
-            continue;
+    long *col = malloc(sp.factor_count * sizeof *col);
+    if (!col) { fprintf(stderr, "Error: out of memory\n"); doe_table_free(&tbl); return 1; }
+    long mcol = doe_table_col(&tbl, metric);
+    if (mcol < 0) {
+        fprintf(stderr, "Error: metric column '%s' not found in %s\n", metric, csv_path);
+        free(col); doe_table_free(&tbl); return 1;
+    }
+    for (size_t j = 0; j < sp.factor_count; j++) {
+        col[j] = doe_table_col(&tbl, sp.factors[j].name);
+        if (col[j] < 0) {
+            fprintf(stderr, "Error: factor '%s' has no column in %s\n",
+                    sp.factors[j].name, csv_path);
+            free(col); doe_table_free(&tbl); return 1;
         }
+    }
 
-        if (n == cap) {
-            cap *= 2;
-            double *nX = realloc(X, cap * sp.factor_count * sizeof *nX);
-            double *ny = realloc(y, cap * sizeof *ny);
-            if (!nX || !ny) { fprintf(stderr, "Error: out of memory\n"); rc = 1; break; }
-            X = nX; y = ny;
-        }
-        int bad = 0;
+    size_t n = tbl.nrows;
+    double *X = malloc(n * sp.factor_count * sizeof *X);
+    double *y = malloc(n * sizeof *y);
+    if (!X || !y) {
+        fprintf(stderr, "Error: out of memory\n");
+        free(X); free(y); free(col); doe_table_free(&tbl); return 1;
+    }
+
+    for (size_t r = 0; r < n; r++) {
         for (size_t j = 0; j < sp.factor_count; j++) {
-            if (col[j] >= nf) { bad = 1; break; }
-            char *end; double v = strtod(fl[col[j]], &end);
-            if (end == fl[col[j]] || !isfinite(v)) { bad = 1; break; }
-            X[n * sp.factor_count + j] = v;
+            if (doe_table_number(&tbl, r, (size_t)col[j], &X[r * sp.factor_count + j]) != 0) {
+                fprintf(stderr, "Error: row %zu has a missing or non-numeric value\n", r + 1);
+                free(X); free(y); free(col); doe_table_free(&tbl); return 1;
+            }
         }
-        if (bad || mcol >= nf) {
-            fprintf(stderr, "Error: line %d has a missing or non-numeric value\n", line_no);
-            rc = 1; break;
+        if (doe_table_number(&tbl, r, (size_t)mcol, &y[r]) != 0) {
+            fprintf(stderr, "Error: row %zu: non-numeric %s\n", r + 1, metric);
+            free(X); free(y); free(col); doe_table_free(&tbl); return 1;
         }
-        char *end; double yv = strtod(fl[mcol], &end);
-        if (end == fl[mcol] || !isfinite(yv)) {
-            fprintf(stderr, "Error: line %d: non-numeric %s\n", line_no, metric);
-            rc = 1; break;
-        }
-        y[n] = yv;
-        n++;
     }
-    if (f != stdin) fclose(f);
-    if (rc) { free(X); free(y); free(col); return 1; }
-    if (!header_seen) {
-        fprintf(stderr, "Error: %s has no header row\n", csv_path);
-        free(X); free(y); free(col); return 1;
-    }
+    doe_table_free(&tbl);
 
     if (use_ranks) doe_rank_transform(X, y, n, sp.factor_count);
 

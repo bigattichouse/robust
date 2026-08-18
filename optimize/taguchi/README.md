@@ -521,6 +521,15 @@ sudo make reinstall
 sudo make uninstall
 ```
 
+**What links what.** The `taguchi` CLI links the suite's shared core
+(`core/`, `libdoe`) statically, alongside `libtaguchi` — results CSVs and JSON
+formatting are the whole suite's problem, and taguchi keeping private copies of
+them is what left its `analyze` the only command that never checked a results
+file against its design. The **library** has no such dependency:
+`libtaguchi.so`, the public header and the language bindings stand alone, and
+the orthogonal arrays and effect analysis in them are taguchi's own domain
+rather than plumbing worth sharing.
+
 After installation:
 - Library: `/usr/local/lib/libtaguchi.so` and `libtaguchi.a`
 - Header: `/usr/local/include/taguchi.h`

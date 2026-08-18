@@ -33,4 +33,13 @@ use `doe_json_string` / `doe_json_number` rather than interpolating a name or
 a double into a format string, because a factor name may contain a quote and a
 non-finite double has no JSON literal.
 
-All build on `core/libdoe`. See [../EXPANSION.md](../EXPANSION.md).
+All build on `core/libdoe` — including how they read results. `doe_csv_read_metric`
+serves a tool that holds a design ("one metric, keyed by run id"), and
+`doe_table` serves one that needs several columns by name: `regress` wants one
+per factor plus the metric, `desire` wants every objective plus each row back
+verbatim to echo. Both used to carry their own line splitters, and desire's
+refused a file past 100000 rows — a ceiling belonging to the reader rather than
+the data. If you add a tool here, read through core rather than writing a
+fourth parser.
+
+See [../EXPANSION.md](../EXPANSION.md).

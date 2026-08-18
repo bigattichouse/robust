@@ -380,10 +380,64 @@ int doe_csv_read_metric(const char *path, const char *metric,
                         double *responses, size_t max_rows,
                         size_t *count_out, char *err);
 
+/* As doe_csv_read_metric, but also tallies how many rows landed on each run:
+ * seen[i] is the number of rows carrying run_id i+1, so 0 is a run the file
+ * never mentions and >1 is one it repeats. `seen` must hold max_rows entries
+ * and be zeroed by the caller, or be NULL to skip the tally.
+ *
+ * This is how a tool asks "does this file cover my design?" -- a question
+ * every design-backed tool has and each used to answer by hand, or not at all.
+ * Returns 0 on success, -1 on error (err filled). */
+int doe_csv_read_metric_seen(const char *path, const char *metric,
+                             double *responses, size_t max_rows,
+                             unsigned *seen, size_t *count_out, char *err);
+
 /* The greatest run_id in a results file, for a caller with no design to size
  * against. Not stdin: it is a first pass over a file that will be read again.
  * Returns 0 on success, -1 on error (err filled). */
 int doe_csv_max_run_id(const char *path, size_t *max_out, char *err);
+
+/* ----------------------------------------------------------------------------
+ * doe_table — a results CSV read whole, addressed by column NAME.
+ *
+ * doe_csv_read_metric answers "one metric, keyed by run id", which suits a tool
+ * holding a design. Tools that need several named columns -- `regress` wants
+ * one per factor plus the metric, `desire` wants every objective plus each row
+ * back verbatim to echo -- used to carry their own parsers, each with a fixed
+ * row and column ceiling. This grows to fit instead.
+ *
+ * Fields are trimmed of surrounding spaces and tabs. A row with fewer fields
+ * than the header leaves the missing cells NULL rather than failing the read,
+ * so a caller decides whether a ragged row is fatal for what it is doing.
+ * '#' comment lines and blank lines are skipped. "-" reads stdin.
+ * -------------------------------------------------------------------------- */
+typedef struct {
+    char  **names;   /* ncols column names, from the header row       */
+    size_t  ncols;
+    char  **cells;   /* nrows*ncols trimmed fields, row-major; may be NULL */
+    char  **raw;     /* nrows rows exactly as they arrived            */
+    size_t  nrows;
+    char   *text;    /* owned backing store; do not touch             */
+    char   *work;    /* owned backing store; do not touch             */
+} doe_table_t;
+
+/* Read `path` into `t`. Returns 0, or -1 with err filled (no header row, no
+ * data rows, unreadable, or larger than the 64MB cap). Free with
+ * doe_table_free even after a failed read. */
+int doe_table_read(const char *path, doe_table_t *t, char *err);
+void doe_table_free(doe_table_t *t);
+
+/* Column index for `name`, or -1 when the header does not carry it. */
+long doe_table_col(const doe_table_t *t, const char *name);
+
+/* The trimmed cell, or NULL when the row is short or the indices are out of
+ * range. doe_table_row gives the row back verbatim. */
+const char *doe_table_cell(const doe_table_t *t, size_t row, size_t col);
+const char *doe_table_row(const doe_table_t *t, size_t row);
+
+/* The cell as a finite double. Returns 0 on success, -1 when the cell is
+ * missing, empty, not a number, or not finite. */
+int doe_table_number(const doe_table_t *t, size_t row, size_t col, double *out);
 
 #ifdef __cplusplus
 }

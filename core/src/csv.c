@@ -122,6 +122,23 @@ int doe_csv_max_run_id(const char *path, size_t *max_out, char *err) {
 int doe_csv_read_metric(const char *path, const char *metric,
                         double *responses, size_t max_rows,
                         size_t *count_out, char *err) {
+    return doe_csv_read_metric_seen(path, metric, responses, max_rows,
+                                    NULL, count_out, err);
+}
+
+/*
+ * The same read, plus a tally of how many rows landed on each run.
+ *
+ * "Did this file cover the design?" is a question every design-backed tool
+ * has, and each one used to answer a piece of it by hand -- taguchi not at
+ * all, which is how a results file short of its array got a level mean of
+ * 0.000 and a file with twice the rows got a ranking off the first nine.
+ * `seen[i] == 0` is a run the file never mentions and `seen[i] > 1` is one it
+ * mentions twice; the caller decides which of those it can live with.
+ */
+int doe_csv_read_metric_seen(const char *path, const char *metric,
+                             double *responses, size_t max_rows,
+                             unsigned *seen, size_t *count_out, char *err) {
     if (!path || !responses || !count_out) {
         if (err) snprintf(err, DOE_ERR_SIZE, "null input to doe_csv_read_metric");
         return -1;
@@ -235,6 +252,7 @@ int doe_csv_read_metric(const char *path, const char *metric,
         }
 
         responses[run_id - 1] = v;
+        if (seen) seen[run_id - 1]++;
         count++;
     }
 
@@ -244,5 +262,222 @@ int doe_csv_read_metric(const char *path, const char *metric,
         return -1;
     }
     *count_out = count;
+    return 0;
+}
+
+/* ============================================================================
+ * doe_table — a results CSV read whole, addressed by column name.
+ *
+ * doe_csv_read_metric answers "one metric, keyed by run id", which is what a
+ * tool holding a design wants. Two tools want something else and each grew
+ * their own parser to get it: `regress` needs one column per factor plus the
+ * metric, in file order, and `desire` needs several named objective columns
+ * AND every row back verbatim so it can echo them with a column appended.
+ *
+ * Both copies came with a fixed ceiling -- desire refused a file past 100000
+ * rows or 256 columns -- which is the same class of defect as the 1024-row cap
+ * that made `uq` fail on any real Monte-Carlo output. Growing to fit is the
+ * whole point of reading a file you did not generate.
+ * ============================================================================
+ */
+
+/* Generous but bounded: a results file larger than this is a mistake, and
+ * reading it into memory unbounded is a worse one. */
+#define DOE_TABLE_MAX_BYTES (64u * 1024u * 1024u)
+
+/* Slurp a whole stream, growing as it goes. Works for stdin, which cannot be
+ * seeked to find its length. */
+static char *slurp(FILE *f, size_t *len_out, char *err) {
+    size_t cap = 65536, len = 0;
+    char *buf = malloc(cap);
+    if (!buf) { snprintf(err, DOE_ERR_SIZE, "out of memory"); return NULL; }
+    for (;;) {
+        if (len == cap) {
+            if (cap >= DOE_TABLE_MAX_BYTES) {
+                snprintf(err, DOE_ERR_SIZE, "input exceeds %u bytes",
+                         DOE_TABLE_MAX_BYTES);
+                free(buf);
+                return NULL;
+            }
+            size_t ncap = cap * 2;
+            if (ncap > DOE_TABLE_MAX_BYTES) ncap = DOE_TABLE_MAX_BYTES;
+            char *nb = realloc(buf, ncap);
+            if (!nb) { snprintf(err, DOE_ERR_SIZE, "out of memory"); free(buf); return NULL; }
+            buf = nb; cap = ncap;
+        }
+        size_t got = fread(buf + len, 1, cap - len, f);
+        len += got;
+        if (got == 0) break;
+    }
+    if (len == cap) {   /* exactly full: one more byte would not have fit */
+        char *nb = realloc(buf, cap + 1);
+        if (!nb) { snprintf(err, DOE_ERR_SIZE, "out of memory"); free(buf); return NULL; }
+        buf = nb;
+    }
+    buf[len] = '\0';
+    *len_out = len;
+    return buf;
+}
+
+/* Count the fields a line splits into, without modifying it. */
+static size_t field_count(const char *s) {
+    size_t n = 1;
+    for (; *s; s++) if (*s == ',') n++;
+    return n;
+}
+
+int doe_table_read(const char *path, doe_table_t *t, char *err) {
+    if (!path || !t) {
+        if (err) snprintf(err, DOE_ERR_SIZE, "null input to doe_table_read");
+        return -1;
+    }
+    memset(t, 0, sizeof *t);
+
+    int from_stdin = (path[0] == '-' && path[1] == '\0');
+    FILE *f = from_stdin ? stdin : fopen(path, "r");
+    if (!f) {
+        snprintf(err, DOE_ERR_SIZE, "cannot open results '%s'", path);
+        return -1;
+    }
+    size_t len = 0;
+    char *text = slurp(f, &len, err);
+    if (!from_stdin) fclose(f);
+    if (!text) return -1;
+
+    /* `raw` points into `text`; `work` is the copy the splitter chews up, so a
+     * caller can still echo a row exactly as it arrived. */
+    char *work = malloc(len + 1);
+    if (!work) {
+        snprintf(err, DOE_ERR_SIZE, "out of memory");
+        free(text);
+        return -1;
+    }
+    memcpy(work, text, len + 1);
+
+    t->text = text;
+    t->work = work;
+
+    /* Pass 1: find the header and count the data rows. */
+    size_t nrows = 0, ncols = 0;
+    int have_header = 0;
+    for (size_t i = 0; i <= len; ) {
+        size_t start = i;
+        while (i < len && text[i] != '\n') i++;
+        size_t end = i;
+        if (i < len) i++;                      /* step past the newline */
+        while (end > start && text[end - 1] == '\r') end--;
+        text[end] = '\0';
+        work[end] = '\0';
+        const char *line = text + start;
+        if (line[0] == '\0' || line[0] == '#') { if (start >= len) break; continue; }
+        if (!have_header) { have_header = 1; ncols = field_count(line); }
+        else nrows++;
+        if (start >= len) break;
+    }
+
+    if (!have_header) {
+        snprintf(err, DOE_ERR_SIZE, "'%s' has no header row", path);
+        doe_table_free(t);
+        return -1;
+    }
+    if (nrows == 0) {
+        snprintf(err, DOE_ERR_SIZE, "'%s' has no data rows", path);
+        doe_table_free(t);
+        return -1;
+    }
+
+    t->names = calloc(ncols, sizeof *t->names);
+    t->raw   = calloc(nrows, sizeof *t->raw);
+    t->cells = calloc(nrows * ncols, sizeof *t->cells);
+    if (!t->names || !t->raw || !t->cells) {
+        snprintf(err, DOE_ERR_SIZE, "out of memory");
+        doe_table_free(t);
+        return -1;
+    }
+    t->ncols = ncols;
+    t->nrows = nrows;
+
+    /* Pass 2: split. Lines are already NUL-terminated from pass 1. */
+    size_t row = 0;
+    int header_done = 0;
+    for (size_t i = 0; i <= len; ) {
+        size_t start = i;
+        while (i < len && text[i] != '\0') i++;
+        size_t stop = i;
+        if (i <= len) i++;
+        const char *line = text + start;
+        if (line[0] == '\0' || line[0] == '#') { if (start >= len) break; continue; }
+
+        char *w = work + start;
+        /* Cut at the comma BEFORE trimming: trimming first leaves the field's
+         * trailing spaces inside the not-yet-terminated remainder, so " yield "
+         * came back as "yield " and no lookup by name could ever match it. */
+        if (!header_done) {
+            header_done = 1;
+            size_t c = 0;
+            char *p = w;
+            while (c < ncols) {
+                char *comma = strchr(p, ',');
+                if (comma) *comma = '\0';
+                t->names[c++] = trim(p);
+                if (!comma) break;
+                p = comma + 1;
+            }
+        } else {
+            t->raw[row] = text + start;
+            size_t c = 0;
+            char *p = w;
+            while (c < ncols) {
+                char *comma = strchr(p, ',');
+                if (comma) *comma = '\0';
+                t->cells[row * ncols + c++] = trim(p);
+                if (!comma) break;
+                p = comma + 1;
+            }
+            row++;
+        }
+        (void)stop;
+        if (start >= len) break;
+    }
+
+    return 0;
+}
+
+void doe_table_free(doe_table_t *t) {
+    if (!t) return;
+    free(t->names);
+    free(t->raw);
+    free(t->cells);
+    free(t->text);
+    free(t->work);
+    memset(t, 0, sizeof *t);
+}
+
+long doe_table_col(const doe_table_t *t, const char *name) {
+    if (!t || !name) return -1;
+    for (size_t c = 0; c < t->ncols; c++)
+        if (t->names[c] && strcmp(t->names[c], name) == 0) return (long)c;
+    return -1;
+}
+
+const char *doe_table_cell(const doe_table_t *t, size_t row, size_t col) {
+    if (!t || row >= t->nrows || col >= t->ncols) return NULL;
+    return t->cells[row * t->ncols + col];
+}
+
+const char *doe_table_row(const doe_table_t *t, size_t row) {
+    if (!t || row >= t->nrows) return NULL;
+    return t->raw[row];
+}
+
+int doe_table_number(const doe_table_t *t, size_t row, size_t col, double *out) {
+    const char *s = doe_table_cell(t, row, col);
+    if (!s || s[0] == '\0') return -1;
+    char *end;
+    double v = strtod(s, &end);
+    /* A trailing character means the cell is not a number, and a non-finite
+     * one is not a measurement -- both are refusals, not values. */
+    if (*end != '\0' || !isfinite(v)) return -1;
+    if (out) *out = v;
     return 0;
 }

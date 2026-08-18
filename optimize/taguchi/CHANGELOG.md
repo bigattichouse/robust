@@ -36,6 +36,22 @@ All notable changes to the Taguchi Array Tool project.
   own result count, so they are unaffected.)
 
 ### Changed
+- **The CLI links `libdoe` and reads results through the suite's shared
+  reader.** `optimize/taguchi/src/cli/main.c` carried its own results-CSV
+  parser (`csv_split`, `csv_trim`, `parse_csv_results`), its own JSON string
+  and number formatting, and a second hand-rolled reader inside `robust`. The
+  private parser was the only one in the suite that never checked a run id
+  against the design, which is what made every defect above possible. All of it
+  is deleted in favour of `doe_csv_read_metric` / `doe_csv_read_metric_seen`,
+  `doe_json_escape` and `doe_json_number` — about 285 lines removed. Output is
+  byte-identical; the committed example outputs did not move.
+  - Two error strings now use the suite's wording rather than taguchi's:
+    `"metric 'x' not in CSV header"` (was "not found in CSV header") and
+    `"no header in '<file>'; cannot locate metric 'x'"` (was "No header row").
+  - **The library is unchanged and stays independent.** `libtaguchi.a` /
+    `libtaguchi.so`, the public header, and the Python bindings do not depend
+    on `libdoe`. Shared plumbing is shared; the arrays and effect analysis are
+    taguchi's own domain.
 - `calculate_main_effects()` (internal `analyzer.h`) takes a `char *error_buf`
   fourth argument, which may be NULL. `taguchi_calculate_main_effects()`'s
   public signature is unchanged; it now passes the analyzer's own message

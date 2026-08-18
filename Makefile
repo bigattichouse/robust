@@ -94,8 +94,15 @@ PARETO_TEST_BIN = $(BUILD)/test_pareto
 # Built here like every other peer: no sub-make. Its suites join $(TEST_BINS),
 # so they get the same valgrind/ASan discipline as everything else, which they
 # did not while it built itself.
+# The CLI links libdoe like every other tool's does: results CSVs and JSON
+# formatting are the suite's shared problems, not taguchi's private ones, and
+# keeping a second copy of them is what left taguchi the only tool whose
+# `analyze` never checked a results file against its design. The LIBRARY stays
+# independent -- libtaguchi.so and the bindings ship on their own, and the
+# arrays and analysis in it are taguchi's actual domain, not duplication.
 TAGUCHI_DIR       = optimize/taguchi
 TAGUCHI_INC       = -I$(TAGUCHI_DIR) -I$(TAGUCHI_DIR)/include -I$(TAGUCHI_DIR)/src/lib
+TAGUCHI_CLI_INC   = $(TAGUCHI_INC) -I$(COMMON_DIR)/include
 TAGUCHI_LIB_SRC   = $(wildcard $(TAGUCHI_DIR)/src/lib/*.c)
 TAGUCHI_LIB_OBJ   = $(TAGUCHI_LIB_SRC:$(TAGUCHI_DIR)/src/lib/%.c=$(BUILD)/taguchi/lib/%.o)
 TAGUCHI_CLI_SRC   = $(wildcard $(TAGUCHI_DIR)/src/cli/*.c)
@@ -234,7 +241,7 @@ $(BUILD)/robust/cli/%.o: orchestrate/robust/src/cli/%.c | $(BUILD)/robust/cli
 # CLI links the static lib, so the binary has no runtime .so dependency.
 taguchi: $(TAGUCHI_BIN) $(TAGUCHI_SHARED) $(TAGUCHI_STATIC)
 
-$(TAGUCHI_BIN): $(TAGUCHI_CLI_OBJ) $(TAGUCHI_STATIC) | $(BIN)
+$(TAGUCHI_BIN): $(TAGUCHI_CLI_OBJ) $(TAGUCHI_STATIC) $(COMMON_OBJ) | $(BIN)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(TAGUCHI_STATIC): $(TAGUCHI_LIB_OBJ)
@@ -247,7 +254,7 @@ $(BUILD)/taguchi/lib/%.o: $(TAGUCHI_DIR)/src/lib/%.c | $(BUILD)/taguchi/lib
 	$(CC) $(CFLAGS) $(TAGUCHI_INC) -c $< -o $@
 
 $(BUILD)/taguchi/cli/%.o: $(TAGUCHI_DIR)/src/cli/%.c | $(BUILD)/taguchi/cli
-	$(CC) $(CFLAGS) $(TAGUCHI_INC) -c $< -o $@
+	$(CC) $(CFLAGS) $(TAGUCHI_CLI_INC) -c $< -o $@
 
 # Both suites link the lib objects directly. The integration test used to need
 # LD_LIBRARY_PATH against the shared lib; linking the objects removes that.

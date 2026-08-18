@@ -365,6 +365,29 @@ history preserved); the umbrella root now holds `common/ morris/ sobol/ robust/
 tools/`. taguchi keeps its own bindings and docs; the top-level `Makefile`
 builds every tool, taguchi included; there is no sub-make.
 
+**Citizenship — done 2026-08-18.** "Keeps its own" was read too broadly, and it
+cost a real defect. taguchi's CLI carried a private results-CSV parser, and
+because that copy never checked a run id against the design, `taguchi analyze`
+was the one tool in the suite that would read any results file at all — a short
+one became a level mean of `0.000` and a crossed one became a ranking of pure
+noise. The CLI now links `libdoe` like every other tool's and reads results
+through `doe_csv_read_metric`; its JSON string and number helpers forward to
+core's. The **library** stays independent, and that distinction is the rule
+worth keeping: `libtaguchi.so` and the Python bindings ship on their own, and
+the orthogonal arrays and effect analysis inside are taguchi's actual domain.
+Shared plumbing is shared; domain code is not. A tool being older than the
+suite is not a reason for it to be exempt from the suite.
+
+The same pass took the last two private parsers with it. `regress` and `desire`
+each had their own trim/split, because `doe_csv_read_metric` answers "one
+metric, keyed by run id" and they need several columns addressed by name — so
+core grew `doe_table`, which reads a results CSV whole and hands back named
+columns plus each row verbatim. Both were carrying ceilings of their own
+invention along with the code; desire refused any file past 100000 rows. Core
+reads results three ways now, and none of them is a tool's private copy:
+`doe_csv_read_metric` (a design's runs), `doe_csv_max_run_id` (sizing when
+there is no design), and `doe_table` (columns by name).
+
 **Done.** The GitHub repo was renamed **taguchi → robust** (stars + redirects
 intact) and the consolidation is pushed — live at `github.com/bigattichouse/robust`
 (`origin` = `git@github.com:bigattichouse/robust.git`).

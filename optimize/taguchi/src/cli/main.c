@@ -9,9 +9,10 @@
 #include <limits.h>
 #include <math.h>
 #include "include/taguchi.h"
-#include "serializer.h"      /* escape_json_string */
+#include "../config.h"       /* MAX_LEVELS, MAX_NOISE_FACTORS */
+#include "doe.h"             /* the suite's shared CSV reader and JSON helpers */
 
-/* Forward declaration — defined below after parse_csv_results */
+/* Forward declaration — defined below, with the other file helpers. */
 static char *read_file_dynamic(const char *filename);
 
 /*
@@ -41,12 +42,17 @@ static char *read_file_dynamic(const char *filename);
  */
 #define TAGUCHI_JSON_SCHEMA 1
 
-/* Print `s` as a quoted JSON string. escape_json_string is the library's one
- * escaper, shared rather than reimplemented here. */
+/*
+ * Both of these were local copies of what core already provides, which is how
+ * the suite ended up with two definitions of "a JSON string" and two of "a
+ * JSON number". They forward now: one implementation, one set of edge cases.
+ * doe_json_escape allocates because a factor name and a --metric are
+ * unbounded and user-chosen.
+ */
 static void json_str(const char *s) {
-    char *e = escape_json_string(s ? s : "");
+    char *e = doe_json_escape(s ? s : "");
     printf("\"%s\"", e ? e : "");
-    free(e);
+    doe_free(e);
 }
 
 /*
@@ -54,12 +60,13 @@ static void json_str(const char *s) {
  * Infinity literal, so printf's bare `nan` would make one odd cell cost the
  * consumer the whole document.
  *
- * %.10g, not the %.3f the tables print. A level mean rounded to three decimals
- * is a different number, and this output exists to be computed on.
+ * %.10g, not the %.3f the tables print -- a level mean rounded to three
+ * decimals is a different number, and this output exists to be computed on.
+ * That is core's rule too, which is why this is now core's function.
  */
 static void json_num(double v) {
-    if (isfinite(v)) printf("%.10g", v);
-    else             printf("null");
+    char buf[DOE_JSON_NUM];
+    printf("%s", doe_json_number(v, buf, sizeof buf));
 }
 
 static void print_usage(const char *program_name) {
@@ -586,177 +593,6 @@ static char *read_file_dynamic(const char *filename) {
     return buf;
 }
 
-/* Split a CSV line in-place into field pointers. Returns field count.
- * Replaces commas with NUL bytes; max_fields caps the result. */
-static int csv_split(char *line, char **fields, int max_fields) {
-    int n = 0;
-    char *p = line;
-    while (n < max_fields) {
-        fields[n++] = p;
-        p = strchr(p, ',');
-        if (!p) break;
-        *p++ = '\0';
-    }
-    return n;
-}
-
-/* Trim leading/trailing ASCII spaces and tabs in-place.
- * Returns the new start pointer (may differ from s). */
-static char *csv_trim(char *s) {
-    while (*s == ' ' || *s == '\t') s++;
-    size_t len = strlen(s);
-    while (len > 0 && (s[len-1] == ' ' || s[len-1] == '\t')) s[--len] = '\0';
-    return s;
-}
-
-/*
- * Parse a CSV results file.
- *
- * The file may have any number of columns.  If the first non-comment,
- * non-empty row is a header (its first field is not a plain integer), the
- * column whose name matches metric_name is used as the response value.
- * When no header is present the second column (index 1) is used.
- *
- * Lines starting with '#' are treated as comments.
- */
-static int parse_csv_results(const char *filename, const char *metric_name,
-                              taguchi_result_set_t *results, char *error_buf) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        snprintf(error_buf, TAGUCHI_ERROR_SIZE, "Cannot open results file: %s", filename);
-        return -1;
-    }
-
-    char line[4096];
-    int line_num = 0;
-    int data_lines = 0;
-    int metric_col = -1;   /* column index for the response value; -1 = not yet resolved */
-    bool header_seen = false;
-
-    while (fgets(line, sizeof(line), file)) {
-        line_num++;
-        /* Detect truncated lines — buffer full with no newline means line exceeded limit */
-        size_t len = strlen(line);
-        if (len == sizeof(line) - 1 && line[len - 1] != '\n') {
-            snprintf(error_buf, TAGUCHI_ERROR_SIZE,
-                     "Line %d exceeds maximum length (%zu chars)", line_num, sizeof(line) - 2);
-            fclose(file);
-            return -1;
-        }
-        /* Trim trailing newline/CR */
-        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
-            line[--len] = '\0';
-        }
-
-        /* Skip empty lines and comments */
-        if (len == 0 || line[0] == '#') continue;
-
-        if (!header_seen) {
-            header_seen = true;
-
-            /* Decide if this row is a header by checking whether its first
-             * comma-delimited field parses as a plain integer. */
-            char tmp[4096];
-            /* snprintf, not strncpy: same truncating copy, always
-             * NUL-terminated, and it does not trip -Wstringop-truncation
-             * when the compiler cannot prove the source is shorter. */
-            snprintf(tmp, sizeof tmp, "%s", line);
-
-            char *hfields[512];
-            int nhf = csv_split(tmp, hfields, 512);
-
-            char *endptr;
-            strtol(csv_trim(hfields[0]), &endptr, 10);
-            bool is_header = (*endptr != '\0'); /* non-numeric first field → header */
-
-            if (is_header) {
-                /* Locate the column whose name matches metric_name */
-                for (int col = 0; col < nhf; col++) {
-                    if (strcmp(csv_trim(hfields[col]), metric_name) == 0) {
-                        metric_col = col;
-                        break;
-                    }
-                }
-
-                if (metric_col == -1) {
-                    if (strcmp(metric_name, "response") == 0) {
-                        /* Default metric not present in header — fall back to col 1 */
-                        metric_col = 1;
-                    } else {
-                        snprintf(error_buf, TAGUCHI_ERROR_SIZE,
-                                 "Metric '%s' not found in CSV header", metric_name);
-                        fclose(file);
-                        return -1;
-                    }
-                }
-                continue; /* header consumed; proceed to data rows */
-            } else {
-                /* No header row */
-                if (strcmp(metric_name, "response") != 0) {
-                    snprintf(error_buf, TAGUCHI_ERROR_SIZE,
-                             "No header row in '%s'; cannot locate metric '%s'",
-                             filename, metric_name);
-                    fclose(file);
-                    return -1;
-                }
-                metric_col = 1;
-                /* Fall through — parse this line as the first data row */
-            }
-        }
-
-        /* --- Data row --- */
-        char row[4096];
-        snprintf(row, sizeof row, "%s", line);
-
-        char *fields[512];
-        int nf = csv_split(row, fields, 512);
-
-        if (nf <= metric_col) {
-            snprintf(error_buf, TAGUCHI_ERROR_SIZE,
-                     "Row at line %d has %d column(s); metric '%s' is at column %d",
-                     line_num, nf, metric_name, metric_col + 1);
-            fclose(file);
-            return -1;
-        }
-
-        char *endptr;
-        long run_id = strtol(csv_trim(fields[0]), &endptr, 10);
-        if (*endptr != '\0' || run_id < 1) {
-            snprintf(error_buf, TAGUCHI_ERROR_SIZE, "Invalid run_id at line %d", line_num);
-            fclose(file);
-            return -1;
-        }
-
-        char *val_str = csv_trim(fields[metric_col]);
-        /* Skip rows where the metric value is absent (missing data) */
-        if (val_str[0] == '\0') continue;
-
-        double response = strtod(val_str, &endptr);
-        if (*endptr != '\0') {
-            snprintf(error_buf, TAGUCHI_ERROR_SIZE,
-                     "Invalid value for metric '%s' at line %d: '%s'",
-                     metric_name, line_num, val_str);
-            fclose(file);
-            return -1;
-        }
-
-        if (taguchi_add_result(results, (size_t)run_id, response, error_buf) != 0) {
-            fclose(file);
-            return -1;
-        }
-        data_lines++;
-    }
-
-    fclose(file);
-
-    if (data_lines == 0) {
-        snprintf(error_buf, TAGUCHI_ERROR_SIZE, "No data rows found in %s", filename);
-        return -1;
-    }
-
-    return 0;
-}
-
 /*
  * Map an effect back to its factor in the definition BY NAME.
  *
@@ -830,19 +666,20 @@ static void print_effects_json(const taguchi_experiment_def_t *def,
 }
 
 /*
- * Does this results file actually cover this design?
+ * Read a results file against the design it claims to describe.
  *
- * `analyze`, `effects` and `confirm` all regenerate the array to learn which
- * level each run used, then bucket the responses by level. Neither step
- * checks the file's shape, and both failure modes are silent:
+ * This used to be two things: a private CSV parser and, bolted on top of it, a
+ * coverage check. The parser was the problem. Every other tool reads results
+ * through `doe_csv_read_metric`, which refuses a run id the design does not
+ * have; taguchi had its own copy that did not, and so `analyze` accepted any
+ * file at all. Two failure modes, both silent:
  *
- *   Too many rows -- a run id the array does not have is skipped, so an L9
- *   read against a 20-row file produced a complete-looking ranking from rows
- *   1-9 and said nothing about the other eleven.
+ *   Too many rows -- the extras were skipped, so an L9 read against a 20-row
+ *   file produced a complete-looking ranking from rows 1-9.
  *
- *   Too few rows -- a level nothing landed in gets a mean of 0.0, printed in
- *   the same column as the real means. "L3=0.000" was a fabricated number in
- *   a table of measurements, at exit 0.
+ *   Too few rows -- a level nothing landed in got a mean of 0.0, printed in
+ *   the same column as the real means. "L3=0.000" was a fabricated number in a
+ *   table of measurements, at exit 0.
  *
  * Worst is a CROSSED design. With a `noise:` section the run ids number inner
  * x outer PAIRS, so the first nine rows of a 144-row L9 file are nine noise
@@ -852,12 +689,19 @@ static void print_effects_json(const taguchi_experiment_def_t *def,
  * guessing is the one option worth refusing outright: `robust` already reads
  * crossed results correctly, so send the reader there.
  *
- * Returns 0 when the file covers the design, -1 having explained why not.
+ * The private parser is gone. `doe_csv_read_metric_seen` does the reading and
+ * hands back a per-run tally, which is exactly the three questions worth
+ * asking: a run mentioned twice, a run never mentioned, and (caught before the
+ * read, so the message can say what the design expected) a run the design does
+ * not have.
+ *
+ * Returns 0 having filled `results`, or -1 having explained why not.
  */
-static int check_results_cover_design(const taguchi_experiment_def_t *def,
-                                      const taguchi_result_set_t *results,
-                                      const char *cmd, const char *csv_file,
-                                      size_t *runs_out) {
+static int read_results_for_design(const taguchi_experiment_def_t *def,
+                                   const char *csv_file, const char *metric,
+                                   const char *cmd,
+                                   taguchi_result_set_t *results,
+                                   size_t *runs_out) {
     size_t outer = taguchi_def_get_noise_count(def) ? outer_size(def) : 1;
     if (outer != 1) {
         fprintf(stderr,
@@ -872,11 +716,11 @@ static int check_results_cover_design(const taguchi_experiment_def_t *def,
         return -1;
     }
 
-    char error[TAGUCHI_ERROR_SIZE];
+    char terr[TAGUCHI_ERROR_SIZE];
     taguchi_experiment_run_t **runs = NULL;
     size_t expected = 0;
-    if (taguchi_generate_runs(def, &runs, &expected, error) != 0) {
-        fprintf(stderr, "Error generating runs: %s\n", error);
+    if (taguchi_generate_runs(def, &runs, &expected, terr) != 0) {
+        fprintf(stderr, "Error generating runs: %s\n", terr);
         return -1;
     }
     taguchi_free_runs(runs, expected);
@@ -885,25 +729,40 @@ static int check_results_cover_design(const taguchi_experiment_def_t *def,
         return -1;
     }
 
-    unsigned *seen = calloc(expected, sizeof *seen);
-    if (!seen) {
-        fprintf(stderr, "Error: out of memory\n");
+    /*
+     * Size the file first. The shared reader would refuse an out-of-range run
+     * id on its own, but its message is about a buffer; this one can say what
+     * the design actually expected, which is the thing the reader has to fix.
+     */
+    char err[DOE_ERR_SIZE];
+    size_t max_id = 0;
+    if (doe_csv_max_run_id(csv_file, &max_id, err) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return -1;
+    }
+    if (max_id > expected) {
+        fprintf(stderr,
+                "Error: %s has a row for run %zu, but the design has %zu run%s.\n"
+                "Extra rows were silently ignored before this check existed; a\n"
+                "results file and the .tgu that produced it must agree.\n",
+                csv_file, max_id, expected, expected == 1 ? "" : "s");
         return -1;
     }
 
-    size_t count = taguchi_result_count(results);
-    for (size_t i = 0; i < count; i++) {
-        size_t id = taguchi_result_run_id(results, i);
-        if (id < 1 || id > expected) {
-            fprintf(stderr,
-                    "Error: %s has a row for run %zu, but the design has %zu run%s.\n"
-                    "Extra rows were silently ignored before this check existed; a\n"
-                    "results file and the .tgu that produced it must agree.\n",
-                    csv_file, id, expected, expected == 1 ? "" : "s");
-            free(seen);
-            return -1;
-        }
-        seen[id - 1]++;
+    double   *y    = malloc(expected * sizeof *y);
+    unsigned *seen = calloc(expected, sizeof *seen);
+    if (!y || !seen) {
+        fprintf(stderr, "Error: out of memory\n");
+        free(y); free(seen);
+        return -1;
+    }
+    for (size_t i = 0; i < expected; i++) y[i] = NAN;
+
+    size_t got = 0;
+    if (doe_csv_read_metric_seen(csv_file, metric, y, expected, seen, &got, err) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        free(y); free(seen);
+        return -1;
     }
 
     for (size_t i = 0; i < expected; i++) {
@@ -912,7 +771,7 @@ static int check_results_cover_design(const taguchi_experiment_def_t *def,
                     "Error: %s has %u rows for run %zu. Each run appears once; the\n"
                     "analysis has no way to tell a replicate from a duplicated row.\n",
                     csv_file, seen[i], i + 1);
-            free(seen);
+            free(y); free(seen);
             return -1;
         }
     }
@@ -935,11 +794,19 @@ static int check_results_cover_design(const taguchi_experiment_def_t *def,
                 "A missing run is not one fewer replicate: no response lands in its\n"
                 "level, so that level's mean came out as 0.000 and printed alongside\n"
                 "real measurements. Measure it, or drop it from the design.\n");
-        free(seen);
+        free(y); free(seen);
         return -1;
     }
 
-    free(seen);
+    for (size_t i = 0; i < expected; i++) {
+        if (taguchi_add_result(results, i + 1, y[i], terr) != 0) {
+            fprintf(stderr, "Error: %s\n", terr);
+            free(y); free(seen);
+            return -1;
+        }
+    }
+
+    free(y); free(seen);
     if (runs_out) *runs_out = expected;
     return 0;
 }
@@ -983,15 +850,9 @@ static int cmd_effects(int argc, char *argv[]) {
         return 1;
     }
 
-    if (parse_csv_results(csv_file, metric_name, results, error) != 0) {
-        fprintf(stderr, "Error reading results: %s\n", error);
-        taguchi_free_result_set(results);
-        taguchi_free_definition(def);
-        return 1;
-    }
-
     size_t design_runs = 0;
-    if (check_results_cover_design(def, results, "effects", csv_file, &design_runs) != 0) {
+    if (read_results_for_design(def, csv_file, metric_name, "effects",
+                                results, &design_runs) != 0) {
         taguchi_free_result_set(results);
         taguchi_free_definition(def);
         return 1;
@@ -1229,58 +1090,40 @@ static int cmd_robust(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Responses arrive as inner x outer rows, run_id = i*outer + j + 1. */
+    /*
+     * Responses arrive as inner x outer rows, run_id = i*outer + j + 1.
+     *
+     * This read the file by hand, because the CLI's old private parser
+     * validated run ids against the INNER design, which is the wrong shape
+     * here. The shared reader takes the run count as a parameter, so the
+     * crossed total is just what it gets told -- and its per-run tally is the
+     * same "every pair is required" check that used to be written out longhand
+     * below it.
+     */
     size_t total = inner * outer;
-    double *y = calloc(total, sizeof *y);
-    int *seen = calloc(total, sizeof *seen);
-    if (!y || !seen) { fprintf(stderr, "Error: out of memory\n"); return 1; }
-
-    {
-        taguchi_result_set_t *rs = taguchi_create_result_set(def, metric_name);
-        if (!rs) { fprintf(stderr, "Error creating result set\n"); return 1; }
-        /* parse_csv_results validates run ids against the INNER design, which
-         * is the wrong shape here, so read the file directly. */
-        taguchi_free_result_set(rs);
+    double   *y    = malloc(total * sizeof *y);
+    unsigned *seen = calloc(total, sizeof *seen);
+    if (!y || !seen) {
+        fprintf(stderr, "Error: out of memory\n");
+        free(y); free(seen);
+        taguchi_free_runs(runs, inner);
+        taguchi_free_definition(def);
+        return 1;
     }
+    for (size_t i = 0; i < total; i++) y[i] = NAN;
 
-    FILE *f = fopen(csv_file, "r");
-    if (!f) { fprintf(stderr, "Error: cannot open '%s'\n", csv_file); return 1; }
     {
-        char line[4096];
-        int header = 0, mcol = -1;
-        while (fgets(line, sizeof line, f)) {
-            size_t len = strlen(line);
-            while (len && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = '\0';
-            if (len == 0 || line[0] == '#') continue;
-
-            char work[4096];
-            memcpy(work, line, len + 1);
-            char *fields[64];
-            int nf = csv_split(work, fields, 64);
-            for (int i = 0; i < nf; i++) fields[i] = csv_trim(fields[i]);
-
-            if (!header) {
-                header = 1;
-                for (int i = 0; i < nf; i++)
-                    if (strcmp(fields[i], metric_name) == 0) mcol = i;
-                if (mcol < 0) {
-                    fprintf(stderr, "Error: metric column '%s' not found in %s\n",
-                            metric_name, csv_file);
-                    fclose(f); return 1;
-                }
-                continue;
-            }
-            if (nf <= mcol) continue;
-            char *end;
-            long id = strtol(fields[0], &end, 10);
-            if (end == fields[0] || id < 1 || (size_t)id > total) continue;
-            double v = strtod(fields[mcol], &end);
-            if (end == fields[mcol]) continue;
-            y[id - 1] = v;
-            seen[id - 1] = 1;
+        char rerr[DOE_ERR_SIZE];
+        size_t got = 0;
+        if (doe_csv_read_metric_seen(csv_file, metric_name, y, total,
+                                     seen, &got, rerr) != 0) {
+            fprintf(stderr, "Error: %s\n", rerr);
+            free(y); free(seen);
+            taguchi_free_runs(runs, inner);
+            taguchi_free_definition(def);
+            return 1;
         }
     }
-    fclose(f);
 
     for (size_t i = 0; i < total; i++) {
         if (!seen[i]) {
@@ -1469,15 +1312,9 @@ static int cmd_confirm(int argc, char *argv[]) {
         taguchi_free_definition(def);
         return 1;
     }
-    if (parse_csv_results(csv_file, metric_name, results, error) != 0) {
-        fprintf(stderr, "Error reading results: %s\n", error);
-        taguchi_free_result_set(results);
-        taguchi_free_definition(def);
-        return 1;
-    }
-
     size_t design_runs = 0;
-    if (check_results_cover_design(def, results, "confirm", csv_file, &design_runs) != 0) {
+    if (read_results_for_design(def, csv_file, metric_name, "confirm",
+                                results, &design_runs) != 0) {
         taguchi_free_result_set(results);
         taguchi_free_definition(def);
         return 1;
@@ -1671,15 +1508,9 @@ static int cmd_analyze(int argc, char *argv[]) {
         return 1;
     }
 
-    if (parse_csv_results(csv_file, metric_name, results, error) != 0) {
-        fprintf(stderr, "Error reading results: %s\n", error);
-        taguchi_free_result_set(results);
-        taguchi_free_definition(def);
-        return 1;
-    }
-
     size_t design_runs = 0;
-    if (check_results_cover_design(def, results, "analyze", csv_file, &design_runs) != 0) {
+    if (read_results_for_design(def, csv_file, metric_name, "analyze",
+                                results, &design_runs) != 0) {
         taguchi_free_result_set(results);
         taguchi_free_definition(def);
         return 1;
