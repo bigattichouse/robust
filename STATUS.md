@@ -641,6 +641,13 @@ the growth loop could never run and `uq` — whose entire job is summarising lar
 response sets — was capped at 1024 rows, failing outright on anything bigger.
 Reported and fixed 2026-08-18 by sizing up front with `doe_csv_max_run_id`.
 
+It was reported as a regression from the `taguchi analyze` row-count fix. It is
+not: the `run_id > max_rows` check dates to `0f69945` (the funnel
+reorganization), and a `uq` built entirely from pre-fix sources fails on a
+2000-row file the same way. The cap had been shipping. Nothing had exercised
+`uq` past 1024 rows, which is its own lesson — the tool with no design to check
+against is also the tool no fixture happens to stress.
+
 Two things worth carrying forward:
 
 - **The bug was in the caller that was different, not the check.** The check
