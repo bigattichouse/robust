@@ -53,8 +53,8 @@ Enforced by:
 - `core/tests/test_security.c` + per-tool adversarial tests, wired into
   `make test` (valgrind) and `make test-asan` (ASan/UBSan);
 - `make fuzz` — deterministic, seedable fuzz under ASan/UBSan of every
-  hand-rolled parser that reads untrusted input: `doe_space_parse` and
-  `doe_csv_read_metric` (`core/tests/fuzz_parsers.c`), plus
+  hand-rolled parser that reads untrusted input: `doe_space_parse`,
+  `doe_csv_read_metric` and `doe_table_read` (`core/tests/fuzz_parsers.c`), plus
   `pareto_read_csv` and `pareto_front_load`
   (`analyze/pareto/tests/fuzz_pareto.c`). **Every new parser gets a target here.**
 - `make coverage` — line/branch coverage over the suites (gcovr, or raw gcov
@@ -68,6 +68,46 @@ Enforced by:
   rejects an increment-only variable that GCC 13 accepts (PR #1), so CI was
   green while a future toolchain was already broken. clang diagnoses that
   class today.
+
+### `doe_table_read` wrote past its arrays on CRLF input (2026-10-06)
+
+Reported from a downstream project, not found here. The reader shared by
+`desire` and `regress` sizes `raw` and `cells` in one pass and fills them in a
+second, and the two passes disagreed about where a line ends: pass 1 counted
+by `\n` and cut each line at its `\r`; pass 2 found lines by the cuts. On
+`\r\n` the `\n` survived between them, so every row came back with a leading
+newline and the final `\n` became a row pass 1 had never counted — one pointer
+past the end of `raw`, and up to `ncols` past the end of `cells`. Exit 0 with a
+blank line before every echoed row on a small file; `malloc(): corrupted top
+size` on a larger one. `\r\n` is what Python's `csv` module writes by default.
+
+Looking for the same disagreement by other doors found two more:
+
+- **A NUL byte in the file.** Pass 2 splits on NUL and pass 1 does not, so
+  `1,2\0x` was one counted row and two written ones — the same overrun,
+  confirmed under valgrind. Now refused, with the offset.
+- **`\r\r\n`.** Cutting at the first `\r` and NUL-ing only the `\n` (the fix
+  first suggested) leaves the second `\r` as a line of its own.
+
+Fixed three ways, any one of which closes the report: pass 1 terminates the
+whole line ending rather than its first byte; a NUL in the input is rejected
+before either pass; and pass 2 refuses to write a row beyond pass 1's count, so
+a future disagreement is an error and not a heap write.
+
+Why nothing caught it, since all the machinery was there:
+
+- **No test input used CRLF.** "Valgrind clean" was true of the inputs tried.
+- **The parser had no fuzz target**, against this file's own rule. It was
+  written for the 2026-08-18 consolidation (`1d49738`) to replace the private
+  line-at-a-time readers in `desire` and `regress` — both of which stripped
+  `\r\n` correctly — so it read as a deduplication, and this is a regression
+  from that commit. `CSV_DICT` already held `"\r\n"`; it was only ever fed to
+  `doe_csv_read_metric`. `doe_table_read` is fuzzed now.
+
+`test_table_read_line_endings` asserts on the row count and the echoed text,
+so it fails against the old code in a plain build, not only under a sanitizer.
+The `desire` CLI check does too (it echoes rows). The `regress` one does not —
+`regress` never prints a row, so there only `make test-asan` sees it.
 
 ### Rejection paths are now tested, not just written (2026-08-09)
 

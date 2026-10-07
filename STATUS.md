@@ -1,6 +1,6 @@
 # Status & Handoff
 
-*Working document. Current as of 2026-08-10. Read this first; it is the state
+*Working document. Current as of 2026-10-06. Read this first; it is the state
 of play plus the traps worth not rediscovering.*
 
 Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
@@ -28,7 +28,9 @@ Companions: [DESIGN.md](DESIGN.md) (build plan M0–M7),
 suites; valgrind clean on all nine; ASan/UBSan clean; both fuzzers clean;
 `make validate` 8/8. Coverage **90.0% lines / 100% functions**.
 
-**No known defects.**
+**No known defects.** That sentence stood here on 2026-10-06 while
+`doe_table_read` was writing past its arrays on any `\r\n` file — it means
+"none against the inputs the suites use", and no more than that.
 
 ### Milestones
 
@@ -156,6 +158,23 @@ any importance result needs.
 ---
 
 ## Traps and lessons worth not rediscovering
+
+**Two passes over the same bytes must find the same lines.** `doe_table_read`
+counts rows in one pass and fills arrays sized by that count in a second. Pass
+1 looked for `\n`; pass 2 looked for the NULs pass 1 had written. On `\r\n`
+those were different places, so pass 2 found one row more than there was room
+for: a heap write at exit 0, from the line ending Python's `csv` module writes
+by default. A NUL byte in the file did the same. Reported from gluesticks on
+2026-10-06, fixed the same day; detail in [SECURITY.md](SECURITY.md). Two
+things generalise:
+
+- **A fill loop is bounded by the count it was sized with, not by its own
+  re-derivation of it.** Pass 2 now refuses a row beyond pass 1's count.
+- **A parser written to replace two others is a new parser.** This one came
+  in with the 2026-08-18 consolidation, replacing `desire`'s and `regress`'s
+  private readers — which handled `\r\n` — and never got the fuzz target
+  SECURITY.md demands of every parser. The fuzzer's dictionary already
+  contained `"\r\n"`.
 
 **A display change to `analyze` is an API change.** The μ\* confidence interval
 (E1, commit `8a2c342`) shipped rendered *glued* to the value —

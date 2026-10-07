@@ -1,6 +1,6 @@
 /*
- * fuzz_parsers.c — deterministic random-input fuzz for doe_space_parse and
- * doe_csv_read_metric (see SECURITY.md). Built and run with ASan/UBSan
+ * fuzz_parsers.c — deterministic random-input fuzz for doe_space_parse,
+ * doe_csv_read_metric and doe_table_read (see SECURITY.md). Built and run with ASan/UBSan
  * via `make fuzz`. Not coverage-guided; three generation strategies per input:
  *
  *   1. pure random bytes
@@ -187,8 +187,54 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
-    remove(path);
     printf("  doe_csv_read_metric: %ld inputs, %ld parsed OK, no violations\n", citers, ok);
+
+    /* ---- doe_table_read (via a scratch file) ----
+     *
+     * The reader desire and regress share. It sizes its arrays in one pass and
+     * fills them in a second, so what must hold for ANY input is that the two
+     * agree: a "\r\n" file and a file with a NUL byte each made the second
+     * pass find a row the first had not counted, and write it past the end.
+     * The sanitizers catch the write; the walk below catches a row or a cell
+     * that is not where the counts say it is.
+     */
+    ok = 0;
+    for (long i = 0; i < citers; i++) {
+        size_t n;
+        switch (rnd(3)) {
+        case 0:  n = gen_random(buf, sizeof buf); break;
+        case 1:  n = gen_soup(buf, sizeof buf, CSV_DICT, sizeof CSV_DICT / sizeof *CSV_DICT); break;
+        default: n = gen_mutant(buf, sizeof buf, CSV_TMPL); break;
+        }
+        FILE *f = fopen(path, "wb");
+        if (!f) { fprintf(stderr, "FAIL: cannot write %s\n", path); return 1; }
+        fwrite(buf, 1, n, f);
+        fclose(f);
+
+        doe_table_t t;
+        memset(err, 'A', sizeof err);
+        if (doe_table_read(path, &t, err) == 0) {
+            ok++;
+            for (size_t r = 0; r < t.nrows; r++) {
+                const char *raw = doe_table_row(&t, r);
+                if (!raw || raw[0] == '\0' || strchr(raw, '\n')) {
+                    fprintf(stderr, "FAIL: row %zu of %zu is not a line (iter %ld)\n",
+                            r, t.nrows, i);
+                    return 1;
+                }
+                for (size_t c = 0; c < t.ncols; c++) {
+                    double v;
+                    (void)doe_table_number(&t, r, c, &v);
+                }
+            }
+        } else if (!err_ok(err)) {
+            fprintf(stderr, "FAIL: unterminated err from doe_table_read (iter %ld)\n", i);
+            return 1;
+        }
+        doe_table_free(&t);
+    }
+    remove(path);
+    printf("  doe_table_read:      %ld inputs, %ld parsed OK, no violations\n", citers, ok);
 
     /* ---- doe_json_parse ----
      *

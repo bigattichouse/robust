@@ -404,17 +404,34 @@ int doe_table_read(const char *path, doe_table_t *t, char *err) {
     t->text = text;
     t->work = work;
 
+    /* Pass 2 finds its lines by the NULs pass 1 writes, so a NUL that arrived
+     * in the file is a line break only pass 2 can see: it split one counted
+     * row into two and wrote the second past the end of `raw` and `cells`. A
+     * CSV has no use for the byte, so refuse it rather than guess. */
+    const char *nul = memchr(text, '\0', len);
+    if (nul) {
+        snprintf(err, DOE_ERR_SIZE, "'%s' has a NUL byte at offset %zu -- not a text file",
+                 path, (size_t)(nul - text));
+        doe_table_free(t);
+        return -1;
+    }
+
     /* Pass 1: find the header and count the data rows. */
     size_t nrows = 0, ncols = 0;
     int have_header = 0;
     for (size_t i = 0; i <= len; ) {
         size_t start = i;
         while (i < len && text[i] != '\n') i++;
+        size_t nl = i;                         /* the '\n', or len at EOF */
         size_t end = i;
         if (i < len) i++;                      /* step past the newline */
         while (end > start && text[end - 1] == '\r') end--;
-        text[end] = '\0';
-        work[end] = '\0';
+        /* Terminate the WHOLE line ending, not just its first byte. Cutting
+         * only at `end` left the '\n' of a "\r\n" in the buffer, where pass 2
+         * took it for the start of the next line: every row came back with a
+         * leading newline, and the last one left a line of its own that pass 1
+         * had never counted. */
+        for (size_t k = end; k <= nl; k++) { text[k] = '\0'; work[k] = '\0'; }
         const char *line = text + start;
         if (line[0] == '\0' || line[0] == '#') { if (start >= len) break; continue; }
         if (!have_header) { have_header = 1; ncols = field_count(line); }
@@ -471,6 +488,13 @@ int doe_table_read(const char *path, doe_table_t *t, char *err) {
                 p = comma + 1;
             }
         } else {
+            /* The arrays are sized by pass 1's count. If the passes ever
+             * disagree again, that is a refusal, not a heap write. */
+            if (row >= nrows) {
+                snprintf(err, DOE_ERR_SIZE, "'%s': row count changed between passes", path);
+                doe_table_free(t);
+                return -1;
+            }
             t->raw[row] = text + start;
             size_t c = 0;
             char *p = w;

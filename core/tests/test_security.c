@@ -484,6 +484,105 @@ static int test_csv_read_design_refuses_a_repeat(void) {
     return 1;
 }
 
+/* Write `n` bytes exactly as given -- "wb", so nothing translates a newline. */
+static int write_bytes(const char *path, const char *bytes, size_t n) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return 0;
+    size_t put = fwrite(bytes, 1, n, f);
+    return fclose(f) == 0 && put == n;
+}
+
+/*
+ * Line endings are not the reader's to be surprised by.
+ *
+ * Pass 1 counted lines by '\n' and cut each at its '\r'; pass 2 found lines by
+ * the cuts. On "\r\n" the '\n' survived between them, so pass 2 saw one more
+ * line than pass 1 had sized the arrays for and wrote it past the end of both
+ * -- at exit 0 on a small file, "malloc(): corrupted top size" on a larger one.
+ * Python's csv module writes "\r\n" by default, so this was the common case.
+ */
+static int test_table_read_line_endings(void) {
+    const char *path = "build/test_table_eol.csv";
+    doe_table_t t;
+    char err[DOE_ERR_SIZE];
+    double v = 0.0;
+
+    /* CRLF throughout: the bug.md reproducer. */
+    static const char crlf[] = "a,b\r\n1,2\r\n3,1\r\n";
+    CHECK(write_bytes(path, crlf, sizeof crlf - 1));
+    CHECK(doe_table_read(path, &t, err) == 0);
+    CHECK(t.ncols == 2);
+    CHECK(t.nrows == 2);
+    CHECK(doe_table_col(&t, "b") == 1);                /* no '\r' on the name */
+    CHECK(strcmp(doe_table_row(&t, 0), "1,2") == 0);   /* no leading '\n' */
+    CHECK(strcmp(doe_table_row(&t, 1), "3,1") == 0);
+    CHECK(doe_table_number(&t, 0, 1, &v) == 0 && v == 2.0);
+    CHECK(doe_table_number(&t, 1, 0, &v) == 0 && v == 3.0);
+    doe_table_free(&t);
+
+    /* CRLF, last row unterminated. */
+    static const char crlf_open[] = "a,b\r\n1,2\r\n3,1";
+    CHECK(write_bytes(path, crlf_open, sizeof crlf_open - 1));
+    CHECK(doe_table_read(path, &t, err) == 0);
+    CHECK(t.nrows == 2);
+    CHECK(strcmp(doe_table_row(&t, 0), "1,2") == 0);
+    CHECK(strcmp(doe_table_row(&t, 1), "3,1") == 0);
+    doe_table_free(&t);
+
+    /* ...and ending on a bare '\r', which is still only a line ending. */
+    static const char crlf_cr[] = "a,b\r\n1,2\r\n3,1\r";
+    CHECK(write_bytes(path, crlf_cr, sizeof crlf_cr - 1));
+    CHECK(doe_table_read(path, &t, err) == 0);
+    CHECK(t.nrows == 2);
+    CHECK(strcmp(doe_table_row(&t, 1), "3,1") == 0);
+    doe_table_free(&t);
+
+    /* Mixed endings, with a comment and a blank line that are CRLF too. */
+    static const char mixed[] = "# note\r\na,b\n1,2\r\n\r\n3,1\n5,6\r\n";
+    CHECK(write_bytes(path, mixed, sizeof mixed - 1));
+    CHECK(doe_table_read(path, &t, err) == 0);
+    CHECK(t.nrows == 3);
+    CHECK(strcmp(doe_table_row(&t, 0), "1,2") == 0);
+    CHECK(strcmp(doe_table_row(&t, 1), "3,1") == 0);
+    CHECK(strcmp(doe_table_row(&t, 2), "5,6") == 0);
+    CHECK(doe_table_number(&t, 2, 1, &v) == 0 && v == 6.0);
+    doe_table_free(&t);
+
+    /* More than one '\r' before the '\n': cutting at the first left the second
+     * behind as a line of its own. */
+    static const char crcr[] = "a,b\r\r\n1,2\r\r\n3,1\r\r\n";
+    CHECK(write_bytes(path, crcr, sizeof crcr - 1));
+    CHECK(doe_table_read(path, &t, err) == 0);
+    CHECK(t.nrows == 2);
+    CHECK(strcmp(doe_table_row(&t, 0), "1,2") == 0);
+    CHECK(strcmp(doe_table_row(&t, 1), "3,1") == 0);
+    doe_table_free(&t);
+
+    /* A lone '\r' INSIDE a field is data, not a line ending: the row count is
+     * unmoved, the row is echoed as it arrived, and the cell is not a number. */
+    static const char inner[] = "a,b\n1\r5,2\n3,1\n";
+    CHECK(write_bytes(path, inner, sizeof inner - 1));
+    CHECK(doe_table_read(path, &t, err) == 0);
+    CHECK(t.nrows == 2);
+    CHECK(strcmp(doe_table_row(&t, 0), "1\r5,2") == 0);
+    CHECK(doe_table_number(&t, 0, 0, &v) != 0);
+    CHECK(doe_table_number(&t, 0, 1, &v) == 0 && v == 2.0);
+    CHECK(doe_table_number(&t, 1, 0, &v) == 0 && v == 3.0);
+    doe_table_free(&t);
+
+    /* A NUL byte in the file was the same overrun by another door: pass 2
+     * splits on NUL, pass 1 does not. Refused, and named. */
+    static const char nul[] = "a,b\n1,2\0x\n3,1\n";
+    CHECK(write_bytes(path, nul, sizeof nul - 1));
+    err[0] = '\0';
+    CHECK(doe_table_read(path, &t, err) != 0);
+    CHECK(strstr(err, "NUL byte") != NULL);
+    doe_table_free(&t);
+
+    remove(path);
+    return 1;
+}
+
 /* No ceiling of the reader's own invention: past desire's old 100000-row cap. */
 static int test_table_grows_past_the_old_cap(void) {
     const char *path = "build/test_table_big.csv";
@@ -714,6 +813,7 @@ int main(void) {
     RUN_TEST(test_csv_max_run_id);
     RUN_TEST(test_csv_read_design_refuses_a_repeat);
     RUN_TEST(test_table_read);
+    RUN_TEST(test_table_read_line_endings);
     RUN_TEST(test_table_grows_past_the_old_cap);
     RUN_TEST(test_null_inputs);
     RUN_TEST(test_param_caps);

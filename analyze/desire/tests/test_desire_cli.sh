@@ -90,6 +90,21 @@ PY
 cat "$TMP/m.csv" | "$DESIRE" --max yield --min cost - > "$TMP/piped.csv" 2>/dev/null
 [ -s "$TMP/piped.csv" ] && ok "reads stdin" || bad "reads stdin" "no output"
 
+# Line endings are the writer's business, not the answer's. Python's csv module
+# writes "\r\n" unless told otherwise, and on that the reader found one more row
+# than it had made room for: a blank line before every echoed row and a write
+# past the heap, at exit 0. Only a comparison against the LF result shows it.
+sed 's/$/\r/' "$TMP/m.csv" > "$TMP/crlf.csv"
+"$DESIRE" --max yield --min cost "$TMP/m.csv" > "$TMP/lf.out" 2>/dev/null
+"$DESIRE" --max yield --min cost "$TMP/crlf.csv" > "$TMP/crlf.out" 2>"$TMP/e"; g=$?
+[ "$g" -eq 0 ] && ok "a CRLF file runs" || bad "a CRLF file runs" "exit $g"
+cmp -s "$TMP/lf.out" "$TMP/crlf.out" && ok "a CRLF file gives the LF answer, byte for byte" \
+    || bad "a CRLF file gives the LF answer, byte for byte" "outputs differ"
+printf 'run_id,yield,cost,cycle\r\n1,90,10,5\n2,50,5,9\r\n3,95,50,2\n4,70,20,6' > "$TMP/mixed.csv"
+"$DESIRE" --max yield --min cost "$TMP/mixed.csv" > "$TMP/mixed.out" 2>/dev/null
+cmp -s "$TMP/lf.out" "$TMP/mixed.out" && ok "so do mixed endings with no final newline" \
+    || bad "so do mixed endings with no final newline" "outputs differ"
+
 # ---- errors -------------------------------------------------------------
 expect_exit 2 "no objectives exits 2" "$DESIRE" "$TMP/m.csv"
 expect_exit 2 "no file exits 2" "$DESIRE" --max yield
@@ -103,6 +118,11 @@ expect_exit 1 "a missing file exits 1" "$DESIRE" --max yield "$TMP/nope.csv"
 
 printf 'run_id,yield\n' > "$TMP/empty.csv"
 expect_exit 1 "a header with no rows exits 1" "$DESIRE" --max yield "$TMP/empty.csv"
+
+# A NUL byte split a row in the second pass that the first had counted as one.
+printf 'run_id,yield\n1,9\0x\n2,5\n' > "$TMP/nul.csv"
+expect_exit 1 "a NUL byte in the file exits 1" "$DESIRE" --max yield "$TMP/nul.csv"
+expect_match "NUL byte" "and says why" "$DESIRE" --max yield "$TMP/nul.csv"
 
 echo
 echo "desire CLI tests: $pass passed, $fail failed"

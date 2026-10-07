@@ -95,6 +95,23 @@ json_is "analyze" "d['command']" "regress: --json names the command" \
 json_is "1" "d['schema']" "regress: --json carries a schema version" \
     "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" --json
 
+# Line endings must not reach the answer. regress reads through the same table
+# reader as desire, which on "\r\n" wrote one row past the arrays it had sized
+# -- silently on a file this small, so compare against the LF result.
+# regress never echoes a row, so in a plain build the old reader passes this
+# too: here it is `make test-asan` that makes it bite. The check that fails in
+# every build mode is test_table_read_line_endings, on the reader itself.
+sed 's/$/\r/' "$TMP/d.csv" > "$TMP/d_crlf.csv"
+for mode in "" "--ranks" "--json"; do
+    # shellcheck disable=SC2086
+    "$BIN/regress" "$TMP/m.space" "$TMP/d.csv" $mode > "$TMP/lf.out" 2>/dev/null
+    # shellcheck disable=SC2086
+    "$BIN/regress" "$TMP/m.space" "$TMP/d_crlf.csv" $mode > "$TMP/crlf.out" 2>/dev/null; g=$?
+    l="regress: a CRLF file gives the LF answer${mode:+ ($mode)}"
+    if [ "$g" -eq 0 ] && [ -s "$TMP/lf.out" ] && cmp -s "$TMP/lf.out" "$TMP/crlf.out"
+    then ok "$l"; else bad "$l" "exit $g, or outputs differ"; fi
+done
+
 # A factor name may hold a quote -- the .space parser rejects only control
 # characters -- and --metric comes straight from argv. Interpolated raw, either
 # one produced a document no parser would accept, from the mode whose only
